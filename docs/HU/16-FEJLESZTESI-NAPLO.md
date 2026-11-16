@@ -49,12 +49,25 @@ mentés, a `sweep` nem jelent kijelentkezést, a `wipe` igen, a manifest elutas�
 
 | Akadály | Mérés | Hatás | Megoldás |
 |---|---|---|---|
-| **Nincs C++ eszközlánc** | nincs `cmake`, `cl`, `clang`; MSVC BuildTools csak `link.exe`-t ad | a Qt/CEF shell nem fordítható | a shell kódját **nem** írtam meg fordítás nélkül — a `02` terv pontos, a kód akkor jön, amikor van CMake+Qt6+CEF |
-| **Nincs Qt 6 / CEF** | `C:\Qt`, `C:\cef` nem létezik | nincs motor, nincs valós memóriamérés | F0 eszközbeszerzés (Qt online installer, CEF standard build ~1–2 GB) |
+| **Nincs Qt 6** | `C:\Qt`, `D:\Qt`, `C:\Program Files\Qt` egyik sem létezik | a Qt-héj nem fordítható | Qt Online Installer → Qt 6 MSVC 2022 64-bit (csak Core/Gui/Quick, ~2 GB) |
+| **Nincs CEF** | `C:\cef`, `D:\cef`, `C:\vcpkg` nem létezik | nincs motor, nincs valós memóriamérés | CEF standard build (Windows x64, ~1–2 GB) a `third_party/cef/` alá |
+| **Van viszont C++ eszközlánc** | `cl.exe`: `…\BuildTools\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe`; `cmake.exe`: `…\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` | csak PATH-on kívül vannak | a build a `vcvars64.bat`-tal indul, ahogy a Rust-tesztek is |
 | **Nincs crates.io elérés** | `SSL connect error ... SEC_E_NO_CREDENTIALS` | új crate-ek nem telepíthetők | `--offline` a helyi cache-ből (263 crate); **rusqlite / libsqlite3-sys / sha2 nem elérhető** |
 | **Nincs SQLite kötés** | `rusqlite` hiányzik a cache-ből | a DB-réteg nem írható meg | a séma és a migráció-validáció kész; az `antikolt-db` crate a következő szelet |
 | **Nincs SHA-256 provider** | `sha2` 0.10 lánca (`generic-array`) hiányzik | a `Digest` típus kész, de nincs feltöltő | következő szelet (sha2 vagy FIPS-vektorokkal tesztelt saját implementáció) |
 | **A WMI-t a sandbox tiltja** | `Get-CimInstance` → hozzáférés megtagadva | a 32 GB RAM nem olvasható, a felhasználó adata | a `09-CELHARDVER.md` jelöli, hogy felhasználói adat |
+
+### Mit kell telepíteni a shellhez (két dolog, ~1–2 óra)
+
+A C++ eszközlánc **megvan**, tehát a hiányzó rész kettő:
+
+1. **Qt 6** — Qt Online Installer, „Qt 6.x → MSVC 2022 64-bit", ebből elég a *Qt Core / Gui / Quick*
+   (a Qt WebEngine **nem** kell: a motort a CEF adja). Telepítés után: `C:\Qt\6.x\msvc2022_64`.
+2. **CEF** — a standard Windows 64-bit build kicsomagolva a repó `third_party/cef/` mappájába
+   (a bináris nem kerül verziókezelésbe, a `.gitignore` kizárja).
+
+Amint ez a kettő megvan, a következő szelet: `CMakeLists.txt` + a minimális `main.cpp` (üres Qt-ablak),
+majd az F0 első spike-ja: egy CEF-nézet beágyazása és a **memória megmérése** a három referenciaoldalon.
 
 Ez a lista nem kifogás, hanem a munkanapló: minden sorhoz tartozik egy konkrét következő lépés.
 
