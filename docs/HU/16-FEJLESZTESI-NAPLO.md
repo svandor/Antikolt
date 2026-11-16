@@ -3,6 +3,70 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-16 (folytatás) — eszközlánc telepítése, első natív build
+
+A projektgazda kérésére az eszközöket **én telepítettem** a `D:\Tools` alá (a gép eszközkönyvtára).
+
+### Telepítve
+
+| Eszköz | Verzió | Hely |
+|---|---|---|
+| **Qt 6** | 6.8.3 (MSVC 2022 x64; qtbase + qtdeclarative + qtsvg) | `D:\Tools\Qt\6.8.3\msvc2022_64` |
+| **CEF** | 158.0.3 (Chromium 158.0.8127.18, beta) | `D:\Tools\cef\cef_binary_158.0.3+…_windows64_beta` |
+| MSVC / SDK / CMake / Ninja | 19.44 / 10.0.26100.0 / 3.31.6 / a BuildTools-ból | — |
+
+Részletek, buktatók és a telepítés újrafuttatása: [`17-ESZKOZLANC.md`](17-ESZKOZLANC.md).
+
+### Ami elkészült
+
+| Terület | Tartalom | Állapot |
+|---|---|---|
+| `CMakeLists.txt` | gyökér build: Qt kötelező, CEF opcionális (`ANTIKOLT_CEF_ROOT`), konfigurációs összefoglaló | ✅ |
+| `apps/desktop-shell` | Qt-ablak, vezérlősáv, **négy téma** (világos/szürke/sötét/AMOLED), `--selftest` | ✅ fut |
+| `apps/engine-host` | motorház váz: **CEF-hez linkel**, `--selftest` a `libcef.dll` betöltését igazolja | ✅ fut |
+| `scripts/build.ps1` | automatikus eszközfelderítés (vswhere + lemez), kézi `PATH`/`INCLUDE`/`LIB`, Ninja, öntesztek | ✅ |
+| `scripts/install-cef.ps1` | CEF letöltés + kicsomagolás + verifikáció (numerikus verzióválasztás) | ✅ |
+
+### Ellenőrizve (a tényleges kimenet)
+
+```
+=== Self test (shell) ===
+antikolt-shell 0.1.0
+qt=6.8.3
+platform=offscreen
+quick=1
+theme=light ok / grey ok / dark ok / amoled ok
+ok
+
+=== Self test (engine host / CEF) ===
+antikolt-engine-host 0.1.0
+cef=158.0.3+g8c29be2+chromium-158.0.8127.18
+chromium=158.0.8127.18
+cef_runtime=ok
+ok
+```
+
+A `cef_runtime=ok` azt jelenti, hogy a fejlécek fordulnak, az importkönyvtár linkel, a `libcef.dll`
+betöltődik a kimeneti mappából, és egy CEF C-függvény (`cef_string_utf16_set`) hívható. Ez a
+legkockázatosabb integrációs lépés, és **működik**.
+
+### Négy buktató, amit menet közben találtam (mind kódolva a `build.ps1`-ben)
+
+1. A `vcvars64.bat` itt 39 bájtos továbbító, és nem hoz létre fordító-környezetet → a szkript kézzel
+   állítja a `PATH`/`INCLUDE`/`LIB`-et.
+2. A „Visual Studio 17 2022" CMake-generátor nem találja a Build Tools-t → Ninja generátor.
+3. A CMake cache-be adott backslash-es útvonal szintaktikai hibát okoz (`rc.exe`) → perjeles útvonalak.
+4. A CEF indexe nem időrendben van: az első szkriptverzió a 2016-os Chromiumot választotta → numerikus
+   rendezés.
+
+### Ami még hiányzik a motorháztól
+
+A **böngészőablak** (natív gyermekablak + egy CEF surface + `CefInitialize`/`CefRunMessageLoop`),
+a `libcef_dll_wrapper` bekötése, a **CEF sandbox** bekapcsolása, és a mérés. Ez az F0 spike köre —
+a következő szelet.
+
+---
+
 ## 2026-11-16 — Első fejlesztési szelet: a Rust mag és a repó alapja
 
 ### Amit megépítettem

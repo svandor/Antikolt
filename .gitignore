@@ -37,6 +37,9 @@ data/
 blobs/
 containers/
 
+# Installer logs (aqtinstall and friends drop them in the working directory)
+*.log
+
 # Measurement output (keep the reports that are meant to be reviewed, ignore raw dumps)
 perf/raw/
 perf/*.csv.tmp

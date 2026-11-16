@@ -18,11 +18,26 @@ strict on a few points.
 ```sh
 git clone https://github.com/antikolt/antikolt
 cd antikolt
-cargo test --all          # 77 tests as of the first increment
+cargo test --all          # 77 tests as of the second increment
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 node --check home/app.js
 ```
+
+Or run everything the CI runs, in one command:
+
+```powershell
+pwsh -File scripts/check-repo.ps1        # SPDX, links, hygiene, JS, Rust
+pwsh -File scripts/check-repo.ps1 -SkipRust
+```
+
+To build the native targets (Qt shell + CEF engine host):
+
+```powershell
+pwsh -File scripts/build.ps1             # configure + build + both self tests
+```
+
+The toolchain (Qt 6, CEF) is installed under `D:\Tools`; see `docs/HU/17-ESZKOZLANC.md`.
 
 If your machine cannot reach crates.io, `cargo test --offline` works when the needed crates are in the
 local registry cache (this is how the project was first built).

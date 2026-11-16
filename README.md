@@ -2,11 +2,12 @@
 
 **Modern, memóriatakarékos, kártya-alapú böngésző.** Nyitott forrás, magyar és angol nyelven.
 
-> Állapot: **v0.1 alapozás**. A Rust mag (IPC-szerződés, életciklus-gép, munkamenet-politika,
-> pillanatkép-manifest, migrációk) és a kezdőlap elkészült és tesztelt — **77 zöld teszt**, tiszta
-> clippy. A Qt + CEF shell még nem épült meg (eszközbeszerzés: MSVC/CMake/Qt 6/CEF).
-> A terv a `docs/HU/` alatt olvasható, magyarul; angol összefoglaló: `docs/EN/`.
-> Fejlesztési napló: [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md).
+> Állapot: **v0.2 — az első natív build**. A Rust mag kész és tesztelt (**77 teszt**), a **Qt 6 shell**
+> és a **CEF motorház váz** lefordul, és mindkettő önteszttel igazolja magát. A CEF-hez linkelés és a
+> `libcef.dll` betöltés **működik**; a böngészőablak (egy surface + mérés) a következő mérföldkő.
+> Terv: `docs/HU/` (magyar) · angol összefoglaló: `docs/EN/` · napló:
+> [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) · eszközlánc:
+> [`docs/HU/17-ESZKOZLANC.md`](docs/HU/17-ESZKOZLANC.md).
 
 ---
 
@@ -16,19 +17,31 @@
 |---|---|
 | `crates/antikolt-ipc` | 20 üzenet, hossz-előtagos keretezés, verzió- és hibakezelés, képesség-lekérdezés — [specifikáció](proto/README.md) |
 | `crates/antikolt-core` | azonosítók, óra, öt erőforrás-profil, kártya-életciklus-gép, `keep`/`sweep`/`wipe` munkamenet-politika, pillanatkép-manifest, migrációk |
+| `apps/desktop-shell` | Qt 6 ablak, vezérlősáv, négy téma, `--selftest` — **lefordul és fut** |
+| `apps/engine-host` | CEF váz: linkel a CEF-hez, betölti a `libcef.dll`-t, `--selftest` — **lefordul és fut** |
 | `home/` | a kezdőlap: `<antikolt-card>`, virtualizált rács, négy téma, keresés, billentyűzet — böngészőben önállóan is megnyitható |
-| `apps/desktop-shell` | **még nincs** — a következő mérföldkő (CMake + Qt 6 + CEF kell hozzá) |
+| Böngészőablak + mérés | **még nincs** — ez az F0 spike köre |
 
 ## Fejlesztés
 
-Előfeltételek: **Rust 1.80+**, linker (Windows: MSVC Build Tools; Linux: `cc`), és a kezdőlaphoz Node 22
-(csak szintaxis-ellenőrzéshez).
+Előfeltételek: **Rust 1.80+**, **Qt 6** és **CEF** a `D:\Tools` alatt (telepítés:
+[`docs/HU/17-ESZKOZLANC.md`](docs/HU/17-ESZKOZLANC.md)), MSVC Build Tools, Node 22 a kezdőlaphoz.
 
-```sh
+```powershell
+# natív build (shell + motorház) + öntesztek
+pwsh -File scripts/build.ps1
+pwsh -File scripts/build.ps1 -CheckOnly      # csak az eszközlánc
+
+# Rust mag
 cargo test --all          # 77 teszt
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
+
+# kezdőlap
 node --check home/app.js
+
+# minden, amit a CI is futtat (SPDX, linkek, higiénia, JS, Rust)
+pwsh -File scripts/check-repo.ps1
 ```
 
 Ha a gép nem ér el crates.io-t (a projekt első gépe így volt), a helyi registry-cache-ből
@@ -84,6 +97,7 @@ Részletek: [`docs/HU/03-MEMORIA.md`](docs/HU/03-MEMORIA.md).
 | [`docs/HU/14-KODALAS.md`](docs/HU/14-KODALAS.md) | Kódaláírás: mi ingyenes, mi nem, SmartScreen |
 | [`docs/HU/15-HOZZAJARULAS.md`](docs/HU/15-HOZZAJARULAS.md) | Közreműködés (DCO) és biztonsági kormányzás |
 | [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) | Fejlesztési napló: mi készült el, hogyan lett ellenőrizve, mi blokkol |
+| [`docs/HU/17-ESZKOZLANC.md`](docs/HU/17-ESZKOZLANC.md) | Eszközlánc: Qt 6, CEF, MSVC, build és a négy buktató |
 | [`proto/README.md`](proto/README.md) | A motorház–mag protokoll v1 írott specifikációja |
 | [`perf/README.md`](perf/README.md) | A mérési mérőpad terve és elfogadási küszöbei |
 | [`docs/forras/`](docs/forras/) | A kiinduló Gemini-terv (ODT + szövegkivonat) és a kutatási jegyzetek |

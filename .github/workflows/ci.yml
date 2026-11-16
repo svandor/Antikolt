@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MPL-2.0
 name: CI
 
 on:
@@ -51,11 +52,17 @@ jobs:
           set -eu
           missing=0
           while IFS= read -r file; do
-            if ! head -n 2 "$file" | grep -q 'SPDX-License-Identifier: MPL-2.0'; then
+            if ! head -n 3 "$file" | grep -q 'SPDX-License-Identifier: MPL-2.0'; then
               echo "::error file=$file::missing SPDX licence header"
               missing=1
             fi
-          done < <(git ls-files '*.rs' '*.js' '*.css' '*.html' '*.sql')
+          done < <(git ls-files '*.rs' '*.js' '*.css' '*.html' '*.sql' '*.cpp' '*.h' '*.hpp' '*.ps1' '*.cmake' '*.yml' '*.yaml' | grep -v -E '(^|/)CMakeLists\.txt$' || true)
+          while IFS= read -r file; do
+            if ! head -n 3 "$file" | grep -q 'SPDX-License-Identifier: MPL-2.0'; then
+              echo "::error file=$file::missing SPDX licence header"
+              missing=1
+            fi
+          done < <(git ls-files '*CMakeLists.txt')
           exit "$missing"
       - name: No committed build output or secrets
         run: |
