@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --all --verbose
+
+  home-page:
+    name: home page syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: node --check
+        run: node --check home/app.js
+
+  hygiene:
+    name: repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SPDX headers on every source file
+        run: |
+          set -eu
+          missing=0
+          while IFS= read -r file; do
+            if ! head -n 2 "$file" | grep -q 'SPDX-License-Identifier: MPL-2.0'; then
+              echo "::error file=$file::missing SPDX licence header"
+              missing=1
+            fi
+          done < <(git ls-files '*.rs' '*.js' '*.css' '*.html' '*.sql')
+          exit "$missing"
+      - name: No committed build output or secrets
+        run: |
+          set -eu
+          if git ls-files | grep -E '(^|/)(target|node_modules)/' ; then
+            echo "::error::build output is committed"
+            exit 1
+          fi
+          if git ls-files | grep -E '(^|/)\.env$|\.pem$|\.pfx$|\.key$' ; then
+            echo "::error::a secret-looking file is committed"
+            exit 1
+          fi
+      - name: Documentation links resolve
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          root = pathlib.Path(".")
+          broken = []
+          for md in root.rglob("*.md"):
+              if any(part in {".git", "target", "node_modules"} for part in md.parts):
+                  continue
+              text = md.read_text(encoding="utf-8")
+              for target in re.findall(r"\]\(([^)]+)\)", text):
+                  if target.startswith(("http://", "https://", "mailto:", "#")):
+                      continue
+                  clean = target.split("#")[0]
+                  if not clean:
+                      continue
+                  if not (md.parent / clean).resolve().exists():
+                      broken.append(f"{md}: {target}")
+          if broken:
+              print("::error::broken links:\n" + "\n".join(broken))
+              sys.exit(1)
+          print("all documentation links resolve")
+          PY
+
+  memory-budget:
+    name: memory budget (advisory)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The benchmark harness lands with the shell (F0/F1); until then this job documents the gate
+      # that will block a release: docs/HU/03-MEMORIA.md §5.4.
+      - name: Measurement harness placeholder
+        run: echo "perf/ harness not yet present — see docs/HU/16-FEJLESZTESI-NAPLO.md"

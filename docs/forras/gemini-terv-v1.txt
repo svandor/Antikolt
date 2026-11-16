@@ -1,0 +1,90 @@
+
+     Rendszerterv és Architektúra Specifikáció: Zero-RAM Kártya- és Konténeralapú Böngésző
+
+1. Rendszercél és Alapvető Tervezési Elvek
+
+A rendszer célja egy ultra-alacsony memóriafogyasztású, többplatformos asztali böngésző létrehozása, amely alapjaiban szakít a hagyományos böngészők fülkezelési modelljével. A tervezés elsődleges célplatformja a Windows 11, hosszú távú natív célkörnyezete pedig a Nobara Linux (KDE Plasma és Wayland megjelenítési réteg).
+
+* A háttérfolyamatok teljes felszámolása: A hagyományos böngészők minden megnyitott fülhöz külön renderelő- és szkriptmotort tartanak életben a memóriában. Ebben a rendszerben a megnyitott oldalak nem élnek a háttérben; minden elmentett oldal egy adatbázisban tárolt kártyaként létezik, statikus előnézeti képpel és elmentett görgetési pozícióval.
+
+* Egyetlen aktív nézet elve: A teljes alkalmazásban egyszerre legfeljebb egyetlen élő webes megjelenítő nézet létezhet. Amint a felhasználó visszatér a kártyarácsra vagy másik kártyára vált, az előző oldal pillanatképe és állapota mentésre kerül, maga a webes nézet pedig azonnal megsemmisül, felszabadítva az összes lefoglalt rendszermemóriát és processzoridőt.
+
+* Cross-platform natív működés: Az architektúra az első pillanattól kezdve kezeli a Linux Wayland alatti natív ablakkezelést és képernyő-skálázást, valamint az operációs rendszerek saját titkosítási tárolóit, így a Windowsról Nobara Linuxra való átálláskor a teljes felhasználói adatbázis és munkamenet-struktúra változtatás nélkül átvihető.
+2. Technológiai Keretrendszer és Biztonsági Elvek
+
+* Böngészőmotor és ablakkezelés: Az alkalmazás Electron keretrendszerre épül, kizárólag a modern beágyazott nézetkezelési modell használatával. Az elavult nézetbeágyazási megoldások alkalmazása tilos.
+
+* Szigorú folyamat-izoláció: Minden külső weboldalt betöltő nézet szigorúan elkülönített környezetben és homokozóban (sandbox) fut. A weboldalak semmilyen közvetlen hozzáféréssel nem rendelkeznek az operációs rendszerhez vagy a helyi fájlrendszerhez; a böngésző saját funkciói (például a jelszókitöltés) kizárólag ellenőrzött, előre definiált üzenetküldő csatornákon keresztül kommunikálnak a főfolyamattal.
+
+* Helyi perzisztencia: A strukturált adatok tárolásáért egy beágyazott, naplózott írási módú SQLite adatbázis felel, amelyet a felhasználói adatmappában tárolt tömörített statikus előnézeti képek egészítenek ki.
+3. Felhasználói felület felépítése
+
+Az alkalmazás ablaka három jól elkülönülő funkcionális zónára oszlik:
+
+*  Bal oldali navigációs sáv: Fix szélességű panel a munkaterületek közötti váltáshoz, valamint az identitás-konténerek szerinti szűréshez és kezeléshez.
+
+* Felső vezérlősáv: Kompakt eszköztár, amely tartalmazza a kártyarácsra visszavezető főgombot, az alapvető navigációs vezérlőket (vissza, előre, frissítés), az intelligens cím- és keresőmezőt, az aktuálisan aktív identitás-konténer vizuális jelvényét, a sötét mód kapcsolóját és finomhangoló csúszkáit, valamint a jelszótár elérési gombját.
+
+* Központi munkaterület: Két egymást kizáró állapotban működik. Kártyarács üzemmódban a mentett oldalak vizuális előnézeti kártyái jelennek meg kereshető és szűrhető rácsban, miközben egyetlen webes motor sem fut a háttérben. Aktív böngésző üzemmódban ezt a területet teljes egészében az egyetlen élő webes nézet tölti ki, amely dinamikusan követi az ablak átméretezését.
+Rendszermodulok felosztása
+
+* Főfolyamat réteg: Felelős az alkalmazásablak életciklusáért, az egyetlen aktív webes nézet létrehozásáért és megsemmisítéséért, a képernyőképek készítéséért, az adatbázis-műveletekért, a hardveres titkosítást végző széfért, a sötét mód injektálásáért és a belső kommunikációs végpontok kiszolgálásáért.
+
+* Előtöltő (Preload) réteg: Két különálló biztonsági szintre oszlik. Az egyik híd kizárólag a böngésző saját kezelőfelületét köti össze a főfolyamattal; a másik egy szigorúan korlátozott figyelőszkript, amely a megnyitott weboldalakba épülve figyeli a bejelentkezési mezőket és a görgetési állapotot.
+
+* Megjelenítő (Renderer) réteg: A böngésző saját keretrendszerének felhasználói felülete, amely natív sötét megjelenéssel kezeli a kártyarácsot, a konténerválasztót és a jelszókezelő ablakot.
+4. A "Fagyasztott Kártya" Életciklus Működése
+
+* Kártya aktiválása: Amikor a felhasználó a kártyarácson kiválaszt egy mentett elemet, a rendszer létrehozza az egyetlen élő webes nézetet a kártyához rendelt identitás-konténer munkamenetével, betölti a célcímet, majd az oldal betöltődése után automatikusan visszaállítja az adatbázisban rögzített függőleges és vízszintes görgetési pozíciót.
+
+* Kártya fagyasztása: Amikor a felhasználó visszalép a kártyarácsra vagy egy másik kártyára kattint, az aktív nézet bezárása előtt lefut a fagyasztási folyamat. A rendszer lekérdezi az aktuális görgetési pozíciót, pillanatképet készít a látható tartalomról, átméretezi és tömörített formátumban felülírja a kártyához tartozó előnézeti képet a lemezen, frissíti az oldal címét és ikonját az adatbázisban, majd véglegesen bezárja és megsemmisíti a webes nézetet.
+
+* Eredmény: A kártyarácsban mindig az oldal utolsó vizuális állapota látható (például egy félbehagyott cikk vagy adminisztrációs felület), miközben a lezárt kártyák nulla bájtot foglalnak a memóriából.
+ 5. Böngészőszintű Multi-Account Kezelés (Identitás Konténerek)
+
+* Teljes munkamenet-elkülönítés: A rendszer tetszőleges számú, névvel és színkóddal ellátott identitás-konténert támogat. Minden egyes konténer saját, perzisztens tárolópartíciót kap, így a sütik, a helyi tárolók és a gyorsítótárak fizikailag el vannak szigetelve egymástól.
+
+* Párhuzamos bejelentkezések ütközés nélkül: Ugyanazon szolgáltató (például Google, Microsoft vagy Facebook) több különböző fiókja párhuzamosan, kijelentkezés és inkognitó ablakok nyitogatása nélkül használható.
+
+* Kártya-szintű profilkötés: Minden elmentett kártyához hozzárendelhető egy alapértelmezett konténer. A kártya megnyitásakor a böngésző automatikusan a hozzá kötött identitással indítja a munkamenetet, de a felhasználó bármikor átnyithat egy oldalt egy másik konténerbe is.
+6. Kétlépcsős, Adaptív Sötét Mód Rendszer
+
+A rendszer elkerüli a nyers, inverziós színsémák hibáit, és két egymásra épülő szinten biztosít sötét megjelenítést:
+
+* Natív rendszerjelzés: A böngészőmotor minden weboldal felé sötét témapreferenciát jelez, így azok a modern webalkalmazások és oldalak, amelyek rendelkeznek saját sötét arculattal, automatikusan a gyári sötét felületüket töltik be.
+
+* Dinamikus stílus-injektálás: Azokon az oldalakon, amelyek nem támogatják a natív sötét módot, a rendszer dinamikus stílusképző motort injektál a nézetbe.
+
+* Kártyánkénti finomhangolás: A sötét mód ki- és bekapcsolt állapota, valamint az egyedi fényerő- és kontrasztértékek kártyánként külön tárolódnak az adatbázisban, és a felső vezérlősávból bármikor élőben hangolhatók.
+7. Konténer-tudatos Jelszó- és 2FA-kezelő Széf
+
+A beépített hitelesítő rendszer kifejezetten a több fiókos és többlépcsős modern bejelentkezési folyamatok hiányosságait küszöböli ki:
+
+* Operációsrendszer-szintű hardveres titkosítás: A tárolt jelszavak és kétfaktoros kulcsok titkosítása az adott operációs rendszer natív kulcstartójára támaszkodik (Windows alatt a Windows DPAPI szolgáltatásra, Nobara Linux alatt pedig a KDE Wallet / Secret Service rendszerre). A titkosított rekordok a helyi SQLite adatbázisban kerülnek mentésre.
+
+* Konténer-alapú párosítás: A jelszótár minden bejegyzést képes egy adott identitás-konténerhez kötni (vagy globálissá tenni). Bejelentkezéskor a böngésző nemcsak a domain nevet, hanem az aktuálisan aktív konténert is ellenőrzi, így kizárólag az adott profilhoz tartozó belépési adatot kínálja fel.
+
+*  Beépített 2FA (TOTP) kódgenerátor: A hitelesítő rekordok opcionálisan tárolhatnak Base32 formátumú titkos kulcsot is, amelyből a böngésző helyben számolja ki az időalapú, 6 jegyű egyszeri belépési kódokat, így nincs szükség külön mobilalkalmazásra.
+
+* Intelligens DOM-felismerés és izolált felület: A weboldalakba épülő figyelőszkript folyamatosan követi a dinamikusan megjelenő űrlapmezőket, így hibátlanul kezeli a többlépcsős (előbb e-mail-címet, majd külön lépésben jelszót kérő) bejelentkezéseket is. A felkínált választóablak elszigetelt Shadow DOM rétegben jelenik meg az aktív mező mellett, így a weboldal saját stílusa nem tudja eltorzítani, és az űrlap beküldésekor automatikusan felajánlja az új vagy módosított jelszavak elmentését.
+8. Logikai Adatmodell
+
+A helyi SQLite adatbázis négy fő entitásra épül:
+
+* Munkaterületek: A kártyák logikai csoportosítására szolgáló mappák (azonosító, megnevezés, ikon, megjelenítési sorrend).
+
+* Identitás-konténerek: Az elszigetelt böngészési profilok definíciói (azonosító, megjelenített név, egyedi technikai partíciónév, színkód, ikon).
+
+* Kártyák: Az elmentett oldalak teljes állapotleírása (azonosító, munkaterület-hivatkozás, konténer-hivatkozás, oldal címe, webcím, ikon címe, statikus előnézeti kép fájlneve, elmentett vízszintes és függőleges görgetési koordináták, sötét mód állapota, fényerő- és kontrasztértékek, kitűzött státusz, utolsó megnyitás időbélyege).
+
+* Hitelesítő adatok: A széfben tárolt belépési rekordok (azonosító, opcionális konténer-hivatkozás, domain név, egyedi címke, felhasználónév, hardveresen titkosított jelszó, opcionális hardveresen titkosított TOTP kulcs, utolsó módosítás ideje).
+9. Fejlesztési Ütemterv
+
+* Első fázis (Alaprendszer és Fagyasztási Életciklus): Az adatbázis-réteg, a főablak és a kártyarács felépítése, valamint az egyetlen élő webes nézet megnyitási, képernyőkép-mentési, görgetésvisszaállítási és megsemmisítési ciklusának megvalósítása.
+
+* Második fázis (Munkaterületek és Identitás-konténerek): A többfiókos partíciókezelés, a színkódolt konténerek létrehozása és szerkesztése, a kártyák konténerekhez kötése, valamint a kártyarács élő kereső- és szűrőfunkcióinak kiépítése.
+
+* Harmadik fázis (Adaptív Sötét Mód): A natív sötét téma jelzés és a dinamikus stílusképző motor integrálása, kiegészítve a felső vezérlősávból elérhető, kártyánként mentett fényerő- és kontrasztszabályozással.
+
+* Negyedik fázis (Konténer-tudatos Jelszó- és 2FA-széf): Az operációs rendszer titkosító rétegére épülő jelszótár és TOTP-generátor létrehozása, a kezelőfelület megépítése, valamint a dinamikus űrlapokat felismerő, Shadow DOM alapú automatikus kitöltő és mentésfigyelő bekötése.
+

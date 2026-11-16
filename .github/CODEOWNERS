@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MPL-2.0
+# Default owners. Replace @antikolt with the maintainer's handle before the first public release.
+
+*                                   @antikolt
+
+# Security-sensitive paths: review required, no fast-track merge (docs/HU/15-HOZZAJARULAS.md §2.1)
+/crates/antikolt-ipc/               @antikolt
+/crates/antikolt-core/src/snapshot/ @antikolt
+/crates/antikolt-core/src/session.rs @antikolt
+/crates/antikolt-core/migrations/   @antikolt
+/proto/                             @antikolt
+/apps/desktop-shell/src/platform/   @antikolt
+/SECURITY.md                        @antikolt
+/LICENSE                            @antikolt
+/NOTICE                             @antikolt

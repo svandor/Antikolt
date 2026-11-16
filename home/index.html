@@ -1,0 +1,76 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<html lang="hu" data-theme="grey">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Antikolt</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <a class="skip" href="#grid">Ugrás a kártyákhoz</a>
+
+    <header class="topbar">
+      <div class="brand" aria-label="Antikolt">Antikolt</div>
+
+      <nav class="workspaces" id="workspaces" role="tablist" aria-label="Munkaterületek"></nav>
+
+      <form class="search-wrap" role="search" onsubmit="return false">
+        <input
+          id="search"
+          class="search"
+          type="search"
+          placeholder="Keresés — cím, webcím, jegyzet, oldalszöveg"
+          aria-label="Keresés"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <kbd class="search-hint" aria-hidden="true">Ctrl K</kbd>
+      </form>
+
+      <div class="themes" role="group" aria-label="Téma">
+        <button type="button" data-theme-set="light" title="Világos" aria-label="Világos téma">☀</button>
+        <button type="button" data-theme-set="grey" title="Szürke (alap)" aria-label="Szürke téma" aria-pressed="true">◐</button>
+        <button type="button" data-theme-set="dark" title="Sötét" aria-label="Sötét téma">☾</button>
+        <button type="button" data-theme-set="amoled" title="AMOLED" aria-label="AMOLED téma">●</button>
+      </div>
+
+      <div class="mem" id="mem" aria-live="polite" title="Memória-állapot (a böngésző méri)">—</div>
+    </header>
+
+    <main>
+      <section class="pinned" id="pinned-section" hidden aria-labelledby="pinned-heading">
+        <h2 class="section-title" id="pinned-heading">Kitűzve</h2>
+        <div class="pinned-row" id="pinned" role="list"></div>
+      </section>
+
+      <section class="all" aria-labelledby="all-heading">
+        <div class="section-head">
+          <h2 class="section-title" id="all-heading">Kártyák</h2>
+          <span class="count" id="count" aria-live="polite"></span>
+        </div>
+
+        <!-- Virtualised: only the visible rows exist in the DOM (docs/HU/03, rule 1). -->
+        <div class="viewport" id="viewport" role="list" aria-label="Kártyák">
+          <div class="spacer" id="spacer">
+            <div class="window" id="window"></div>
+          </div>
+        </div>
+      </section>
+
+      <p class="empty" id="empty" hidden>Nincs a keresésnek megfelelő kártya.</p>
+    </main>
+
+    <footer class="hint">
+      <span><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> mozgás</span>
+      <span><kbd>Enter</kbd> megnyitás</span>
+      <span><kbd>Ctrl</kbd>+<kbd>K</kbd> keresés</span>
+      <span><kbd>Esc</kbd> keresés törlése</span>
+      <span class="spacer-flex"></span>
+      <span id="engine" class="muted">motor: —</span>
+    </footer>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "antikolt-core"
+description = "Domain logic for Antikolt: identifiers, card lifecycle, session policy, snapshots, storage."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+antikolt-ipc = { path = "../antikolt-ipc" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

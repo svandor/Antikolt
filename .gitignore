@@ -1,0 +1,47 @@
+# Rust
+target/
+**/target/
+Cargo.lock.bak
+
+# Build output
+build/
+out/
+bin/
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.exp
+*.dll
+*.exe
+*.app/
+*.pkg
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+compile_commands.json
+
+# Node (home page tooling only)
+node_modules/
+npm-debug.log*
+
+# Local runtime data — never commit a user profile, vault or snapshot store
+data/
+*.db
+*.db-wal
+*.db-shm
+blobs/
+containers/
+
+# Measurement output (keep the reports that are meant to be reviewed, ignore raw dumps)
+perf/raw/
+perf/*.csv.tmp
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store

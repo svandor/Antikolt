@@ -1,0 +1,40 @@
+Antikolt
+========
+
+Copyright © 2026 Antikolt Project and contributors.
+
+This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+If a copy of the MPL was not distributed with this file, You can obtain one at
+https://mozilla.org/MPL/2.0/.
+
+AI-ASSISTED DEVELOPMENT NOTICE
+------------------------------
+
+A substantial part of this code base is written with AI assistance (an AI coding agent working
+under human direction and review). This is disclosed deliberately:
+
+  * No part of this project claims exclusive human authorship of AI-generated code.
+  * AI-generated code is reviewed, tested and measured before it is merged; the test suite and the
+    memory benchmark in `perf/` are the evidence, not the claim.
+  * Human decisions, requirements and reviews are made by the maintainer, who is the copyright
+    holder of the project's contributions and responsible for releases.
+
+If you contribute, you do not need to disclose or avoid AI tools. You sign off your commit
+(`git commit -s`, the Developer Certificate of Origin) to confirm you have the right to submit the
+code. See `docs/HU/15-HOZZAJARULAS.md` and `CONTRIBUTING.md`.
+
+THIRD-PARTY COMPONENTS
+----------------------
+
+Antikolt builds on third-party work. The components below are used under their own licences; the
+full texts ship with the binary in `THIRD-PARTY-NOTICES.txt` once the shell is buildable.
+
+  * Chromium Embedded Framework (CEF) — BSD-3-Clause
+  * Chromium Project and its bundled third-party components — BSD-3-Clause and others
+  * Qt 6 — LGPL-3.0 (dynamically linked, relinkable by the user; see docs/HU/13-LICENC.md)
+  * SQLite — public domain
+  * Rust crates listed in `Cargo.lock` — permissive licences (MIT/Apache-2.0/MPL-2.0)
+
+"Chromium-based" is a factual description. This project is not affiliated with, endorsed by, or
+sponsored by Google, the Chromium Project or the Mozilla Foundation, and does not use the "Chrome"
+name, logo or trademark.

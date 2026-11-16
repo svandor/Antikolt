@@ -1,0 +1,11 @@
+# Authors
+
+Antikolt is developed by:
+
+- **The maintainer** — decisions, requirements, review, testing (dogfooding), releases.
+  (GitHub handle: `@antikolt` — replace with the personal handle before the first public release.)
+- **An AI coding agent** — writes most of the code under the maintainer's direction. It is not listed
+  as a copyright holder; see `NOTICE`.
+
+Contributors are appended here in the order of their first merged change. Contributing does not
+transfer copyright: you keep it, and the code stays under `MPL-2.0` (`docs/HU/13-LICENC.md`).
