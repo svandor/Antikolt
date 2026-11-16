@@ -49,6 +49,11 @@ struct HostState {
     std::atomic<bool> load_finished{false};
     std::atomic<bool> load_failed{false};
     std::atomic<bool> timed_out{false};
+    /// The window was asked to close. The pump loop closes the browser and shuts CEF down.
+    std::atomic<bool> quit_requested{false};
+    /// Set once CEF has actually created the browser. CEF creates it asynchronously, so the pump
+    /// loop must not treat "no browser yet" as "browser closed" (that bug exited immediately).
+    std::atomic<bool> browser_created{false};
     int http_status = 0;
     std::string final_url;
     std::string title;

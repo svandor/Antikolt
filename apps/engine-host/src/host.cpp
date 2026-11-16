@@ -18,11 +18,20 @@ constexpr int kLoadTimeoutSeconds = 30;
 
 constexpr wchar_t kWindowClass[] = L"AntikoltEngineHostWindow";
 
+/// The single host instance of this process. CEF is a process-wide singleton, so one host per
+/// process is the honest model; the window procedure needs it to translate WM_CLOSE into a request
+/// that the pump loop can act on.
+HostState* g_state = nullptr;
+
 #ifdef _WIN32
 LRESULT CALLBACK HostWndProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
         case WM_CLOSE:
-            CefQuitMessageLoop();
+            // Do not shut down from inside the window procedure: record the intent and let the pump
+            // loop close the browser first (CefShutdown with a live browser crashes).
+            if (g_state != nullptr) {
+                g_state->quit_requested = true;
+            }
             return 0;
         case WM_SIZE: {
             // Keep the CEF child window filling the client area (CEF creates it as a child of ours).
@@ -66,6 +75,7 @@ void EngineApp::OnBeforeCommandLineProcessing(const CefString& process_type,
 void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     state_->browser = browser;
+    state_->browser_created = true;
 }
 
 void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
@@ -175,6 +185,10 @@ int RunEngineHost(const HostConfig& config) {
     CefString(&settings.root_cache_path).FromString(config.user_data_path);
     CefString(&settings.log_file).FromString(config.user_data_path + "\\cef.log");
     settings.log_severity = LOGSEVERITY_WARNING;
+    // We drive CEF from our own pump instead of letting it own a blocking loop. This is the same
+    // integration shape the Qt shell will need, and it avoids the lost-quit race that CefQuitMessageLoop
+    // produced when a page finished loading before the loop started.
+    settings.external_message_pump = true;
     settings.multi_threaded_message_loop = false;
     settings.windowless_rendering_enabled = false;
 
@@ -211,6 +225,8 @@ int RunEngineHost(const HostConfig& config) {
         UpdateWindow(window);
     }
 
+    g_state = &state;
+
     if (config.quit_on_first_load) {
         // Deterministic pump instead of CefRunMessageLoop: the page may finish loading before that
         // loop starts (a data: URL does), and then the quit signal is lost and the process hangs.
@@ -230,29 +246,53 @@ int RunEngineHost(const HostConfig& config) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
 
-        // A live browser must be closed before CefShutdown: shutting down with a browser still
-        // attached crashes (access violation) once the renderer/GPU teardown runs.
-        if (state.browser) {
-            state.browser->GetHost()->CloseBrowser(true);
-            for (int i = 0; i < 500 && state.browser; ++i) {
-                CefDoMessageLoopWork();
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    } else {
+        // Interactive: pump Windows messages ourselves and let CEF do its work each round. CEF does
+        // not own a loop here, so closing the window is an orderly request (WM_CLOSE sets
+        // quit_requested) instead of a CefQuitMessageLoop that the blocking loop never sees.
+        MSG message = {};
+        while (!state.quit_requested.load()) {
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != 0) {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            CefDoMessageLoopWork();
+            // TODO(F1): CefBrowserProcessHandler::OnScheduleMessagePumpWork should wake this loop,
+            // so an idle window costs no CPU instead of polling every 2 ms.
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (state.browser_created.load() && !state.browser) {
+                break;  // the browser closed itself (OnBeforeClose)
             }
         }
-    } else {
-        CefRunMessageLoop();
+    }
+
+    // Both paths end here, and both need this: a live browser must be closed before CefShutdown.
+    // Shutting down with a browser still attached crashes (access violation) once the renderer/GPU
+    // teardown runs — that is the dialog the first interactive run produced.
+    if (state.browser) {
+        state.browser->GetHost()->CloseBrowser(true);
+        for (int i = 0; i < 500 && state.browser; ++i) {
+            CefDoMessageLoopWork();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
     }
 
     const bool timed_out = state.timed_out.load();
     const bool failed = state.load_failed.load();
-    std::printf("load=%s\n", timed_out ? "timeout" : (failed ? "error" : "ok"));
+    const bool loaded = state.load_finished.load();
+    // "ok" must mean a page really loaded: an interactive run closed before any load reports "none".
+    std::printf("load=%s\n", timed_out ? "timeout" : (failed ? "error" : (loaded ? "ok" : "none")));
     std::printf("url=%s\n", state.final_url.c_str());
     std::printf("status=%d\n", state.http_status);
     std::printf("title=%s\n", state.title.c_str());
     std::fflush(stdout);
 
     CefShutdown();
-    return (timed_out || failed) ? 1 : 0;
+    if (timed_out || failed) {
+        return 1;
+    }
+    // A measurement run exists to load one page; if it never did, that is a failure.
+    return (config.quit_on_first_load && !loaded) ? 1 : 0;
 }
 
 }  // namespace antikolt

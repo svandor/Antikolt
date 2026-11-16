@@ -5,6 +5,32 @@
 
 ## 2026-11-16 (harmadik szelet) — valódi böngészőablak és az első memóriamérés
 
+### Interaktív mód: a bezárás is működik
+
+A harmadik szelet végére az ablak **valódi oldalt tölt be és rendezetten záródik**:
+
+```
+$ antikolt-engine-host --url https://example.com
+load_end url=https://example.com/ status=200
+(ház felhasználó bezárja az ablakot → WM_CLOSE)
+load=ok
+url=https://example.com/
+status=200
+title=Example Domain
+exit code = 0, maradék folyamat = 0
+```
+
+Ehhez három újabb hibát kellett megoldani:
+
+1. **A `CefQuitMessageLoop` hatástalan volt** a blokkoló `CefRunMessageLoop` mellett (a `WM_CLOSE`
+   megérkezett, a ciklus mégsem állt le). Megoldás: **external message pump** — a ház maga pumpálja a
+   Windows-üzeneteket és hívja a `CefDoMessageLoopWork`-öt. Ez egyben **a Qt-integrációhoz szükséges
+   forma** is, tehát nem kerülőút, hanem a helyes architektúra.
+2. **A CEF aszinkron hozza létre a böngészőt**, ezért az „ameddig van böngésző" ciklusfeltétel azonnal
+   kilépett (a böngésző még nem létezett). Megoldás: `browser_created` jelző, amit az `OnAfterCreated` állít.
+3. **A jelentés hazudott**: „load=ok"-ot írt akkor is, ha nem történt betöltés. Most `load=none`, és a
+   mérési mód ilyenkor 1-es kilépési kóddal jelez.
+
 ### Ami elkészült
 
 | Terület | Tartalom | Állapot |
