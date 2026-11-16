@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! The contract between the Antikolt core and an engine host.
 //!
 //! This crate is deliberately dependency-light and has **no** engine-specific code: it is the

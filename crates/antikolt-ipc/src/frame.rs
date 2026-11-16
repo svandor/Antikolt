@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Length-prefixed framing for [`Envelope`]s.
 //!
 //! A frame is `[u32 little-endian payload length][JSON payload]`. The decoder is total: it never

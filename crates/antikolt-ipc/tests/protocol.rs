@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Protocol-level tests: every message must survive a roundtrip, and hostile framing must be
 //! rejected without panicking.
 

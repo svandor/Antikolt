@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Message types shared by the core and the engine host.
 
 use serde::{Deserialize, Serialize};

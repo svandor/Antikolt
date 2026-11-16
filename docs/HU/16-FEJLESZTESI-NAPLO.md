@@ -28,8 +28,17 @@ cargo test --offline          ->  67 passed (core) + 10 passed (ipc)  = 77
 cargo clippy --all-targets --offline -- -D warnings   ->  clean
 cargo fmt --all -- --check    ->  clean
 node --check home/app.js      ->  OK
-markdown link check (PowerShell script) ->  0 broken links
+SPDX-fejléc ellenőrzés        ->  16/16 forrásfájl rendben
+markdown link check           ->  0 broken links
+git commit (root)             ->  57 fájl, 9498 beszúrás
 ```
+
+**A saját CI-szabályom fogta meg a saját hibámat:** az első commit után a helyi ellenőrzés szerint az
+`antikolt-ipc` négy forrásfájljából hiányzott az SPDX-fejléc (a `core` fájljaiban ott volt, ezekben nem).
+Ez pontosan az, amire a CI `hygiene` jobja való — ezért a fejlécet pótoltam, és a `.gitattributes`-szel
+a sorvégeket is normalizáltam (Windows checkout / Linux CI ugyanazt a bájtot lássa). Tanulság a
+folyamatra: **a helyi ellenőrzésnek ugyanazt kell futtatnia, mint a CI-nak**, különben a hiba csak a
+push után derül ki.
 
 A 77 teszt a *viselkedést* rögzíti, nem a kód formáját: a 10 perces hibernálás a 9:59-es és a 10:00-es
 határon, a kivételek (kitűzés/hang/videó/letöltés/popup), a fagyasztási időtúllépés utáni degradált
