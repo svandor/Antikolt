@@ -2,11 +2,13 @@
 
 **Modern, memóriatakarékos, kártya-alapú böngésző.** Nyitott forrás, magyar és angol nyelven.
 
-> Állapot: **v0.2 — az első natív build**. A Rust mag kész és tesztelt (**77 teszt**), a **Qt 6 shell**
-> és a **CEF motorház váz** lefordul, és mindkettő önteszttel igazolja magát. A CEF-hez linkelés és a
-> `libcef.dll` betöltés **működik**; a böngészőablak (egy surface + mérés) a következő mérföldkő.
+> Állapot: **v0.3 — működő motor, mért memóriával**. A Rust mag (77 teszt), a Qt shell és a CEF
+> motorház is épül; a motor **valódi ablakban betölt egy oldalt** (load/title callbackek, önteszt exit 0).
+> Első mérés: egy cikk **177–185 MB**, YouTube **386–390 MB** motor-oldalon → a teljes böngésző
+> várhatóan **270–510 MB**, az 1 GB-os cél bőven tartható.
 > Terv: `docs/HU/` (magyar) · angol összefoglaló: `docs/EN/` · napló:
-> [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) · eszközlánc:
+> [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) · F0 mérés:
+> [`docs/HU/18-F0-JELENTES.md`](docs/HU/18-F0-JELENTES.md) · eszközlánc:
 > [`docs/HU/17-ESZKOZLANC.md`](docs/HU/17-ESZKOZLANC.md).
 
 ---
@@ -18,9 +20,10 @@
 | `crates/antikolt-ipc` | 20 üzenet, hossz-előtagos keretezés, verzió- és hibakezelés, képesség-lekérdezés — [specifikáció](proto/README.md) |
 | `crates/antikolt-core` | azonosítók, óra, öt erőforrás-profil, kártya-életciklus-gép, `keep`/`sweep`/`wipe` munkamenet-politika, pillanatkép-manifest, migrációk |
 | `apps/desktop-shell` | Qt 6 ablak, vezérlősáv, négy téma, `--selftest` — **lefordul és fut** |
-| `apps/engine-host` | CEF váz: linkel a CEF-hez, betölti a `libcef.dll`-t, `--selftest` — **lefordul és fut** |
+| `apps/engine-host` | **valódi böngészőmotor**: CEF inicializálás, natív ablak, egy surface, load/title callbackek, `--selftest` / `--url` — **lefordul és betölt egy oldalt** |
+| `perf/measure-engine.ps1` | memóriamérő: a motor folyamatfájának privát memóriája, markdown + JSON riport |
 | `home/` | a kezdőlap: `<antikolt-card>`, virtualizált rács, négy téma, keresés, billentyűzet — böngészőben önállóan is megnyitható |
-| Böngészőablak + mérés | **még nincs** — ez az F0 spike köre |
+| Shell ↔ motor összekötés | **még nincs** — a következő szelet (IPC + fagyasztás) |
 
 ## Fejlesztés
 
@@ -98,6 +101,7 @@ Részletek: [`docs/HU/03-MEMORIA.md`](docs/HU/03-MEMORIA.md).
 | [`docs/HU/15-HOZZAJARULAS.md`](docs/HU/15-HOZZAJARULAS.md) | Közreműködés (DCO) és biztonsági kormányzás |
 | [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) | Fejlesztési napló: mi készült el, hogyan lett ellenőrizve, mi blokkol |
 | [`docs/HU/17-ESZKOZLANC.md`](docs/HU/17-ESZKOZLANC.md) | Eszközlánc: Qt 6, CEF, MSVC, build és a négy buktató |
+| [`docs/HU/18-F0-JELENTES.md`](docs/HU/18-F0-JELENTES.md) | **F0 mérés**: mit mérünk, mennyi, mit jelent, milyen fenntartásokkal |
 | [`proto/README.md`](proto/README.md) | A motorház–mag protokoll v1 írott specifikációja |
 | [`perf/README.md`](perf/README.md) | A mérési mérőpad terve és elfogadási küszöbei |
 | [`docs/forras/`](docs/forras/) | A kiinduló Gemini-terv (ODT + szövegkivonat) és a kutatási jegyzetek |

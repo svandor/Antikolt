@@ -48,9 +48,20 @@ a `03-MEMORIA.md` 5. fejezete pontosan megmondja, mit, hogyan és milyen küszö
 
 ## Állapot
 
-- [ ] Mérőpad váz (folyamatfa-mérés) — *a következő szelet része*
-- [ ] Shell szcenáriók (S3–S5)
+- [x] Mérőpad váz (`measure-engine.ps1`): a motor folyamatfájának privát memóriája
+- [x] Első valós mérés (2026-11-16) — lásd `docs/HU/18-F0-JELENTES.md`
+- [ ] GPU-folyamat melletti mérés (a GPU-folyamat ebben a környezetben leáll, szoftveres fallback fut)
+- [ ] Shell szcenáriók (S3–S5) — a Qt-héjjal együtt
 - [ ] Baseline + CI-kapu
 - [ ] Profil-összehasonlítás (S10) riportja
+
+### Mért alapvonal (2026-11-16, motor-oldal, privát commit)
+
+| Oldal | Medián |
+|---|---|
+| `about:blank` | 119,0 MB |
+| Wikipédia-cikk | 177–185 MB |
+| Google Maps | 142,9 MB |
+| YouTube nyitólap | 386–390 MB |
 
 A naplót lásd: `docs/HU/16-FEJLESZTESI-NAPLO.md`.

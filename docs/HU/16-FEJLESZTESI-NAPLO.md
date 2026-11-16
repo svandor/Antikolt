@@ -3,6 +3,52 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-16 (harmadik szelet) — valódi böngészőablak és az első memóriamérés
+
+### Ami elkészült
+
+| Terület | Tartalom | Állapot |
+|---|---|---|
+| `apps/engine-host` | `CefInitialize` + **valódi natív ablak** + egy CEF surface + load/title callbackek + `--selftest` / `--url` / `--size` / `--hidden` | ✅ fut, exit 0 |
+| `libcef_dll_wrapper` | a CEF C++ wrapper bekötve (`libcef_dll_wrapper` target, `CEF_STANDARD_LIBS`) | ✅ |
+| `perf/measure-engine.ps1` | a folyamatfa privát memóriájának mérése, markdown + JSON riport | ✅ |
+| `docs/HU/18-F0-JELENTES.md` | **az F0 döntési kapu anyaga, valós számokkal** | ✅ |
+
+### Az F0 mérés eredménye (ez a lényeg)
+
+| Oldal | Motor mediánja | Folyamatok |
+|---|---|---|
+| `about:blank` | 119,0 MB | 7 |
+| Wikipédia-cikk | 177–185 MB | 7 |
+| Google Maps | 142,9 MB | 7 |
+| YouTube nyitólap | 386–390 MB | 10 |
+
+Teljes böngésző (motor + Qt-héj + mag) várhatóan **270–510 MB** → az 1 GB-os cél **bőven tartható**.
+A részletes elemzés és a fenntartások (GPU-folyamat hiánya a mérésben, commit vs working set):
+[`18-F0-JELENTES.md`](18-F0-JELENTES.md).
+
+### Öt hiba, amit a valódi CEF-motor felszínre hozott (mind javítva)
+
+1. **A segédfolyamatokat a saját argumentum-parserünk ölte meg** (`--type=gpu-process`), ezért a GPU
+   leállt. Javítás: a `--type=` előtagot a parser előtt elkapjuk → `CefExecuteProcess`.
+2. **`CefRunMessageLoop` + gyors betöltés = örökös blokk**: a `data:` URL a ciklus indulása *előtt*
+   betöltődött, a quit-jel elveszett. Javítás: determinisztikus pump-ciklus (`CefDoMessageLoopWork`).
+3. **Élő böngészővel hívott `CefShutdown` = access violation** (ezt látta a projektgazda a
+   hibapárbeszédablakban). Javítás: `CloseBrowser(true)` + pumpálás lezárás előtt.
+4. **`WS_POPUP`, soha meg nem jelenített ablak** → GPU-kompozitálási hiba. Javítás: normál ablaktípus,
+   `ShowWindow` nélkül.
+5. **CEF 158: nincs `settings.user_data_path`** → `cache_path` / `root_cache_path`.
+
+Plusz: `SetErrorMode` kikapcsolja a hiba-párbeszédablakot, hogy a hibás futás kilépési kóddal jelezzen.
+
+### Nyitott pont a következő szeletre
+
+A **GPU-folyamat leáll** ebben a környezetben (`0x80000003`), a Chromium szoftveres kompozitálásra esik
+vissza. A mérés ezért GPU-folyamat nélküli fát tükröz — működő GPU-n +50–150 MB várható. Ezt előbb
+kivizsgáljuk, mint hogy a mérést „véglegesnek" tekintenénk.
+
+---
+
 ## 2026-11-16 (folytatás) — eszközlánc telepítése, első natív build
 
 A projektgazda kérésére az eszközöket **én telepítettem** a `D:\Tools` alá (a gép eszközkönyvtára).

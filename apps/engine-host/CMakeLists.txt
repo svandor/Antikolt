@@ -7,14 +7,19 @@
 #   * a crash in the engine must not take the browser down;
 #   * a second engine (WebKitGTK, WebView2) becomes another executable behind the same protocol.
 #
-# Today this target proves the CEF integration: headers compile, the import library links, libcef.dll
-# loads and its C functions are callable. The browser window comes with the F0 spike.
+# This target creates one real browser surface in a native window. The core protocol
+# (crates/antikolt-ipc), OSR and the CEF sandbox are the next slices.
 
 if(NOT ANTIKOLT_CEF_ROOT)
   message(FATAL_ERROR "apps/engine-host needs ANTIKOLT_CEF_ROOT")
 endif()
 
-set(CEF_INCLUDE "${ANTIKOLT_CEF_ROOT}/include")
+# CEF ships its own CMake entry point (FindCEF.cmake -> cef_variables.cmake). Using it keeps the
+# compiler definitions and the standard library list in CEF's hands instead of ours.
+set(CEF_ROOT "${ANTIKOLT_CEF_ROOT}")
+list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
+find_package(CEF REQUIRED)
+
 set(CEF_RELEASE "${ANTIKOLT_CEF_ROOT}/Release")
 set(CEF_RESOURCES "${ANTIKOLT_CEF_ROOT}/Resources")
 
@@ -22,10 +27,17 @@ if(NOT EXISTS "${CEF_RELEASE}/libcef.lib")
   message(FATAL_ERROR "libcef.lib not found under ${CEF_RELEASE}")
 endif()
 
-add_executable(antikolt-engine-host src/main.cpp)
+# The C++ wrapper (CefClient, CefApp, CefRefPtr, ...) is built from the distribution's own sources.
+add_subdirectory("${CEF_ROOT}/libcef_dll" libcef_dll_wrapper EXCLUDE_FROM_ALL)
 
-# CEF's own convention: the CEF root goes on the include path and sources say "include/cef_app.h".
-target_include_directories(antikolt-engine-host PRIVATE "${ANTIKOLT_CEF_ROOT}")
+add_executable(antikolt-engine-host
+  src/main.cpp
+  src/host.cpp
+  src/host.h
+)
+
+target_include_directories(antikolt-engine-host PRIVATE "${CEF_ROOT}" src)
+
 target_compile_definitions(antikolt-engine-host PRIVATE
   ANTIKOLT_VERSION="${PROJECT_VERSION}"
   WIN32_LEAN_AND_MEAN
@@ -34,11 +46,28 @@ target_compile_definitions(antikolt-engine-host PRIVATE
   _UNICODE
 )
 
-target_link_directories(antikolt-engine-host PRIVATE "${CEF_RELEASE}")
-target_link_libraries(antikolt-engine-host PRIVATE libcef.lib)
+target_link_libraries(antikolt-engine-host PRIVATE
+  libcef_dll_wrapper
+  "${CEF_RELEASE}/libcef.lib"
+  ${CEF_STANDARD_LIBS}
+  user32
+  gdi32
+  shell32
+)
+
+if(TARGET libcef_lib)
+  target_link_libraries(antikolt-engine-host PRIVATE libcef_lib)
+endif()
+
+# CEF wants these definitions on the executable (they come from cef_variables.cmake).
+if(COMMAND SET_EXECUTABLE_TARGET_PROPERTIES)
+  SET_EXECUTABLE_TARGET_PROPERTIES(antikolt-engine-host)
+endif()
 
 if(MSVC)
-  target_compile_options(antikolt-engine-host PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
+  # CEF's SET_EXECUTABLE_TARGET_PROPERTIES (above) already disables the CEF-header warnings it knows
+  # about, so our own sources can be held to /W4 with warnings as errors.
+  target_compile_options(antikolt-engine-host PRIVATE /W4 /WX /permissive- /utf-8 /Zc:__cplusplus)
 endif()
 
 # Copy the CEF runtime next to the executable. CEF refuses to start without these files, and a

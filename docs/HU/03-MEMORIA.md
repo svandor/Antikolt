@@ -5,6 +5,11 @@
 
 > A célgép (VECTOR) adatai és az eszközprofilok: `09-CELHARDVER.md`. A bejelentkezések memória-költsége:
 > `10-MUNKAMENET.md` (röviden: életben tartott bejelentkezés = 0 RAM, amíg a kártya hibernált).
+>
+> **MÉRT EREDMÉNY (F0, 2026-11-16):** a motor folyamatfája egy átlagos cikken **177–185 MB**, egy
+> nehéz médiaoldalon (YouTube) **386–390 MB**, üres oldalon **119 MB**. A teljes böngésző a Qt-héjjal
+> együtt várhatóan **270–510 MB** — a lenti büdzsé tartható, sőt bőven alatta marad.
+> Részletes mérés, módszer és fenntartások: [`18-F0-JELENTES.md`](18-F0-JELENTES.md).
 
 ## 1. Alapigazságok (amit sokan elrontanak)
 
