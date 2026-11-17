@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! End-to-end test of the core service: a real process, a real stdio link, a real file on disk.
+//!
+//! The unit tests in `store.rs` cover the card list; this covers the thing the shell will actually
+//! talk to, because a service that only works when called as a function is not a service.
+
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+
+use antikolt_ipc::{decode_json_frame, encode_json_frame};
+use serde_json::{json, Value};
+
+struct Service {
+    child: Child,
+    buffer: Vec<u8>,
+    next_id: u64,
+}
+
+impl Service {
+    fn start(data_dir: &PathBuf) -> Self {
+        let child = Command::new(env!("CARGO_BIN_EXE_antikolt-core-service"))
+            .arg("--data-dir")
+            .arg(data_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn the core service");
+        Self {
+            child,
+            buffer: Vec::new(),
+            next_id: 1,
+        }
+    }
+
+    fn request(&mut self, op: &str, extra: Value) -> Value {
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut request = json!({ "version": 1, "id": id, "op": op });
+        if let (Some(fields), Some(target)) = (extra.as_object(), request.as_object_mut()) {
+            for (key, value) in fields {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        let frame = encode_json_frame(&request).expect("encode");
+        let stdin = self.child.stdin.as_mut().expect("stdin");
+        stdin.write_all(&frame).expect("write the request");
+        stdin.flush().expect("flush");
+
+        // Read until one whole reply arrives; the loop may hand us partial bytes.
+        loop {
+            if let Ok((value, consumed)) = decode_json_frame(&self.buffer) {
+                self.buffer.drain(..consumed);
+                // `welcome` is its own message kind and carries no `to`; every reply must echo ours.
+                if let Some(to) = value.get("to") {
+                    assert_eq!(to, id, "the reply must answer our request");
+                }
+                return value;
+            }
+            let mut chunk = [0u8; 4096];
+            let read = self
+                .child
+                .stdout
+                .as_mut()
+                .expect("stdout")
+                .read(&mut chunk)
+                .expect("read");
+            assert!(read > 0, "the service closed its stdout before replying");
+            self.buffer.extend_from_slice(&chunk[..read]);
+        }
+    }
+
+    fn stop(mut self) {
+        let reply = self.request("shutdown", json!({}));
+        assert_eq!(reply["ok"], true);
+        let _ = self.child.wait();
+    }
+}
+
+fn temp_dir(name: &str) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("antikolt-core-service-{name}-{stamp}"));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+#[test]
+fn the_service_greets_serves_cards_and_records_an_open() {
+    let dir = temp_dir("lifecycle");
+    let mut service = Service::start(&dir);
+
+    let welcome = service.request("hello", json!({}));
+    assert_eq!(welcome["op"], "welcome");
+    assert_eq!(welcome["core"]["name"], "antikolt-core");
+
+    let listed = service.request("cards_list", json!({}));
+    assert_eq!(listed["ok"], true);
+    let cards = listed["data"]["cards"].as_array().expect("cards");
+    assert_eq!(cards.len(), 3, "a fresh store is seeded with examples");
+    let first_id = cards[0]["id"].as_str().expect("id").to_string();
+
+    // Opening a card records the time; the grid orders by it.
+    let opened = service.request("card_open", json!({ "id_of_card": first_id }));
+    assert_eq!(opened["ok"], true);
+    let stamp = opened["data"]["card"]["last_opened_at_ms"]
+        .as_u64()
+        .expect("timestamp");
+    assert!(stamp > 0, "opening a card stamps it");
+
+    let reloaded = service.request("cards_list", json!({}));
+    let cards = reloaded["data"]["cards"].as_array().expect("cards");
+    assert_eq!(
+        cards[0]["id"],
+        first_id.as_str(),
+        "the opened card comes first"
+    );
+
+    let missing = service.request("card_open", json!({ "id_of_card": "nope" }));
+    assert_eq!(missing["ok"], false);
+    assert_eq!(missing["error"]["code"], "not_found");
+
+    let unknown = service.request("cannot_possibly_exist", json!({}));
+    assert_eq!(unknown["error"]["code"], "not_supported");
+
+    service.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_store_is_on_disk_and_survives_a_restart() {
+    let dir = temp_dir("persist");
+    let mut service = Service::start(&dir);
+    let listed = service.request("cards_list", json!({}));
+    let cards = listed["data"]["cards"].as_array().expect("cards");
+    let id = cards[0]["id"].as_str().expect("id").to_string();
+    service.request("card_open", json!({ "id_of_card": id }));
+    service.stop();
+
+    assert!(
+        dir.join("cards.json").exists(),
+        "the card list is a real file"
+    );
+
+    let mut again = Service::start(&dir);
+    let listed = again.request("cards_list", json!({}));
+    let stamps = listed["data"]["cards"]
+        .as_array()
+        .expect("cards")
+        .iter()
+        .filter_map(|card| card["last_opened_at_ms"].as_u64())
+        .collect::<Vec<_>>();
+    assert!(
+        stamps.iter().any(|stamp| *stamp > 0),
+        "the timestamp written before the restart is still there"
+    );
+    again.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

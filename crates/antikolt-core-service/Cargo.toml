@@ -1,0 +1,20 @@
+[package]
+name = "antikolt-core-service"
+description = "The Antikolt core as a process: cards, and later sessions and policies, over a JSON stdio link."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "antikolt-core-service"
+path = "src/main.rs"
+
+[dependencies]
+antikolt-core = { path = "../antikolt-core" }
+antikolt-ipc = { path = "../antikolt-ipc" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

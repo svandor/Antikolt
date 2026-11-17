@@ -28,7 +28,7 @@ pub const PROTOCOL_VERSION: u16 = 1;
 /// Upper bound for a single control frame. Snapshots and pixels do **not** travel in frames.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
-pub use frame::{decode_frame, encode_frame, FrameError};
+pub use frame::{decode_frame, decode_json_frame, encode_frame, encode_json_frame, FrameError};
 pub use message::{
     Capability, ColorScheme, EngineEvent, EngineInfo, Envelope, ErrorCode, ImageFormat, Message,
     NavigateOpts, PermissionKind, PopupDisposition, Rect, ReplyOutcome, SurfaceConfig, SurfaceId,

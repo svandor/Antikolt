@@ -26,7 +26,16 @@ pub enum FrameError {
 
 /// Serialize and prefix an envelope.
 pub fn encode_frame(envelope: &Envelope) -> Result<Vec<u8>, FrameError> {
-    let payload = serde_json::to_vec(envelope)?;
+    encode_json_frame(&serde_json::to_value(envelope)?)
+}
+
+/// Serialize any JSON value with the same length prefix.
+///
+/// The engine link speaks [`Envelope`]s, but the core service (cards, sessions) has its own, smaller
+/// message set. Both share this framing on purpose: one length-prefix implementation means one place
+/// where the hostile-input rules live.
+pub fn encode_json_frame(value: &serde_json::Value) -> Result<Vec<u8>, FrameError> {
+    let payload = serde_json::to_vec(value)?;
     if payload.len() > MAX_FRAME_BYTES {
         return Err(FrameError::TooLarge {
             len: payload.len(),
@@ -39,12 +48,8 @@ pub fn encode_frame(envelope: &Envelope) -> Result<Vec<u8>, FrameError> {
     Ok(out)
 }
 
-/// Decode one frame from the front of `bytes`.
-///
-/// Returns the envelope and the number of bytes it occupied, so callers can loop over a buffer
-/// that holds several frames. Truncated input yields [`FrameError::Incomplete`] — the caller
-/// reads more and retries; it is never an error to have only part of a frame yet.
-pub fn decode_frame(bytes: &[u8]) -> Result<(Envelope, usize), FrameError> {
+/// Split one length-prefixed frame off the front of `bytes`, returning the payload and its size.
+fn split_payload(bytes: &[u8]) -> Result<(&[u8], usize), FrameError> {
     if bytes.len() < 4 {
         return Err(FrameError::Incomplete {
             need: 4,
@@ -69,8 +74,23 @@ pub fn decode_frame(bytes: &[u8]) -> Result<(Envelope, usize), FrameError> {
             have: bytes.len(),
         });
     }
+    Ok((&bytes[4..need], need))
+}
 
-    let envelope: Envelope = serde_json::from_slice(&bytes[4..need])?;
+/// Decode one length-prefixed JSON value from the front of `bytes`.
+pub fn decode_json_frame(bytes: &[u8]) -> Result<(serde_json::Value, usize), FrameError> {
+    let (payload, consumed) = split_payload(bytes)?;
+    Ok((serde_json::from_slice(payload)?, consumed))
+}
+
+/// Decode one frame from the front of `bytes`.
+///
+/// Returns the envelope and the number of bytes it occupied, so callers can loop over a buffer
+/// that holds several frames. Truncated input yields [`FrameError::Incomplete`] — the caller
+/// reads more and retries; it is never an error to have only part of a frame yet.
+pub fn decode_frame(bytes: &[u8]) -> Result<(Envelope, usize), FrameError> {
+    let (payload, consumed) = split_payload(bytes)?;
+    let envelope: Envelope = serde_json::from_slice(payload)?;
     if envelope.version != crate::PROTOCOL_VERSION {
         return Err(FrameError::VersionMismatch {
             got: envelope.version,
@@ -78,5 +98,5 @@ pub fn decode_frame(bytes: &[u8]) -> Result<(Envelope, usize), FrameError> {
         });
     }
 
-    Ok((envelope, need))
+    Ok((envelope, consumed))
 }

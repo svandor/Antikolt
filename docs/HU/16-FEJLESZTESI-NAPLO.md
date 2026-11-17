@@ -3,6 +3,25 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizenegyedik szelet) — a mag saját folyamatban: kártyák valódi tárból
+
+A shell eddig nem beszélt a Rust maggal: a kártyalista a kezdőlap mockja volt. Most elindult a mag
+**saját folyamatként** (`antikolt-core-service`), és valódi kártyákat szolgál ki.
+
+| Terület | Tartalom |
+|---|---|
+| `antikolt-ipc` | `encode_json_frame` / `decode_json_frame`: a hossz-prefixes keretezés most már nem csak az `Envelope`-ra jó, hanem a mag kisebb üzenetkészletére is — egy helyen élnek a szigorú bemeneti szabályok |
+| `antikolt-core-service` | `hello/welcome`, `cards_list`, `card_open` (időbélyeg + átrendezés), `card_upsert`, `shutdown`; a tár `cards.json`, atomikus írással (temp fájl → rename), első indításkor 3 mintakártyával |
+| Tesztek | 3 tár-unit teszt + 2 integrációs teszt, amely **valódi processzt** indít, valódi stdin/stdout linken kérdez, és újraindítás után is látja az elmentett időbélyeget |
+
+A tár egyelőre JSON, nem SQLite: a `rusqlite` offline környezetben nem elérhető, a migrációs séma
+(`antikolt_core::migrations`) viszont már megvan, és a kártya alakja egy helyen dől el — az SQLite-ra
+váltás így egy fájl cseréje lesz, nem az API-é.
+
+**Ami még nyitott:** a shell még nem indítja el a magot; a híd `cards.list` válasza (perzisztens
+`cefQuery`, a shell → mag → lap útvonal) a következő szelet fő tétele. Addig a rács a mockból dolgozik,
+a kártyanyitás viszont már valódi.
+
 ## 2026-11-17 (tizedik szelet) — a kezdőlap rákattintásra kártyát nyit
 
 A termék köre most már **végig** működik: a kezdőlap (a rács) a hídon keresztül kér egy kártyát, a
