@@ -114,6 +114,9 @@ const cards = answer.cards;
 
 // The same question through the typed helper:
 const { cards: matches } = await window.antikoltNative.cards.search('wiki');
+
+// Writing goes the same way: the whole record travels, so a pin, a note and a new card are one call.
+const { card: saved } = await window.antikoltNative.cards.upsert({ ...card, pinned: true });
 ```
 
 Rules:

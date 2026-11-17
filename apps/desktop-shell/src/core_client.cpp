@@ -114,6 +114,12 @@ void CoreClient::sessionClose(const QString& containerId, const QString& origin,
     send(QStringLiteral("session_close"), fields, std::move(handler));
 }
 
+void CoreClient::cardUpsert(const QJsonObject& card, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("card"), card);
+    send(QStringLiteral("card_upsert"), fields, std::move(handler));
+}
+
 void CoreClient::shutdown() {
     if (!isRunning()) {
         return;

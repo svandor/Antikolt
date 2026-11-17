@@ -583,6 +583,25 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
             });
             return;
         }
+        if (method == QStringLiteral("cards.upsert")) {
+            const QJsonObject card = args.value(QStringLiteral("card")).toObject();
+            if (card.isEmpty() || core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("nincs kártya vagy a mag nem fut"));
+                return;
+            }
+            // The whole record travels, so a pin, a note and a new card are the same call; the core is
+            // the one that validates and stores it.
+            core_->cardUpsert(card, [this, request](const QJsonObject& saved, const QString& error) {
+                if (!error.isEmpty()) {
+                    replyToPage(request, {}, error);
+                    return;
+                }
+                replyToPage(request,
+                            QJsonObject{{QStringLiteral("card"),
+                                         saved.value(QStringLiteral("card"))}});
+            });
+            return;
+        }
         replyToPage(request, {}, QStringLiteral("ismeretlen híd-kérdés: %1").arg(method));
         return;
     }

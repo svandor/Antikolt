@@ -34,11 +34,29 @@ Két hiba a mérésből, mindkettő javítva: (1) a motor `ParseCommand`-ja **el
 (`protocol.h kProtocolVersion`) él, és a `welcome` ugyanazt küldi; (2) a `C4457` figyelmeztetés
 (`request` paraméter árnyékolása) `/WX` mellett hiba volt, ezért a változó `bridge_request_id`.
 
+### A kártya írása is ugyanazon a csatornán (`cards.upsert`)
+
+A kérés-irány csak akkor ér valamit, ha a lap **írni** is tud: a `cards.upsert` a teljes kártya-rekordot
+viszi (pin, jegyzet, új kártya egy hívás), a shell a maghoz adja (`card_upsert`), a mag validál és tárol.
+A `--bridgetest` ezt is méri: a lap kikeresi a „wiki” kártyát, **megfordítja a pin-jét**, elküldi, majd
+**újra kérdez** — és a második válaszban már a megfordított érték jön, mert a válasz mindig a magból
+származik, nem a lap saját másolatából.
+
+```
+asked=ok
+search_cards=1
+search_first_title=Wikipedia — kezdőlap
+unknown_method=rejected
+upsert_pinned=true
+upsert_persisted=ok
+bridge_request=ok      (exit code 0)
+```
+
 ### Ami még nyitott
 
 - A **rács saját keresése** továbbra is lokális (a lap a teljes listát kapja) — a csatorna azokra a
-  kérdésekre készült, amiket a lap egyedül nem tud megválaszolni; a következő szelet a `cards.upsert`
-  (pin/jegyzet/új kártya) ezen a csatornán.
+  kérdésekre készült, amiket a lap egyedül nem tud megválaszolni. A `cards.upsert` kész; a **rács UI-ja**
+  (a pin-jelvény kattintása) még nem használja.
 - A kérés-élettartam időkorlátja: ha a shell nem válaszol, a lap promise-a a lap élettartamáig vár; a
   motor-oldali eldobás lap-eltűnéskor kész, a shell-oldali válaszkötelezettség még nem kényszerített.
 

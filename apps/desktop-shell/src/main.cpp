@@ -1408,7 +1408,18 @@ int runBridgeCheck(const QString& enginePath) {
                                      id,
                                      QStringLiteral(
                                          "window.antikoltNative.request('cards.search', {q:'wiki'})"
-                                         ".then(function(r){window.__answer=r;},"
+                                         ".then(function(r){"
+                                         "  window.__answer=r;"
+                                         "  var card=(r.cards||[])[0];"
+                                         "  if(!card){return;}"
+                                         "  card.pinned=!card.pinned;"
+                                         "  return window.antikoltNative.request('cards.upsert',"
+                                         "    {card:card}).then(function(saved){"
+                                         "      window.__upsert=saved;"
+                                         "      return window.antikoltNative.request('cards.search',"
+                                         "        {q:'wiki'}).then(function(after){window.__after=after;});"
+                                         "    });"
+                                         "},"
                                          "function(e){window.__answer={error:String(e.message)};});"
                                          "window.antikoltNative.request('no_such_method', {})"
                                          ".then(function(r){window.__unknown=r;},"
@@ -1426,7 +1437,9 @@ int runBridgeCheck(const QString& enginePath) {
                                                  id,
                                                  QStringLiteral(
                                                      "JSON.stringify({answer: window.__answer||null,"
-                                                     " unknown: window.__unknown||null})"),
+                                                     " unknown: window.__unknown||null,"
+                                                     " upsert: window.__upsert||null,"
+                                                     " after: window.__after||null})"),
                                                  [&](const QJsonObject& value, const QString& failure) {
                                                      answer = failure.isEmpty()
                                                                   ? value.value(QStringLiteral("value"))
@@ -1447,6 +1460,10 @@ int runBridgeCheck(const QString& enginePath) {
                                  .value(QStringLiteral("cards")).toArray();
     const QString unknown_error = result.value(QStringLiteral("unknown")).toObject()
                                       .value(QStringLiteral("error")).toString();
+    const QJsonObject saved =
+        result.value(QStringLiteral("upsert")).toObject().value(QStringLiteral("card")).toObject();
+    const QJsonArray after = result.value(QStringLiteral("after")).toObject()
+                                 .value(QStringLiteral("cards")).toArray();
     QString first_title;
     for (const QJsonValue& value : cards) {
         first_title = value.toObject().value(QStringLiteral("title")).toString();
@@ -1454,10 +1471,23 @@ int runBridgeCheck(const QString& enginePath) {
     }
     const bool found = !cards.isEmpty() && first_title.toLower().contains(QStringLiteral("wiki"));
     const bool rejected = unknown_error.contains(QStringLiteral("ismeretlen"));
+    // The pin was flipped through the bridge, and the *next* question already sees it: the answer comes
+    // from the core each time, so this is persistence, not a page-local echo.
+    const bool pinned_saved = !saved.isEmpty() && saved.value(QStringLiteral("id")).toString() ==
+                                                          cards.first().toObject()
+                                                              .value(QStringLiteral("id"))
+                                                              .toString();
+    const bool pinned_persisted =
+        !after.isEmpty() &&
+        after.first().toObject().value(QStringLiteral("pinned")).toBool() ==
+            saved.value(QStringLiteral("pinned")).toBool();
     out << "search_cards=" << cards.size() << '\n';
     out << "search_first_title=" << first_title << '\n';
     out << "unknown_method=" << (rejected ? "rejected" : "FAILED") << '\n';
-    const bool ok = asked && found && rejected;
+    out << "upsert_pinned=" << (saved.value(QStringLiteral("pinned")).toBool() ? "true" : "false")
+        << '\n';
+    out << "upsert_persisted=" << (pinned_persisted ? "ok" : "FAILED") << '\n';
+    const bool ok = asked && found && rejected && pinned_saved && pinned_persisted;
     out << "bridge_request=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

@@ -1015,7 +1015,8 @@ constexpr const char* kBridgeScript = R"JS((function () {
     freezeCard: function () { return call('freeze_card', {}, false); },
     request: request,
     cards: {
-      search: function (query) { return request('cards.search', { q: query }); }
+      search: function (query) { return request('cards.search', { q: query }); },
+      upsert: function (card) { return request('cards.upsert', { card: card }); }
     }
   };
   window.dispatchEvent(new Event('antikolt-bridge-ready'));

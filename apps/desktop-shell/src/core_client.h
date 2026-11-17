@@ -35,6 +35,9 @@ public:
     void handshake();
     void cardsList(ReplyHandler handler);
     void cardOpen(const QString& cardId, ReplyHandler handler = {});
+    /// Create or replace one card (`card_upsert`): the whole record travels, so a pin, a note or a new
+    /// card is one call. The core validates it and answers with the saved card.
+    void cardUpsert(const QJsonObject& card, ReplyHandler handler = {});
     /// The session ledger and its policy (`docs/HU/10-MUNKAMENET.md`).
     ///
     /// `sessionDue` is the evaluation, not a guess: the core decides which rows are due and hands back
