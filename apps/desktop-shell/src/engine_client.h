@@ -79,6 +79,10 @@ public:
     /// The reply carries `{cleared: true, origin}`; a rejected call comes back as an error.
     void clearOriginData(qint64 surface, const QString& origin, const QStringList& storages,
                          ReplyHandler handler);
+    /// Emulate the page's `prefers-color-scheme` (`auto` clears it): `dark` or `light` (ADR-037).
+    ///
+    /// Only pages that support the query change — the browser tells them and their own CSS does the rest.
+    void setMedia(qint64 surface, const QString& media, ReplyHandler handler = {});
     /// What one surface costs: `{dom_nodes, js_heap_bytes, engine_working_set_bytes}` (ADR-036).
     ///
     /// The numbers are measured by the engine — the page's own node count and JS heap through DevTools, and

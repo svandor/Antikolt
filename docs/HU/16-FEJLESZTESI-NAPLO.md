@@ -3,6 +3,56 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harmincharmadik szelet) — az oldal-téma: sötét oldal, ahol az oldal tudja
+
+Az F7 (oldal-témák) első, becsületes szelete: a böngésző **jelzi** a lapnak a `prefers-color-scheme`-et,
+nem kényszerít színeket. A motor új `set_media` opja `Emulation.setEmulatedMedia`-val állítja (`auto` = nincs
+felülírás, `dark`, `light`), a shell toolbar-gombja körbeforgatja (auto → dark → light), és **emlékszik** a
+választásra: minden felület-becsatolásnál és betöltésnél újra alkalmazza, mert az emuláció csak az épp
+látszó lapra érvényes. A döntés az ADR-037-ben.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --mediatest <motor>
+media_dark=dark       ← a lap matchMedia-je igazat mond
+media_light=light     ← ...és vissza is vált
+site_theme=ok      (exit code 0)
+```
+
+A tanú a lap saját `matchMedia('(prefers-color-scheme: dark)').matches` értéke — a shell semmit nem
+állíthat anélkül, hogy a lap ne látná. Mindkét irányt mérjük, mert egy lap, amely mindig sötétet jelent,
+nem követi a böngészőt, hanem egyszerűen sötét.
+
+### Hiba a mérésből, javítva
+
+A teszt először **hozzáférési hibával** (0xC0000005) állt le, mert a `loadFinished` kezelőn belül definiált
+`ask` lambdát referenciaként kapták el a később futó időzítők: a kezelő stackje már nem élt, amikor az
+időzítő tüzelt. A lambda most a kezelőn **kívül** él, és **érték szerint** másolódik az időzítőkbe (a
+`surface` azonosítót paraméterként kapja, nem referenciaként). Tanulság a naplónak: a Qt időzítő + C++ lambda
+kombinációja csendben függő referenciát csinál, ha a lambdát egy rövid életű scope-ban deklaráljuk.
+
+### Egy második, lassabban megmutatkozó hiba: a `capture` elakadhat
+
+A teljes `verify.ps1` futásban a `--previewgentest` **néha** elbukott, önállóan viszont mindig átment. A
+nyomkövetés megmutatta: a motor **soha nem válaszolt** a `capture`-re, a shell a saját 20 s-os
+kérés-timeoutjáig várt, a teszt pedig 10 s után továbblépett — és a végén a `shutdown` után érkező hiba
+(`a motorház kilépett (kód 0)`) leplezte el a valódi okot. A naplóban a GPU-folyamat
+`ContextResult::kFatalFailure` hurka látszik ugyanabban a másodpercben, tehát a `Page.captureScreenshot`
+elakadhat, amíg a GPU-folyamat újraindul.
+
+Két javítás: (1) a shell **egyszer újrapróbálja** az elakadt felvételt (`kPreviewAttempts = 2`, 1,5 s
+szünettel) — egy GPU-hiba ne vegyen el egy előnézetet; (2) a teszt most a shell timeoutjánál is **tovább
+vár** (60 × 400 ms) és kiírja a várakozás hosszát (`preview_wait_ticks`). Öt egymás utáni futás: mind
+`preview_generation=ok`.
+
+### Ami még nyitott
+
+- **Oldalankénti kivétel** („ez az oldal maradjon világos”) — ma a beállítás globális.
+- A `prefers-color-scheme`-et nem ismerő oldalak **rákényszerített** sötétítése: szándékosan nincs (a kép,
+  a márka és a kontraszt sérülne); ha kell, külön ADR-rel.
+- A `scroll` és a `set_zoom` továbbra is `not_supported`.
+
 ## 2026-11-17 (harminckettedik szelet) — a memória-szám valódi: a motor méri, a lap látja
 
 A termék ígérete a memóriatakarékos böngésző, de a felület semmit nem mutatott: a lap `system.memory`

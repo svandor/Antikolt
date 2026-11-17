@@ -102,7 +102,8 @@ $engineChecks = @(
     @{ Name = 'timeouttest'; Args = @('--timeouttest') },
     @{ Name = 'previewtest'; Args = @('--previewtest') },
     @{ Name = 'previewgentest'; Args = @('--previewgentest') },
-    @{ Name = 'metricstest'; Args = @('--metricstest') }
+    @{ Name = 'metricstest'; Args = @('--metricstest') },
+    @{ Name = 'mediatest'; Args = @('--mediatest') }
 )
 
 foreach ($check in $engineChecks) {

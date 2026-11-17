@@ -231,6 +231,13 @@ void EngineClient::destroySurface(qint64 surface, ReplyHandler handler) {
     send(QStringLiteral("destroy_surface"), fields, std::move(handler));
 }
 
+void EngineClient::setMedia(qint64 surface, const QString& media, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("media"), media);
+    send(QStringLiteral("set_media"), fields, std::move(handler));
+}
+
 void EngineClient::metrics(qint64 surface, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));

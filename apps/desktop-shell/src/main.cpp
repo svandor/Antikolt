@@ -1379,6 +1379,73 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the site theme reaches the page: `prefers-color-scheme` flips, and flips back (ADR-037).
+///
+/// The witness is the page's own `matchMedia`: nothing in the shell may claim the page changed. Both
+/// directions matter — a page that only ever reports dark is not following the browser, it is dark.
+int runMediaCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool dark = false;
+    bool light = false;
+    {
+        QEventLoop loop;
+        // Defined outside the load handler and copied (not referenced) into the timers: a lambda that
+        // lives on a load handler's stack is gone by the time a timer fires, and using it then is a
+        // dangling reference — measured as an access violation, not as a wrong answer.
+        const auto ask = [&window, &dark, &light](qint64 surface, const QString& which) {
+            window.engine()->evaluate(
+                surface,
+                QStringLiteral("String(matchMedia('(prefers-color-scheme: dark)').matches)"),
+                [&dark, &light, which](const QJsonObject& reply, const QString& error) {
+                    const QString value = error.isEmpty()
+                                              ? reply.value(QStringLiteral("value")).toString()
+                                              : error;
+                    if (which == QStringLiteral("dark")) {
+                        dark = value == QStringLiteral("true");
+                    } else {
+                        light = value == QStringLiteral("true");
+                    }
+                });
+        };
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             QTimer::singleShot(900, &loop, [&, id, ask] {
+                                 window.setPageMedia(QStringLiteral("dark"));
+                                 // The emulation is asynchronous; read it after it has landed.
+                                 QTimer::singleShot(1200, &loop, [&, id, ask] {
+                                     ask(id, QStringLiteral("dark"));
+                                     window.setPageMedia(QStringLiteral("light"));
+                                     QTimer::singleShot(1200, &loop, [&, id, ask] {
+                                         ask(id, QStringLiteral("light"));
+                                         QTimer::singleShot(1200, &loop, [&] { loop.quit(); });
+                                     });
+                                 });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "media_dark=" << (dark ? "dark" : "FAILED") << '\n';
+    out << "media_light=" << (!light ? "light" : "FAILED") << '\n';
+    const bool ok = dark && !light;
+    out << "site_theme=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the memory figure is *measured*: the engine counts the page, the shell answers the page.
 ///
 /// Two witnesses again: the engine's own `metrics` reply (DOM nodes, working set) and the page's
@@ -1543,6 +1610,7 @@ int runPreviewGenCheck(const QString& enginePath) {
 
     bool clicked = false;
     QString preview_state;
+    int poll_attempts = 0;
     {
         QEventLoop loop;
         QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
@@ -1579,35 +1647,50 @@ int runPreviewGenCheck(const QString& enginePath) {
                              if (!url.startsWith(origin)) {
                                  return;
                              }
-                             // The card is loaded: the shell captures it, moves the file and writes the
-                             // name back. Give those three round trips their moment, then look.
-                             QTimer::singleShot(3500, &loop, [&, id] {
-                                 window.engine()->evaluate(
-                                     id,
-                                     QStringLiteral(
-                                         "window.__shot='pending';"
-                                         "(function(){var i=new Image();"
-                                         "i.onload=function(){window.__shot='loaded:'+"
-                                         "i.naturalWidth+'x'+i.naturalHeight;};"
-                                         "i.onerror=function(){window.__shot='error';};"
-                                         "i.src='antikolt://blob/preview-probe.png';})();"
-                                         " 'asked'"),
-                                     [&](const QJsonObject&, const QString&) {
-                                         QTimer::singleShot(1200, &loop, [&, id] {
-                                             window.engine()->evaluate(
-                                                 id,
-                                                 QStringLiteral("String(window.__shot)"),
-                                                 [&](const QJsonObject& shot,
-                                                     const QString& shot_error) {
-                                                     preview_state = shot_error.isEmpty()
-                                                                         ? shot.value(QStringLiteral("value"))
-                                                                               .toString()
-                                                                         : shot_error;
-                                                     loop.quit();
-                                                 });
+                             // The card is loaded: the shell captures it, copies the file and writes the
+                             // name back. Poll for the result instead of trusting a fixed delay — three
+                             // round trips on a busy machine take longer than they do on an idle one, and a
+                             // fixed wait is how a check becomes flaky.
+                             auto* poll = new QTimer(&loop);
+                             QObject::connect(poll, &QTimer::timeout, &loop, [&, id, poll] {
+                                 ++poll_attempts;
+                                 // The shell retries a stalled capture once and its own request timeout is
+                                 // 20 s, so the poll waits longer than that before giving up.
+                                 if (!QFileInfo::exists(target) && poll_attempts <= 60) {
+                                     return;
+                                 }
+                                 out << "preview_wait_ticks=" << poll_attempts << '\n';
+                                 poll->stop();
+                                 QTimer::singleShot(700, &loop, [&, id] {
+                                     window.engine()->evaluate(
+                                         id,
+                                         QStringLiteral(
+                                             "window.__shot='pending';"
+                                             "(function(){var i=new Image();"
+                                             "i.onload=function(){window.__shot='loaded:'+"
+                                             "i.naturalWidth+'x'+i.naturalHeight;};"
+                                             "i.onerror=function(){window.__shot='error';};"
+                                             "i.src='antikolt://blob/preview-probe.png';})();"
+                                             " 'asked'"),
+                                         [&](const QJsonObject&, const QString&) {
+                                             QTimer::singleShot(1200, &loop, [&, id] {
+                                                 window.engine()->evaluate(
+                                                     id,
+                                                     QStringLiteral("String(window.__shot)"),
+                                                     [&](const QJsonObject& shot,
+                                                         const QString& shot_error) {
+                                                         preview_state =
+                                                             shot_error.isEmpty()
+                                                                 ? shot.value(QStringLiteral("value"))
+                                                                       .toString()
+                                                                 : shot_error;
+                                                         loop.quit();
+                                                     });
+                                             });
                                          });
-                                     });
+                                 });
                              });
+                             poll->start(400);
                          });
         QTimer::singleShot(60000, &loop, &QEventLoop::quit);
         loop.exec();
@@ -2583,6 +2666,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("metricstest"),
         QStringLiteral("Prove the memory figure is measured by the engine, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption mediatest(
+        QStringLiteral("mediatest"),
+        QStringLiteral("Prove the site theme reaches the page, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -2604,11 +2691,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(previewtest);
     parser.addOption(previewgentest);
     parser.addOption(metricstest);
+    parser.addOption(mediatest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(mediatest)) {
+        return runMediaCheck(parser.value(mediatest));
     }
 
     if (parser.isSet(metricstest)) {

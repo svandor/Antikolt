@@ -104,6 +104,11 @@ bool ParseCommand(const std::string& payload, Command* out) {
     out->bridge_request = static_cast<int64_t>(GetNumber(message, "request"));
     out->json = GetString(message, "json");
     out->error = GetString(message, "error");
+    // Site theme emulation (`set_media`): auto | dark | light.
+    const std::string media = GetString(message, "media");
+    if (!media.empty()) {
+        out->media = media;
+    }
     if (CefRefPtr<CefValue> storages = message->GetValue("storages")) {
         if (storages->GetType() == VTYPE_LIST) {
             CefRefPtr<CefListValue> list = storages->GetList();

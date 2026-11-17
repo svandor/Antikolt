@@ -50,6 +50,9 @@ struct Command {
     std::string format = "png";
     /// Quality for the lossy encodings, 0..100. Ignored by PNG.
     int quality = 80;
+    /// Site theme emulation (`set_media`, ADR-037): `auto` (no override), `dark` or `light` for
+    /// `prefers-color-scheme`. Applied through DevTools, so pages that support the query follow it.
+    std::string media = "auto";
     int width = 1280;
     int height = 800;
     int protocol = 0;

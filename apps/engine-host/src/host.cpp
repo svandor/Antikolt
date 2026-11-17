@@ -788,6 +788,56 @@ std::string ScalarToString(CefRefPtr<CefValue> value) {
     }
 }
 
+/// Emulates the page's `prefers-color-scheme` (`set_media`, ADR-037).
+///
+/// This is how a page that *supports* a dark theme actually gets one: the browser reports the emulated
+/// value through `Emulation.setEmulatedMedia`, and the page's own CSS does the rest. A page without such
+/// support is untouched — forcing colours onto a page that never asked for them is a different, riskier
+/// feature (and would need `forced-colors`, not this).
+class MediaEmulation : public CefBaseRefCounted {
+public:
+    MediaEmulation(int64_t request_id, std::string media)
+        : request_id_(request_id), media_(std::move(media)) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<MediaEmulation> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        CefRefPtr<CefListValue> features = CefListValue::Create();
+        if (media_ != "auto") {
+            CefRefPtr<CefDictionaryValue> feature = CefDictionaryValue::Create();
+            feature->SetString("name", "prefers-color-scheme");
+            feature->SetString("value", media_);
+            features->SetDictionary(0, feature);
+        }
+        // An empty feature list is how the override is cleared.
+        params->SetList("features", features);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Emulation.setEmulatedMedia", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) { self->OnApplied(reply); }));
+        return call->Start(browser);
+    }
+
+private:
+    void OnApplied(const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            StdioLink::Instance().ReplyError(request_id_,
+                                             reply.from_protocol ? "invalid_argument" : "internal",
+                                             reply.error.c_str());
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetString("media", media_);
+        StdioLink::Instance().Reply(request_id_, result);
+    }
+
+    int64_t request_id_;
+    std::string media_;
+
+    IMPLEMENT_REFCOUNTING(MediaEmulation);
+    DISALLOW_COPY_AND_ASSIGN(MediaEmulation);
+};
+
 /// Accounts what one surface costs: DOM nodes and JS heap from the page, plus this process's working set.
 ///
 /// The memory promise is only honest if it is measured, so the numbers come from the browser itself rather
@@ -1643,6 +1693,23 @@ int RunEngineHostServer(const HostConfig& config) {
                                     "clearing origin data needs the DevTools protocol");
                 }
                 // The reply is sent by the call itself once the protocol answered.
+            } else if (command.op == "set_media") {
+                if (!state.browser || !state.browser->GetMainFrame()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                if (command.media != "auto" && command.media != "dark" &&
+                    command.media != "light") {
+                    link.ReplyError(command.id, "invalid_argument",
+                                    "media must be auto, dark or light");
+                    continue;
+                }
+                CefRefPtr<MediaEmulation> media(new MediaEmulation(command.id, command.media));
+                if (!media->Start(state.browser)) {
+                    link.ReplyError(command.id, "not_supported",
+                                    "DevTools is unavailable, cannot emulate media");
+                }
+                // The reply is sent by the emulation object when DevTools confirms it.
             } else if (command.op == "metrics") {
                 // What one surface costs: the page's own numbers plus this process's working set. Only a
                 // live surface can be measured; a hidden one has no document to count.

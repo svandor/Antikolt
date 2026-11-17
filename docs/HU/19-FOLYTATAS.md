@@ -110,6 +110,13 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > **Ami hátra van:** a memória-**büdzsé** (F6) és a kártyánkénti bontás; a JS-halom a Chromium miatt
 > kvantált, tehát indikátor.
 
+## 4c. Oldal-téma (kész, ADR-037)
+
+> A motor `set_media` opja a `prefers-color-scheme`-et állítja (`auto`/`dark`/`light`), a shell toolbar-gombja
+> körbeforgatja és emlékszik rá (minden betöltésnél újra alkalmazza). `--mediatest`: `media_dark=dark`,
+> `media_light=light`, `site_theme=ok`.
+> **Ami hátra van:** oldalankénti kivétel, rákényszerített sötétítés (szándékosan nincs), `scroll`/`set_zoom`.
+
 ## 5. Széf és passkey
 
 **Miért:** F4/F4b; a varrat kész (`crates/antikolt-core/src/vault.rs`, 10 teszt, ADR-031).

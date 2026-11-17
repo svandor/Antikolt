@@ -50,6 +50,10 @@ constexpr int kPageAnswerMs = 5000;
 /// persistence the core does not have yet, and that is recorded as open work rather than faked).
 constexpr int kPreviewCap = 40;
 
+/// How many times one preview is attempted before it is given up. Two attempts tolerate one stalled
+/// capture; more would turn a broken engine into a screenshot loop.
+constexpr int kPreviewAttempts = 2;
+
 /// The origin of a URL (`scheme://host[:port]`), or "" when the scheme has no storable origin.
 ///
 /// The session ledger is keyed by origin, and a wipe must name the same string the browser uses: a
@@ -120,6 +124,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                               .arg(surface)
                               .arg(httpStatus)
                               .arg(url));
+                // The emulation belongs to the page that is showing, so a navigation forgets it: the
+                // remembered preference is applied again on every load (ADR-037).
+                if (page_media_ != QStringLiteral("auto") && engine_ != nullptr) {
+                    engine_->setMedia(surface, page_media_, nullptr);
+                }
                 // The grid must show the cards the core owns, so the list is pushed once the page is
                 // there to receive it. Only the home surface gets it; a real card is not a grid.
                 if (surface == home_surface_) {
@@ -774,6 +783,22 @@ void MainWindow::showSessions() {
     refreshSessions();
 }
 
+void MainWindow::setPageMedia(const QString& media) {
+    if (media != QStringLiteral("auto") && media != QStringLiteral("dark") &&
+        media != QStringLiteral("light")) {
+        return;
+    }
+    page_media_ = media;
+    if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0) {
+        setStatus(QStringLiteral("oldal-téma: %1 (nincs élő felület)").arg(media));
+        return;
+    }
+    engine_->setMedia(surface_, media, [this, media](const QJsonObject&, const QString& error) {
+        setStatus(error.isEmpty() ? QStringLiteral("oldal-téma: %1").arg(media)
+                                  : QStringLiteral("oldal-téma hiba: %1").arg(error));
+    });
+}
+
 void MainWindow::producePreview(qint64 surface) {
     if (pending_card_id_.isEmpty() || engine_profile_.isEmpty() || previews_made_ >= kPreviewCap) {
         return;
@@ -824,29 +849,41 @@ void MainWindow::producePreview(qint64 surface) {
             remember(name);
             return;
         }
-        engine_->capture(
-            surface, QStringLiteral("png"), 80,
-            [this, target, remember](const QJsonObject& shot, const QString& shot_error) {
-                qInfo("[shell] preview: capture error='%s' path='%s'", qUtf8Printable(shot_error),
-                      qUtf8Printable(shot.value(QStringLiteral("path")).toString()));
-                if (!shot_error.isEmpty()) {
-                    return;
-                }
-                const QString written = shot.value(QStringLiteral("path")).toString();
-                if (written.isEmpty()) {
-                    return;
-                }
-                // `capture` writes into `screenshots/`; the preview belongs in `previews/` under the name
-                // the card carries, so the engine's scheme handler finds it.
-                QFile::remove(target);
-                if (!QFile::copy(written, target)) {
-                    qInfo("[shell] preview: copy failed to %s", qUtf8Printable(target));
-                    setStatus(QStringLiteral("az előnézet nem került a profilba: %1").arg(target));
-                    return;
-                }
-                qInfo("[shell] preview: copied to %s", qUtf8Printable(target));
-                remember(target);
-            });
+        // A capture can stall behind a GPU hiccup (measured: `Page.captureScreenshot` sometimes answers only
+        // after the GPU process has restarted twice), so one retry is cheaper than a lost preview. The
+        // engine's own request timeout bounds each attempt; after the last one the preview is skipped and
+        // the status line says so — a failed preview is not a failed browser.
+        const auto capture_to = [this, surface, target, remember](auto&& self, int attempt) -> void {
+            engine_->capture(
+                surface, QStringLiteral("png"), 80,
+                [this, target, remember, self, attempt](const QJsonObject& shot,
+                                                        const QString& shot_error) {
+                    const QString written = shot.value(QStringLiteral("path")).toString();
+                    if (!shot_error.isEmpty() || written.isEmpty()) {
+                        qInfo("[shell] preview: capture attempt %d failed: %s", attempt,
+                              qUtf8Printable(shot_error.isEmpty()
+                                                 ? QStringLiteral("no path in the reply")
+                                                 : shot_error));
+                        if (attempt < kPreviewAttempts) {
+                            QTimer::singleShot(1500, this, [self, attempt] {
+                                self(self, attempt + 1);
+                            });
+                        }
+                        return;
+                    }
+                    // `capture` writes into `screenshots/`; the preview belongs in `previews/` under the
+                    // name the card carries, so the engine's scheme handler finds it.
+                    QFile::remove(target);
+                    if (!QFile::copy(written, target)) {
+                        qInfo("[shell] preview: copy failed to %s", qUtf8Printable(target));
+                        setStatus(QStringLiteral("az előnézet nem került a profilba: %1").arg(target));
+                        return;
+                    }
+                    qInfo("[shell] preview: copied to %s", qUtf8Printable(target));
+                    remember(target);
+                });
+        };
+        capture_to(capture_to, 1);
     });
 }
 
@@ -1003,6 +1040,16 @@ void MainWindow::buildToolBar() {    auto* toolbar = addToolBar(QStringLiteral("
     toolbar->addAction(QStringLiteral("⌂ Kezdőlap"), this, &MainWindow::loadHome);
     toolbar->addAction(QStringLiteral("❄ Fagyasztás"), this, &MainWindow::freezeCard);
     toolbar->addAction(QStringLiteral("🗂 Munkamenetek"), this, &MainWindow::showSessions);
+    // Site themes (ADR-037): the page decides what `prefers-color-scheme` means; this only reports it.
+    auto* siteTheme = toolbar->addAction(QStringLiteral("🌓 Oldal-téma: auto"));
+    siteTheme->setObjectName(QStringLiteral("siteThemeAction"));
+    connect(siteTheme, &QAction::triggered, this, [this, siteTheme] {
+        const QStringList modes = {QStringLiteral("auto"), QStringLiteral("dark"),
+                                   QStringLiteral("light")};
+        const int next = (modes.indexOf(page_media_) + 1) % modes.size();
+        setPageMedia(modes.at(next));
+        siteTheme->setText(QStringLiteral("🌓 Oldal-téma: %1").arg(page_media_));
+    });
 
     auto* spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);

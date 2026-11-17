@@ -94,6 +94,12 @@ public:
     /// when their card is next opened, because this shell has exactly one live surface (I1) and a
     /// cleanup must not steal the page the user is reading.
     void cleanupSessions();
+    /// Emulate the live page's site theme: `auto`, `dark` or `light` (ADR-037).
+    ///
+    /// The preference is remembered and re-applied when a surface attaches or loads, because the emulation
+    /// belongs to the page that is showing: a page that navigates away would otherwise forget it. Public
+    /// for the same reason the panel helpers are — the self test drives the real path.
+    void setPageMedia(const QString& media);
 
 public slots:
     void startEngine();
@@ -181,6 +187,8 @@ private:
     /// How many previews this run has produced; the cap keeps a long browsing session from filling the
     /// disk with screenshots.
     int previews_made_ = 0;
+    /// The site theme the user asked for (`auto`, `dark`, `light`), re-applied on every surface (ADR-037).
+    QString page_media_ = QStringLiteral("auto");
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
 };

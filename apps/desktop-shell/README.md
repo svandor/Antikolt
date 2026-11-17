@@ -103,6 +103,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   `previews` directory, the home page loads it as `antikolt://blob/probe.png`, and the page's own witness
   must report `naturalWidth × naturalHeight`. A second request for `..%2Fhost.cpp` must be *refused* — a
   card's data may not read another file through the browser.
+- `--mediatest` — the site theme reaches the page (ADR-037): `setPageMedia("dark")` must make the page's own
+  `matchMedia('(prefers-color-scheme: dark)')` true, and `"light"` must make it false again. Both directions,
+  because a page that only ever reports dark is not following the browser, it is dark.
 - `--metricstest` — the memory figure is measured (ADR-036): the engine counts the page (DOM nodes, JS
   heap) and reports its own working set, and the page's `system.memory` question comes back through the
   request channel with a non-zero `usedBytes`. Two witnesses: the engine's reply and the page's answer.

@@ -3,6 +3,25 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-037 — Az oldal-témát a lap dönti el, a böngésző csak jelenti (`set_media`) (2026-11-17)
+
+**Kontextus.** A sötét oldal-téma (F7) kétféleképp képzelhető el: a böngésző **rákényszeríti** a színeket
+minden oldalra (invertálás, `forced-colors`), vagy **jelzi** a lapnak, hogy a felhasználó sötétet kér, és a
+lap saját CSS-e dönt. Az első erőszakos: tönkreteszi a képeket, a márkaszíneket és a kontrasztot, és a
+felhasználó nem tudja visszavonni oldalanként. A második az, amit a platform is kínál
+(`prefers-color-scheme`).
+
+**Döntés.** A shell a motor `set_media` opján keresztül `Emulation.setEmulatedMedia`-val állítja a
+`prefers-color-scheme`-et (`auto` = nincs felülírás, `dark`, `light`), és **emlékszik** a választásra: minden
+felület-becsatolásnál és betöltésnél újra alkalmazza, mert az emuláció ahhoz a laphoz tartozik, amelyik
+éppen látszik. A lap, amely nem támogatja a lekérdezést, **változatlan marad** — ez szándékos: a
+rákényszerített színek külön, kockázatosabb funkció lennének (és nem ez az op).
+
+**Következmény.** (+) a felhasználó egy kattintással sötét oldalt kap ott, ahol az oldal támogatja, és
+visszakapcsolhatja; (+) a lap saját márkája és képei épek maradnak; (+) a beállítás felület- és
+navigáció-független (újra alkalmazzuk); (−) azok az oldalak, amelyek nem ismerik a lekérdezést, nem
+változnak — a felület ezt nem ígéri; (−) az oldalankénti kivétel („ez az oldal maradjon világos”) még nincs.
+
 ## ADR-036 — A memória-számot a motor méri, a lap a híd kérés-csatornáján kapja meg (2026-11-17)
 
 **Kontextus.** A termék ígérete a „memóriatakarékos" böngésző, de a felület semmit nem mutatott a
@@ -236,6 +255,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-034 | A lap kérdezhet: perzisztens `cefQuery` + `bridge_reply` = protokoll v2 (az ADR-032 továbbra is érvényes az egyirányú hívásokra) | Elfogadva |
 | ADR-035 | A kártya-előnézetet a motor szolgálja ki a profilból (`antikolt://blob/`), a nevet a könyvtáron belül oldva fel | Elfogadva |
 | ADR-036 | A memóriát a motor méri (`metrics`), a lap a kérés-csatornán kapja; a büdzsé 0, amíg a profilok nem hordozzák | Elfogadva |
+| ADR-037 | Az oldal-témát a lap dönti el: `set_media` a `prefers-color-scheme`-et állítja, nem kényszerít színt | Elfogadva |
 
 ---
 
