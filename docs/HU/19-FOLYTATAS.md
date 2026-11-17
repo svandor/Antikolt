@@ -54,13 +54,13 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 
 ## 2. 24 órás munkamenet-politika + ledger
 
-> **Állapot: a döntés, a panel és a végrehajtás együtt kész és mérve** (22–24. szelet, ADR-033).
-> `sessions.json` + `SessionStore` + négy huzal-op, a döntés a magban (`plan_cleanup`), a terv a sorral
-> együtt jön, a motor `clear_origin_data`-ja `Storage.clearDataForOrigin`-nal **töröl** is.
-> `--coretest`: `session_ledger=ok`; `--sessionpanel`: `panel_rows=1`, `session_panel=ok`;
-> `--wipetest`: `storage_before=1|probe=1` → `clear=ok` → `storage_after=|`, `wipe=ok`.
-> **Ami hátra van:** a **panelről indított** takarítás (a due sor kártyájának háttérben megnyitása →
-> törlés → vissza a rácsra), a `session_rules` op + szabály-szerkesztés, és a `LossEstimate` kijelzése.
+> **Állapot: kész és mérve** (22–25. szelet, ADR-033) — a döntés a magban (`plan_cleanup`, `session_due`),
+> a ledger `sessions.json`-ban, a panel mutatja, a **„Takarítás most” gomb végre is hajtja** (azonnal a
+> nyitott originre, egyébként a kártya következő megnyitásakor), a motor `Storage.clearDataForOrigin`-nal
+> töröl. Öntesztek: `--coretest` `session_ledger=ok`, `--sessionpanel` `session_panel=ok`, `--wipetest`
+> `wipe=ok`, `--cleanuptest` `cleanup=ok` (`page_wrote=ok`, `storage_after=|`, `origin_rows=0`).
+> **Ami hátra van:** `session_rules` op + szabály-szerkesztés a panelen, `LossEstimate` kijelzés, és a
+> takarítás média-kivétele.
 
 **Miért:** M3 („saját napi böngésző”) fő tétele: `keep`/`sweep`/`wipe`, látható munkamenet-panellel.
 

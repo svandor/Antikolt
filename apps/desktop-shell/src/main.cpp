@@ -81,6 +81,56 @@ void ForwardQtMessages(QtMsgType type, const QMessageLogContext& context, const 
     }
 }
 
+/// A one-page HTTP origin for the storage tests: no internet, but a real origin with real storage.
+///
+/// `file://` has no storable origin and `data:` has an opaque one, so a check that a wipe really wipes
+/// needs a page a browser can own. Serving it from this process keeps the check offline.
+class ProbeOrigin {
+public:
+    explicit ProbeOrigin(const QString& html) {
+        QObject::connect(&server_, &QTcpServer::newConnection, &server_, [this, html] {
+            while (QTcpSocket* socket = server_.nextPendingConnection()) {
+                QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, html] {
+                    socket->readAll();
+                    const QByteArray body = html.toUtf8();
+                    QByteArray response =
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                        "Cache-Control: no-store\r\nConnection: close\r\nContent-Length: " +
+                        QByteArray::number(body.size()) + "\r\n\r\n" + body;
+                    socket->write(response);
+                    socket->disconnectFromHost();
+                });
+            }
+        });
+        if (server_.listen(QHostAddress::LocalHost, 0)) {
+            origin_ = QStringLiteral("http://127.0.0.1:%1").arg(server_.serverPort());
+        }
+    }
+
+    bool listening() const { return !origin_.isEmpty(); }
+    QString origin() const { return origin_; }
+    QString errorString() const { return server_.errorString(); }
+
+private:
+    QTcpServer server_;
+    QString origin_;
+};
+
+/// The page the storage tests use: it writes one cookie and one localStorage entry on load, and leaves a
+/// witness (`window.__wrote`) that it did — a wipe check must not confuse "never written" with "cleared".
+QString storageProbePage() {
+    return QStringLiteral(
+        "<!doctype html><meta charset=\"utf-8\"><title>wipe probe</title><script>"
+        "localStorage.setItem('probe','1');document.cookie='probe=1; path=/';"
+        "window.__wrote=true;</script>"
+        "<h1>wipe probe</h1>");
+}
+
+/// What a page's storage looks like from the inside: localStorage and document.cookie, joined by `|`.
+QString storageReadScript() {
+    return QStringLiteral("(localStorage.getItem('probe')||'')+'|'+document.cookie");
+}
+
 /// Drive the engine host once and report what it says. True when the whole exchange worked.
 bool runEngineCheck(const QString& enginePath) {
     QTextStream out(stdout);
@@ -1054,6 +1104,164 @@ int runOpenCheck(const QString& enginePath) {
 
 /// Prove the shell can talk to the core: handshake, read the card list, and record an open. The core
 /// owns the data, so this seam is where every later feature (sessions, policies) will hang.
+/// Prove the policy's verdict is executed: a due origin is wiped when its card is next opened.
+///
+/// The row is written with `last_seen_ms: 0` and a `wipe` policy, so the core judges it expired. The
+/// window is asked to clean up while the grid is showing — nothing can be wiped immediately, because the
+/// shell has one surface (I1) — and only when the card for that origin opens does the engine clear it.
+/// Two witnesses: the page says it wrote (`window.__wrote`), and its storage is empty afterwards; the
+/// ledger row must be gone too.
+int runCleanupCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    ProbeOrigin probe(storageProbePage());
+    if (!probe.listening()) {
+        out << "server=FAILED " << probe.errorString() << '\n';
+        return 1;
+    }
+    const QString origin = probe.origin();
+    out << "origin=" << origin << '\n';
+
+    const QString core_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                             QStringLiteral("/core");
+    QDir().mkpath(core_dir);
+
+    // 1. A due row for that origin. The oracle stays up to read the ledger back afterwards.
+    CoreClient oracle;
+    if (!oracle.start(MainWindow::coreExecutable(), core_dir)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    bool written = false;
+    {
+        QEventLoop loop;
+        QJsonObject session;
+        session.insert(QStringLiteral("container_id"), QStringLiteral("c-private"));
+        session.insert(QStringLiteral("origin"), origin);
+        session.insert(QStringLiteral("state"), QStringLiteral("expired"));
+        session.insert(QStringLiteral("policy"), QStringLiteral("wipe"));
+        session.insert(QStringLiteral("cookie_count"), 1);
+        session.insert(QStringLiteral("cookie_bytes"), 64);
+        session.insert(QStringLiteral("storage_bytes"), 1024);
+        session.insert(QStringLiteral("service_worker_count"), 0);
+        session.insert(QStringLiteral("last_seen_ms"), 0);
+        session.insert(QStringLiteral("last_verified_ms"), 0);
+        session.insert(QStringLiteral("live_ram_bytes"), QJsonValue::Null);
+        session.insert(QStringLiteral("keep_alive"), false);
+        oracle.sessionUpsert(session, [&](const QJsonObject&, const QString& error) {
+            written = error.isEmpty();
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    if (!written) {
+        out << "session_written=FAILED\n";
+        oracle.shutdown();
+        return 1;
+    }
+    out << "session_written=ok\n";
+    // The oracle is done: it reads the ledger once at start-up, so it could only ever report stale rows.
+    oracle.shutdown();
+
+    // 2. The window: queue the cleanup on the grid, then open the card the policy marked.
+    MainWindow window;
+    window.show();
+    window.move(120, 90);
+    window.startEngine();
+
+    qint64 card_surface = 0;
+    QString storage_after;
+    bool page_wrote = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:"))) {
+                                 QTimer::singleShot(500, &loop, [&] {
+                                     window.cleanupSessions();
+                                     QTimer::singleShot(500, &loop, [&] {
+                                         window.openCard(origin + QStringLiteral("/"),
+                                                         QStringLiteral("cleanup probe"));
+                                     });
+                                 });
+                                 return;
+                             }
+                             if (!url.startsWith(origin) || card_surface != 0) {
+                                 return;
+                             }
+                             card_surface = id;
+                             // The shell clears the origin while this load finishes; give it a moment,
+                             // then read the page's own witness and its storage.
+                             QTimer::singleShot(900, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "JSON.stringify({wrote: window.__wrote===true, storage: ") +
+                                         storageReadScript() + QStringLiteral("})"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         if (error.isEmpty()) {
+                                             const QJsonObject state = QJsonDocument::fromJson(
+                                                     reply.value(QStringLiteral("value"))
+                                                         .toString()
+                                                         .toUtf8())
+                                                                          .object();
+                                             page_wrote = state.value(QStringLiteral("wrote")).toBool();
+                                             storage_after =
+                                                 state.value(QStringLiteral("storage")).toString();
+                                         }
+                                         loop.quit();
+                                     });
+                             });
+                         });
+        QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    // 3. The row for *this* origin must be gone: the plan was executed, not just shown. The store is
+    //    shared with the other checks (the shell has one data directory), so the ledger is not empty —
+    //    only this origin's row has to be. A **fresh** client reads the file the shell just wrote; the
+    //    oracle's own copy was loaded before the wipe and would report stale rows.
+    int rows_left = -1;
+    int origin_rows = -1;
+    {
+        CoreClient verifier;
+        if (!verifier.start(MainWindow::coreExecutable(), core_dir)) {
+            out << "verify_start=FAILED\n";
+        } else {
+            QEventLoop loop;
+            verifier.sessionList([&](const QJsonObject& listed, const QString& error) {
+                if (error.isEmpty()) {
+                    const QJsonArray sessions = listed.value(QStringLiteral("sessions")).toArray();
+                    rows_left = sessions.size();
+                    int mine = 0;
+                    for (const QJsonValue& value : sessions) {
+                        if (value.toObject().value(QStringLiteral("origin")).toString() == origin) {
+                            ++mine;
+                        }
+                    }
+                    origin_rows = mine;
+                }
+                loop.quit();
+            });
+            QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+            loop.exec();
+            verifier.shutdown();
+        }
+    }
+
+    out << "page_wrote=" << (page_wrote ? "ok" : "FAILED") << '\n';
+    out << "storage_after=" << storage_after << '\n';
+    out << "rows_left=" << rows_left << " origin_rows=" << origin_rows << '\n';
+    const bool ok = page_wrote && storage_after == QStringLiteral("|") && origin_rows == 0;
+    out << "cleanup=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can clear one origin's storage — the execution half of the 24-hour policy.
 ///
 /// The origin is a real `http://` one served by a socket in this process, because storage needs an
@@ -1067,30 +1275,12 @@ int runWipeCheck(const QString& enginePath) {
     QDir(profile).removeRecursively();
     QDir().mkpath(profile);
 
-    QTcpServer server;
-    if (!server.listen(QHostAddress::LocalHost, 0)) {
-        out << "server=FAILED " << server.errorString() << '\n';
+    ProbeOrigin probe(storageProbePage());
+    if (!probe.listening()) {
+        out << "server=FAILED " << probe.errorString() << '\n';
         return 1;
     }
-    const QString html = QStringLiteral(
-        "<!doctype html><meta charset=\"utf-8\"><title>wipe probe</title><script>"
-        "localStorage.setItem('probe','1');document.cookie='probe=1; path=/';</script>"
-        "<h1>wipe probe</h1>");
-    QObject::connect(&server, &QTcpServer::newConnection, &server, [&server, html] {
-        while (QTcpSocket* socket = server.nextPendingConnection()) {
-            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, html] {
-                socket->readAll();
-                const QByteArray body = html.toUtf8();
-                QByteArray response =
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
-                    "Cache-Control: no-store\r\nConnection: close\r\nContent-Length: " +
-                    QByteArray::number(body.size()) + "\r\n\r\n" + body;
-                socket->write(response);
-                socket->disconnectFromHost();
-            });
-        }
-    });
-    const QString origin = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
+    const QString origin = probe.origin();
     out << "origin=" << origin << '\n';
 
     EngineClient client;
@@ -1548,6 +1738,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("wipetest"),
         QStringLiteral("Prove the engine can clear one origin's storage, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption cleanuptest(
+        QStringLiteral("cleanuptest"),
+        QStringLiteral("Prove a due session is wiped when its card opens, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -1561,11 +1755,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(lifecycletest);
     parser.addOption(sessionpanel);
     parser.addOption(wipetest);
+    parser.addOption(cleanuptest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(cleanuptest)) {
+        return runCleanupCheck(parser.value(cleanuptest));
     }
 
     if (parser.isSet(wipetest)) {

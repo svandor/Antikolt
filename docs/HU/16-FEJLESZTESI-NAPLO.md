@@ -3,6 +3,43 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonötödik szelet) — a politika **végre is** lefut: a panel takarít
+
+A huszonnegyedik szelet óta a motor tud törölni, de senki nem kérte. Most a panelen van
+**„Takarítás most”**, és a shell maga hajtja végre a mag ítéletét: lekéri a `session_due`-t, és minden
+esedékes originre vagy **azonnal** töröl (ha az a kártya van épp nyitva), vagy **sorba állítja**, és a
+kártya következő megnyitásakor törli — mert a shellben egy élő felület van (I1), és egy takarítás nem
+lophatja el az oldalt, amit a felhasználó olvas. A törlés a terv tárhely-listájával megy (ADR-033), a
+siker után a sor `session_close`-szal eltűnik a ledgernből, és a panel frissül.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --cleanuptest <motor>
+origin=http://127.0.0.1:50114
+session_written=ok
+page_wrote=ok            ← a lap maga vall, hogy írt (nem a „semmi nem volt” eset)
+storage_after=|          ← a süti és a localStorage is üres
+rows_left=1 origin_rows=0   ← a mi sorunk eltűnt (a maradék 1 másik teszt sora)
+cleanup=ok      (exit code 0)
+```
+
+Két tanulság a mérésből, mindkettő beépítve:
+
+1. **Egy futó kliens a saját, régi másolatát olvassa.** A ledger-ellenőrzést először a futó oracle-lel
+   végeztem, és `origin_rows=1`-et kaptam — pedig a sor már nem volt a fájlon. A `SessionStore` induláskor
+   olvas; ezért a teszt **friss klienssel** olvassa vissza a fájlt, amit a shell épp írt.
+2. A **megosztott adatkönyvtár** miatt a ledger nem üres (a `--sessionpanel` is ír sört), ezért a teszt
+   nem a „0 sor” -t, hanem a **saját origin** eltűnését követeli meg.
+
+### Ami még nyitott
+
+- A `session_rules` op (szabályok állítása a huzalon) és a panelen a 24 óra / `wipe_on_app_lock`
+  szerkesztése.
+- A `LossEstimate` (mit veszít a felhasználó egy wipe-pal) megjelenítése a sorokban.
+- A takarítás **média-kivétele**: ha a kártya játszik, a törlés várnia kell (a hibernálás kivétele már
+  kész, a takarításé még nem).
+
 ## 2026-11-17 (huszonnegyedik szelet) — a wipe végrehajtása (a motor töröl, nem csak dönt)
 
 A huszonkettedik szelet a döntést tette le, a huszonharmadik megmutatta; ez a szelet **végrehajt**.

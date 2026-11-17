@@ -34,6 +34,15 @@ struct ThemePalette {
     QString danger;
 };
 
+/// A queued session cleanup: which container the row belongs to and which storages its plan touched.
+///
+/// The plan is the core's answer, carried here so the wipe uses the storage list it was decided with
+/// (ADR-033) — the shell never re-derives it.
+struct PendingWipe {
+    QString container;
+    QStringList storages;
+};
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -78,6 +87,12 @@ public:
     QString sessionPanelSummary() const;
     /// How many rows the panel holds (0 before the first refresh).
     int sessionPanelRowCount() const;
+    /// Run the 24-hour policy now: what the core reports as due is cleared through the engine.
+    ///
+    /// A due origin whose card is on screen is wiped immediately; the others are remembered and wiped
+    /// when their card is next opened, because this shell has exactly one live surface (I1) and a
+    /// cleanup must not steal the page the user is reading.
+    void cleanupSessions();
 
 public slots:
     void startEngine();
@@ -142,4 +157,9 @@ private:
     /// The session ledger panel and its table (created on first use).
     QDockWidget* sessions_dock_ = nullptr;
     QTableWidget* sessions_table_ = nullptr;
+    /// Origins the policy marked due, with the storage list its plan touched: the wipe happens when
+    /// that origin's card is opened next (or immediately, if it is already on screen).
+    QHash<QString, PendingWipe> wipe_on_open_;
+    /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
+    QString live_origin_;
 };

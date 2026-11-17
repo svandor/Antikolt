@@ -94,6 +94,11 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   in the test process) writes a cookie and a localStorage entry, the test reads them, asks the engine to
   clear them through `Storage.clearDataForOrigin`, and requires the second read to come back empty. The
   wipe is proven by the difference, not by the reply.
+- `--cleanuptest` — the policy's verdict is executed: a due row is written with `last_seen_ms: 0` and a
+  `wipe` policy, the window cleans up while the grid is showing (nothing can be wiped immediately — one
+  surface, I1), then the card for that origin is opened and the engine clears it. The page's own witness
+  (`window.__wrote`) must be true, its storage empty, and the ledger row gone. The ledger is read by a
+  fresh client, because a client that was already running reports its own stale copy.
 
 Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).
 

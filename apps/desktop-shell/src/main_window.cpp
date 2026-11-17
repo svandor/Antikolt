@@ -16,6 +16,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QPushButton>
 #include <QSet>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -38,6 +39,23 @@ namespace {
 /// valid JavaScript string escaping, so wrapping the document in double quotes — with the two
 /// characters that would end the literal escaped — is enough. U+2028/U+2029 are line terminators in
 /// JavaScript but not in JSON strings, so they are escaped explicitly.
+/// The origin of a URL (`scheme://host[:port]`), or "" when the scheme has no storable origin.
+///
+/// The session ledger is keyed by origin, and a wipe must name the same string the browser uses: a
+/// `file:` page has no origin to clear and a `data:` page has an opaque one, so both answer "".
+QString originOfUrl(const QString& url) {
+    const QUrl parsed(url);
+    const QString scheme = parsed.scheme();
+    if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")) {
+        return QString();
+    }
+    QString origin = scheme + QStringLiteral("://") + parsed.host();
+    if (parsed.port() > 0) {
+        origin += QStringLiteral(":%1").arg(parsed.port());
+    }
+    return origin;
+}
+
 QString asJavaScriptStringLiteral(const QString& text) {
     QString escaped = text;
     escaped.replace(QLatin1String("\\"), QLatin1String("\\\\"));
@@ -94,8 +112,41 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 // The grid must show the cards the core owns, so the list is pushed once the page is
                 // there to receive it. Only the home surface gets it; a real card is not a grid.
                 if (surface == home_surface_) {
+                    live_origin_.clear();
                     pushCardsToGrid(surface);
+                    return;
                 }
+                // A card finished loading: if the policy queued this origin (see cleanupSessions), this
+                // is the moment to wipe it — on its own surface, with the plan's storage list.
+                live_origin_ = originOfUrl(url);
+                const auto queued = wipe_on_open_.find(live_origin_);
+                if (live_origin_.isEmpty() || queued == wipe_on_open_.end()) {
+                    return;
+                }
+                const QString origin = live_origin_;
+                const PendingWipe pending = queued.value();
+                wipe_on_open_.erase(queued);
+                engine_->clearOriginData(
+                    surface, origin, pending.storages,
+                    [this, origin, container = pending.container](const QJsonObject&,
+                                                                  const QString& error) {
+                        if (!error.isEmpty()) {
+                            setStatus(QStringLiteral("takarítás hiba (%1): %2")
+                                          .arg(origin, error));
+                            return;
+                        }
+                        core_->sessionClose(
+                            container, origin,
+                            [this, origin](const QJsonObject&, const QString& close_error) {
+                                setStatus(close_error.isEmpty()
+                                              ? QStringLiteral("kitakarva: %1").arg(origin)
+                                              : QStringLiteral("kitakarva, de a napló nem (%1)")
+                                                    .arg(close_error));
+                                if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
+                                    refreshSessions();
+                                }
+                            });
+                    });
             });
     connect(engine_, &EngineClient::loadFailed, this,
             [this](qint64 surface, const QString& url, const QString& reason) {
@@ -569,7 +620,15 @@ void MainWindow::showSessions() {
     if (sessions_dock_ == nullptr) {
         sessions_dock_ = new QDockWidget(QStringLiteral("Munkamenetek"), this);
         sessions_dock_->setObjectName(QStringLiteral("sessions"));
-        sessions_table_ = new QTableWidget(0, 5, sessions_dock_);
+        auto* panel = new QWidget(sessions_dock_);
+        auto* layout = new QVBoxLayout(panel);
+        auto* cleanup = new QPushButton(QStringLiteral("Takarítás most"), panel);
+        cleanup->setToolTip(QStringLiteral(
+            "A mag által esedékesnek jelölt originök törlése (ADR-033). Ami épp nyitva van, azonnal; a "
+            "többi a kártya következő megnyitásakor."));
+        connect(cleanup, &QPushButton::clicked, this, &MainWindow::cleanupSessions);
+        layout->addWidget(cleanup);
+        sessions_table_ = new QTableWidget(0, 5, panel);
         sessions_table_->setHorizontalHeaderLabels(
             {QStringLiteral("Origin"), QStringLiteral("Állapot"), QStringLiteral("Politika"),
              QStringLiteral("Sütik"), QStringLiteral("Lejárt")});
@@ -577,7 +636,8 @@ void MainWindow::showSessions() {
         sessions_table_->horizontalHeader()->setStretchLastSection(true);
         sessions_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         sessions_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-        sessions_dock_->setWidget(sessions_table_);
+        layout->addWidget(sessions_table_);
+        sessions_dock_->setWidget(panel);
         // A companion of what is on screen, not a modal interruption of it.
         addDockWidget(Qt::RightDockWidgetArea, sessions_dock_);
     }
@@ -666,6 +726,69 @@ QString MainWindow::sessionPanelSummary() const {
 
 int MainWindow::sessionPanelRowCount() const {
     return sessions_table_ == nullptr ? 0 : sessions_table_->rowCount();
+}
+
+void MainWindow::cleanupSessions() {
+    if (core_ == nullptr || !core_->isRunning()) {
+        setStatus(QStringLiteral("a takarításhoz előbb indítsd el a magot"));
+        return;
+    }
+    core_->sessionDue(
+        QDateTime::currentMSecsSinceEpoch(), false,
+        [this](const QJsonObject& due, const QString& error) {
+            if (!error.isEmpty()) {
+                setStatus(QStringLiteral("a takarítási terv nem érkezett meg: %1").arg(error));
+                return;
+            }
+            const QJsonArray rows = due.value(QStringLiteral("due")).toArray();
+            int immediate = 0;
+            for (const QJsonValue& value : rows) {
+                const QJsonObject entry = value.toObject();
+                const QJsonObject session = entry.value(QStringLiteral("session")).toObject();
+                const QJsonObject plan = entry.value(QStringLiteral("plan")).toObject();
+                const QString origin = session.value(QStringLiteral("origin")).toString();
+                if (origin.isEmpty()) {
+                    continue;
+                }
+                // The plan is the list of what may be deleted; the shell only reads it (ADR-033).
+                QStringList storages;
+                for (const char* field : {"cookies", "local_storage", "indexed_db",
+                                          "service_workers", "cache_storage", "session_storage",
+                                          "code_cache"}) {
+                    if (plan.value(QString::fromLatin1(field)).toBool()) {
+                        storages.append(QString::fromLatin1(field));
+                    }
+                }
+                const PendingWipe pending{session.value(QStringLiteral("container_id")).toString(),
+                                          storages};
+                if (!live_origin_.isEmpty() && live_origin_ == origin && surface_ != 0) {
+                    // The origin is on screen: wipe it now, on the surface it owns.
+                    engine_->clearOriginData(
+                        surface_, origin, storages,
+                        [this, origin, container = pending.container](const QJsonObject&,
+                                                                     const QString& failure) {
+                            if (!failure.isEmpty()) {
+                                setStatus(QStringLiteral("takarítás hiba (%1): %2")
+                                              .arg(origin, failure));
+                                return;
+                            }
+                            core_->sessionClose(container, origin,
+                                                [this](const QJsonObject&, const QString&) {
+                                                    refreshSessions();
+                                                });
+                        });
+                    ++immediate;
+                } else {
+                    wipe_on_open_.insert(origin, pending);
+                }
+            }
+            setStatus(QStringLiteral("takarítás: %1 azonnal, %2 a kártya következő megnyitásakor")
+                          .arg(immediate)
+                          .arg(wipe_on_open_.size()));
+            if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
+                refreshSessions();
+            }
+        });
 }
 
 void MainWindow::buildToolBar() {    auto* toolbar = addToolBar(QStringLiteral("Fő"));
