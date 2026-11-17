@@ -88,6 +88,32 @@ void CoreClient::cardOpen(const QString& cardId, ReplyHandler handler) {
     send(QStringLiteral("card_open"), fields, std::move(handler));
 }
 
+void CoreClient::sessionList(ReplyHandler handler) {
+    send(QStringLiteral("session_list"), {}, std::move(handler));
+}
+
+void CoreClient::sessionUpsert(const QJsonObject& session, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("session"), session);
+    send(QStringLiteral("session_upsert"), fields, std::move(handler));
+}
+
+void CoreClient::sessionDue(qint64 nowMs, bool appLocked, ReplyHandler handler) {
+    QJsonObject fields;
+    // The clock is the caller's, not the core's: a test can ask "what is due in 2100" and get an
+    // honest answer, and the real shell passes the same wall clock it shows the user.
+    fields.insert(QStringLiteral("now_ms"), static_cast<double>(nowMs));
+    fields.insert(QStringLiteral("app_locked"), appLocked);
+    send(QStringLiteral("session_due"), fields, std::move(handler));
+}
+
+void CoreClient::sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("container_id"), containerId);
+    fields.insert(QStringLiteral("origin"), origin);
+    send(QStringLiteral("session_close"), fields, std::move(handler));
+}
+
 void CoreClient::shutdown() {
     if (!isRunning()) {
         return;

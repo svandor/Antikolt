@@ -16,14 +16,17 @@
 //!
 //! Diagnostics go to stderr; stdout carries frames only, exactly like the engine host.
 
+mod sessions;
 mod store;
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+use antikolt_core::session::SessionLedgerEntry;
 use antikolt_ipc::{decode_json_frame, encode_json_frame, FrameError};
 use serde_json::{json, Value};
 
+use sessions::SessionStore;
 use store::{Card, CardStore};
 
 /// Version of this small protocol, independent of the engine link's version.
@@ -47,9 +50,17 @@ fn run() -> Result<(), String> {
             data_dir.display()
         )
     })?;
+    // The ledger is a second file on purpose: a broken session row must not cost the card list.
+    let mut sessions = SessionStore::open(&data_dir).map_err(|error| {
+        format!(
+            "cannot open the session ledger in {}: {error}",
+            data_dir.display()
+        )
+    })?;
     eprintln!(
-        "[core] cards={} dir={}",
+        "[core] cards={} sessions={} dir={}",
         store.list().len(),
+        sessions.list().len(),
         data_dir.display()
     );
 
@@ -66,7 +77,7 @@ fn run() -> Result<(), String> {
             match decode_json_frame(&buffer) {
                 Ok((request, consumed)) => {
                     buffer.drain(..consumed);
-                    let (reply, keep_serving) = handle(&request, &mut store);
+                    let (reply, keep_serving) = handle(&request, &mut store, &mut sessions);
                     write_frame(&mut output, &reply)?;
                     if !keep_serving {
                         return Ok(());
@@ -94,7 +105,7 @@ fn write_frame(output: &mut impl Write, value: &Value) -> Result<(), String> {
 }
 
 /// Handle one request. The flag says whether to keep serving: `shutdown` answers, then stops.
-fn handle(request: &Value, store: &mut CardStore) -> (Value, bool) {
+fn handle(request: &Value, store: &mut CardStore, sessions: &mut SessionStore) -> (Value, bool) {
     let id = request.get("id").and_then(Value::as_u64).unwrap_or(0);
     let version = request
         .get("version")
@@ -160,11 +171,95 @@ fn handle(request: &Value, store: &mut CardStore) -> (Value, bool) {
                 ),
             }
         }
+        // ---- session ledger -------------------------------------------------------------------
+        // The policy itself lives in `antikolt-core::session`; these ops are the ledger's verbs, and
+        // `session_due` is the evaluation the shell's cleanup round asks for (ADR-033).
+        "session_list" => (
+            ok_reply(
+                id,
+                json!({ "sessions": sessions.list(), "rules": sessions.rules() }),
+            ),
+            true,
+        ),
+        "session_upsert" => {
+            let Some(session) = request.get("session") else {
+                return (
+                    error_reply(id, "invalid_argument", "session_upsert needs session"),
+                    true,
+                );
+            };
+            match serde_json::from_value::<SessionLedgerEntry>(session.clone()) {
+                Ok(entry) => match sessions.upsert(entry) {
+                    Ok(entry) => (ok_reply(id, json!({ "session": entry })), true),
+                    Err(error) => (
+                        error_reply(id, session_error_code(&error), &error.to_string()),
+                        true,
+                    ),
+                },
+                Err(error) => (
+                    error_reply(id, "invalid_argument", &error.to_string()),
+                    true,
+                ),
+            }
+        }
+        "session_close" => {
+            let (Some(container_id), Some(origin)) = (
+                request.get("container_id").and_then(Value::as_str),
+                request.get("origin").and_then(Value::as_str),
+            ) else {
+                return (
+                    error_reply(
+                        id,
+                        "invalid_argument",
+                        "session_close needs container_id and origin",
+                    ),
+                    true,
+                );
+            };
+            match sessions.close(container_id, origin) {
+                Ok(true) => (ok_reply(id, json!({ "closed": true })), true),
+                Ok(false) => (
+                    error_reply(
+                        id,
+                        "not_found",
+                        "no session row with that container and origin",
+                    ),
+                    true,
+                ),
+                Err(error) => (
+                    error_reply(id, session_error_code(&error), &error.to_string()),
+                    true,
+                ),
+            }
+        }
+        "session_due" => {
+            let at = request
+                .get("now_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(now_ms);
+            let locked = request
+                .get("app_locked")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            (
+                ok_reply(id, json!({ "now_ms": at, "due": sessions.due(at, locked) })),
+                true,
+            )
+        }
         "shutdown" => (ok_reply(id, json!({})), false),
         other => (
             error_reply(id, "not_supported", &format!("unknown op `{other}`")),
             true,
         ),
+    }
+}
+
+/// The wire error code for a ledger failure: a refused row is the caller's fault, the rest is storage.
+fn session_error_code(error: &sessions::SessionError) -> &'static str {
+    if error.is_invalid_argument() {
+        "invalid_argument"
+    } else {
+        "internal"
     }
 }
 

@@ -1070,6 +1070,11 @@ int runCoreCheck(const QString& corePath) {
     bool ready = false;
     int card_count = -1;
     bool stamped = false;
+    bool session_saved = false;
+    int session_rows = -1;
+    int due_rows = -1;
+    bool session_closed = false;
+    int rows_after_close = -1;
 
     QObject::connect(&client, &CoreClient::failed, &loop, [&](const QString& message) {
         out << "core_error=" << message << '\n';
@@ -1104,7 +1109,79 @@ int runCoreCheck(const QString& corePath) {
                 stamped = card.value(QStringLiteral("last_opened_at_ms")).toDouble() > 0;
                 out << "opened_at_ms=" << card.value(QStringLiteral("last_opened_at_ms")).toDouble()
                     << '\n';
-                loop.quit();
+
+                // The session ledger, end to end: one row written, listed, found due by the policy,
+                // then closed. The "now" is far in the future so the answer does not depend on the
+                // default TTL; what is being measured is that the policy is evaluated in the core.
+                QJsonObject session;
+                session.insert(QStringLiteral("container_id"), QStringLiteral("c-private"));
+                session.insert(QStringLiteral("origin"), QStringLiteral("https://example.org"));
+                session.insert(QStringLiteral("state"), QStringLiteral("expired"));
+                session.insert(QStringLiteral("policy"), QStringLiteral("sweep"));
+                session.insert(QStringLiteral("cookie_count"), 12);
+                session.insert(QStringLiteral("cookie_bytes"), 4096);
+                session.insert(QStringLiteral("storage_bytes"), 65536);
+                session.insert(QStringLiteral("service_worker_count"), 1);
+                session.insert(QStringLiteral("last_seen_ms"), 0);
+                session.insert(QStringLiteral("last_verified_ms"), 0);
+                // `Option<u64>` has no serde default, so the field is sent explicitly as null.
+                session.insert(QStringLiteral("live_ram_bytes"), QJsonValue::Null);
+                session.insert(QStringLiteral("keep_alive"), false);
+                client.sessionUpsert(session, [&](const QJsonObject& saved, const QString& upsert_error) {
+                    if (!upsert_error.isEmpty()) {
+                        out << "session_upsert=FAILED " << upsert_error << '\n';
+                        loop.quit();
+                        return;
+                    }
+                    const QString saved_origin =
+                        saved.value(QStringLiteral("session")).toObject().value(QStringLiteral("origin")).toString();
+                    session_saved = saved_origin == QStringLiteral("https://example.org");
+                    out << "session_upsert=" << (session_saved ? "ok" : "FAILED") << '\n';
+                    client.sessionList([&](const QJsonObject& listed, const QString& list_error) {
+                        if (!list_error.isEmpty()) {
+                            out << "session_list=FAILED " << list_error << '\n';
+                            loop.quit();
+                            return;
+                        }
+                        session_rows =
+                            listed.value(QStringLiteral("sessions")).toArray().size();
+                        out << "session_rows=" << session_rows << '\n';
+                        // Year 2100: any TTL the defaults may carry has passed by then.
+                        client.sessionDue(4102444800000LL, false, [&](const QJsonObject& due,
+                                                                      const QString& due_error) {
+                            if (!due_error.isEmpty()) {
+                                out << "session_due=FAILED " << due_error << '\n';
+                                loop.quit();
+                                return;
+                            }
+                            const QJsonArray rows = due.value(QStringLiteral("due")).toArray();
+                            due_rows = rows.size();
+                            out << "session_due_rows=" << due_rows << '\n';
+                            client.sessionClose(QStringLiteral("c-private"),
+                                                QStringLiteral("https://example.org"),
+                                                [&](const QJsonObject& closed,
+                                                    const QString& close_error) {
+                                                    session_closed =
+                                                        close_error.isEmpty() &&
+                                                        closed.value(QStringLiteral("closed")).toBool();
+                                                    out << "session_close="
+                                                        << (session_closed ? "ok" : "FAILED")
+                                                        << '\n';
+                                                    client.sessionList(
+                                                        [&](const QJsonObject& after,
+                                                            const QString& after_error) {
+                                                            if (after_error.isEmpty()) {
+                                                                rows_after_close =
+                                                                    after.value(QStringLiteral("sessions"))
+                                                                        .toArray()
+                                                                        .size();
+                                                            }
+                                                            loop.quit();
+                                                        });
+                                                });
+                        });
+                    });
+                });
             });
         });
     });
@@ -1117,7 +1194,13 @@ int runCoreCheck(const QString& corePath) {
     out << "core_ready=" << (ready ? "ok" : "FAILED") << '\n';
     out << "cards_list=" << (card_count > 0 ? "ok" : "FAILED") << '\n';
     out << "card_open=" << (stamped ? "ok" : "FAILED") << '\n';
-    if (!ready || card_count <= 0 || !stamped) {
+    // The ledger half: a row was written, listed, judged due and closed again. Every part is needed:
+    // a ledger that writes but never expires is not the 24-hour policy.
+    const bool ledger_ok = session_saved && session_rows == 1 && due_rows >= 1 && session_closed &&
+                           rows_after_close == 0;
+    out << "rows_after_close=" << rows_after_close << '\n';
+    out << "session_ledger=" << (ledger_ok ? "ok" : "FAILED") << '\n';
+    if (!ready || card_count <= 0 || !stamped || !ledger_ok) {
         ++failures;
     }
     out.flush();

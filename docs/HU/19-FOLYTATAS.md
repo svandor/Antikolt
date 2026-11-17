@@ -54,14 +54,20 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 
 ## 2. 24 órás munkamenet-politika + ledger
 
+> **Állapot: a mag-oldali rész kész és mérve** (22. szelet, ADR-033). `sessions.json` +
+> `SessionStore` + négy huzal-op (`session_list`, `session_upsert`, `session_close`, `session_due`),
+> a döntés a magban (`plan_cleanup`), a terv a sorral együtt jön vissza. `--coretest`:
+> `session_ledger=ok` (írás → lista → due → close → üres). Egységtesztek: 7 zöld + 2 integrációs.
+> **Ami hátra van:** a `clear_origin_data` motor-op (a `wipe` végrehajtása), a `session_rules` op
+> (szabályok állítása a huzalon), és a **Munkamenetek panel** — a híd már kész hozzá.
+
 **Miért:** M3 („saját napi böngésző”) fő tétele: `keep`/`sweep`/`wipe`, látható munkamenet-panellel.
 
-**Hogyan:** a logika kész (`crates/antikolt-core/src/session.rs`, 13 teszt), a tár JSON
-(`crates/antikolt-core-service/src/store.rs`) — a `session` rekordok ugyanoda kerüljenek, a
-`pending_maintenance` mintájára; a shell csak megjeleníti. A `wipe` végrehajtásához a motor
-`clear_origin_data` opja kell (ma `not_supported`).
+**Hogyan (ami még hátra van):** a `wipe` végrehajtásához a motor `clear_origin_data` opja kell (ma
+`not_supported`); a panel a `session_list`/`session_due` válaszára épül, a `LossEstimate`-tel együtt
+(`10-MUNKAMENET.md` §5).
 
-**Bizonyíték:** mag-oldali egységtesztek + a `--coretest` kiterjesztése egy `session_list` hívással.
+**Bizonyíték (kész):** `--coretest` `session_ledger=ok`, `cargo test -p antikolt-core-service` 9 zöld.
 
 ## 3. Kérés-irány a laptól (protokoll v2)
 

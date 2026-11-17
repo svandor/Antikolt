@@ -84,7 +84,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
 - `--lifecycletest` — a live card with no user activity hibernates by itself: with
   `ANTIKOLT_HIBERNATE_MS` shortened, the card's surface is closed, a snapshot is written, and the grid
   comes back on its own (the ten-minute default would only measure patience).
-- `--coretest` — the shell talks to the Rust core service: handshake, card list, card open (timestamp).
+- `--coretest` — the shell talks to the Rust core service: handshake, card list, card open (timestamp),
+  and the session ledger end to end (write a row, list it, let the core judge it due, close it, see it
+  gone) — the policy is evaluated in the core, see ADR-033.
 
 Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).
 

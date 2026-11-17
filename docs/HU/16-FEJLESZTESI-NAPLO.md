@@ -3,6 +3,54 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonkettedik szelet) — a munkamenet-ledger a magban (24 órás politika)
+
+A `keep`/`sweep`/`wipe` logika eddig csak egy könyvtár volt (`antikolt-core::session`, 13 teszt),
+amelyet semmi nem hívott. Ez a szelet bekötötte a mag-szolgáltatásba — a döntést a **mag** hozza, a
+shell csak végrehajt (ADR-033).
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| Tár | `crates/antikolt-core-service/src/sessions.rs`: `sessions.json` (a kártyatártól **külön fájl**, atomikus írás), `SessionStore::{open,rules,list,upsert,close,due}`, `DueEntry` (sor + a hozzá tartozó `CleanupPlan`) |
+| Ledger-szabály | a `validate()` a **írás előtt** fut: hamis sor nem kerülhet lemezre (`Rejected` → `invalid_argument` a huzalon) |
+| Huzal-opok | `session_list`, `session_upsert`, `session_close`, `session_due` (a `now_ms` és az `app_locked` a hívóé) |
+| Shell | `CoreClient::{sessionList,sessionUpsert,sessionDue,sessionClose}` |
+| Önellenőrzés | `--coretest` a kártya után végigviszi a ledgert: írás → lista → due (2100-as órával) → close → üres lista |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+cargo test -p antikolt-core-service
+test sessions::tests::a_fresh_ledger_is_empty_and_survives_a_reopen ... ok
+test sessions::tests::the_ledger_refuses_rows_that_would_make_it_lie ... ok
+test sessions::tests::a_row_is_due_only_after_its_ttl_and_a_kept_row_is_never_due ... ok
+test sessions::tests::closing_a_row_removes_it_once ... ok
+test result: ok. 7 passed   (+ 2 integrációs teszt: ok)
+cargo clippy -p antikolt-core-service --all-targets -- -D warnings   → tiszta
+
+antikolt-shell --coretest <core>
+session_upsert=ok
+session_rows=1
+session_due_rows=1
+session_close=ok
+rows_after_close=0
+session_ledger=ok      (exit code 0)
+```
+
+A `session_due_rows=1` a lényeg: a szolgáltatás **nem** a shellben számol — a 24 órás szabályt a
+`antikolt_core::session::plan_cleanup` adja, és a terv (`CleanupPlan`) a sorral együtt jön vissza, hogy
+a hívó ne tudjon rossz tárhely-készletet törölni.
+
+### Ami még nyitott
+
+- A `clear_origin_data` motor-op továbbra is `not_supported`, tehát a **terv végrehajtása** (a
+  tényleges `wipe`) még nem megy: a döntés kész, a végrehajtás a következő szelet.
+- A szabályok (`SessionRules`) még nem állíthatók a huzalon (nincs `session_rules` op); a
+  `sessions.json` a könyvtár defaultjaival indul.
+- A **Munkamenetek panel** (`10-MUNKAMENET.md` §5) még nincs; a híd kész hozzá.
+
 ## 2026-11-17 (huszonegyedik szelet) — a kitűzött kártya mérve marad életben
 
 A huszadik szelet a `pinned` jelzőt bekötötte, de mérés nélkül hagyta. A mérés (`--lifecycletest`

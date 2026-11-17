@@ -35,6 +35,14 @@ public:
     void handshake();
     void cardsList(ReplyHandler handler);
     void cardOpen(const QString& cardId, ReplyHandler handler = {});
+    /// The session ledger and its policy (`docs/HU/10-MUNKAMENET.md`).
+    ///
+    /// `sessionDue` is the evaluation, not a guess: the core decides which rows are due and hands back
+    /// the plan with each of them (ADR-033), so the shell never recomputes a policy.
+    void sessionList(ReplyHandler handler = {});
+    void sessionUpsert(const QJsonObject& session, ReplyHandler handler = {});
+    void sessionDue(qint64 nowMs, bool appLocked, ReplyHandler handler = {});
+    void sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler = {});
     void shutdown();
 
 signals:

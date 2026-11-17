@@ -3,6 +3,25 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-033 — A munkamenet-politikát a mag értékeli ki, a shell csak végrehajt (2026-11-17)
+
+**Kontextus.** A 24 órás politika (`keep`/`sweep`/`wipe`) eldönti, hogy egy origin tárhelye mikor
+törlődik, és a `wipe` **kijelentkeztet**. Ha ezt a shell számolná, akkor (a) a döntés egy ablak
+élettartamához kötődne, (b) két helyen élne ugyanaz a szabály, és (c) a panel és a takarítás
+eltérhetne egymástól. Ráadásul a `plan_cleanup` a lemezen tárolt `last_seen_ms`-re és a
+konténer-szabályokra épül, amik a mag adatai.
+
+**Döntés.** A politika **kiértékelése a magban** történik: `antikolt-core::session` a szabály
+(`SessionRules`, `plan_cleanup`, `CleanupPlan`), a mag-szolgáltatás `session_due` op-ja adja vissza a
+**végrehajtandó sorokat a hozzájuk tartozó tervvel együtt**. A shell csak végrehajt (motortól
+`clear_origin_data`), és megjelenít. A ledger `sessions.json`-ban él, a kártyatártól külön fájlban —
+egy hibás munkamenet-sor ne kerülhesse a kártyalistába.
+
+**Következmény.** (+) egy helyen él a szabály, a panel és a takarítás ugyanazt a kiértékelést látja;
+(+) a terv és a döntés együtt utazik, így nem lehet rossz tárhely-készletet törölni; (−) a shell
+minden takarítási körben oda-vissza beszél a maggal (ez szándékos: a döntés nem a shellben születik);
+(−) a `clear_origin_data` motor-op még `not_supported`, tehát a terv végrehajtása a következő szelet.
+
 ## ADR-032 — A kártyalista a shellből tolódik a lapra, amíg a híd egyirányú (2026-11-17)
 
 **Kontextus.** A rácsnak a mag kártyáit kell mutatnia. A lap viszont ma **nem tud kérdezni**: a híd
@@ -151,6 +170,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-030 | Festés-mérés a motor saját képével (`capture`); a képernyőkép csak diagnosztika | Elfogadva |
 | ADR-031 | Széf: a titkosítás varrata zártan viselkedik (nincs crate → nincs titok, nincs plaintext) | Elfogadva |
 | ADR-032 | A kártyalista shell-tolással jut a lapra, amíg a híd egyirányú (kétirányú híd = protokoll v2) | Elfogadva |
+| ADR-033 | A munkamenet-politikát a mag értékeli ki (`session_due`), a shell csak végrehajt és megjelenít | Elfogadva |
 
 ---
 
