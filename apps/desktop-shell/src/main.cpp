@@ -14,6 +14,7 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -1378,6 +1379,82 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove a page request is answered even when the shell forgets it: the watchdog, not hope.
+///
+/// The method `test.hang` is deliberately unanswered and only exists when `ANTIKOLT_BRIDGE_TEST` is set,
+/// so no page can reach it in a normal run. The page's promise must be *rejected* with a timeout message
+/// in about `kPageAnswerMs` — a promise that never settles would leak into every later interaction.
+int runTimeoutCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+    qputenv("ANTIKOLT_BRIDGE_TEST", "1");
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool asked = false;
+    QString answer;
+    qint64 elapsed_ms = -1;
+    {
+        QEventLoop loop;
+        QElapsedTimer clock;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             QTimer::singleShot(700, &loop, [&, id] {
+                                 clock.start();
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "window.antikoltNative.request('test.hang', {})"
+                                         ".then(function(r){window.__hang={ok:true};},"
+                                         "function(e){window.__hang={error:String(e.message)};});"
+                                         " 'asked'"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         asked = error.isEmpty() &&
+                                                 reply.value(QStringLiteral("value")).toString() ==
+                                                     QStringLiteral("asked");
+                                         out << "asked=" << (asked ? "ok" : "FAILED") << '\n';
+                                         // The watchdog answers at kPageAnswerMs; read a little after.
+                                         QTimer::singleShot(6500, &loop, [&, id] {
+                                             elapsed_ms = clock.elapsed();
+                                             window.engine()->evaluate(
+                                                 id,
+                                                 QStringLiteral(
+                                                     "JSON.stringify(window.__hang||null)"),
+                                                 [&](const QJsonObject& value, const QString& failure) {
+                                                     answer = failure.isEmpty()
+                                                                  ? value.value(QStringLiteral("value"))
+                                                                        .toString()
+                                                                  : failure;
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    const QString hang_error =
+        QJsonDocument::fromJson(answer.toUtf8()).object().value(QStringLiteral("error")).toString();
+    const bool rejected = hang_error.contains(QStringLiteral("időben"));
+    out << "answer_ms=" << elapsed_ms << '\n';
+    out << "timeout_answer=" << (rejected ? "rejected" : "FAILED") << '\n';
+    out << "timeout_message=" << hang_error << '\n';
+    const bool ok = asked && rejected && elapsed_ms >= 4000 && elapsed_ms <= 8000;
+    out << "timeout_test=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the card's note editor writes: the editor opens in place, the save goes through the bridge to the
 /// core, and the store holds the text.
 ///
@@ -2120,6 +2197,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("notetest"),
         QStringLiteral("Prove the card's note editor reaches the core, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption timeouttest(
+        QStringLiteral("timeouttest"),
+        QStringLiteral("Prove an unanswered page request is answered by the watchdog, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -2137,11 +2218,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(bridgetest);
     parser.addOption(pintest);
     parser.addOption(notetest);
+    parser.addOption(timeouttest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(timeouttest)) {
+        return runTimeoutCheck(parser.value(timeouttest));
     }
 
     if (parser.isSet(notetest)) {

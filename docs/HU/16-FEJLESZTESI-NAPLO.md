@@ -3,6 +3,29 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonkilencedik szelet) — minden kérésre pontosan egy válasz (watchdog)
+
+A protokoll v2 szerződése kimondta, hogy a lap minden kérdésére **pontosan egy** válasz jön — de eddig ezt
+csak a kód útjai tartották be, nem volt semmi, ami kikényszerítse. Most a shell a kérés beérkezésekor
+felveszi a kérést egy halmazba, és **5 másodperces watchdoggot** indít; a `replyToPage` a halmazból
+eltávolítással biztosítja, hogy egy kérésre ne menjen ki két válasz (a watchdog és egy késő út sem
+duplázhat). A watchdog maga is ezen az úton válaszol, tehát a „pontosan egy” szabály egy helyen él.
+
+A méréshez egy szándékosan meg nem válaszolt metódus kellett (`test.hang`), ami **csak**
+`ANTIKOLT_BRIDGE_TEST=1` mellett érhető el — így egy normál futásban egy lap sem akaszthatja meg a
+shellt, és a teszt mégis a valódi watchdog-úton megy keresztül.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --timeouttest <motor>
+asked=ok
+answer_ms=6540            ← a válasz a kb. 5 s-os határidő után érkezett (a mérés 6,5 s-nál olvas)
+timeout_answer=rejected
+timeout_message=a shell nem válaszolt időben
+timeout_test=ok      (exit code 0)
+```
+
 ## 2026-11-17 (huszonnyolcadik szelet) — a jegyzet a kártyán írható
 
 A harmadik írási út ugyanazon a csatornán: a kártyán a **jegyzet-szerkesztő** a kártya belsejében

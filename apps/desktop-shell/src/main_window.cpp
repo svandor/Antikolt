@@ -39,6 +39,13 @@ namespace {
 /// valid JavaScript string escaping, so wrapping the document in double quotes — with the two
 /// characters that would end the literal escaped — is enough. U+2028/U+2029 are line terminators in
 /// JavaScript but not in JSON strings, so they are escaped explicitly.
+/// How long a page request may wait for the shell's answer before the watchdog answers it.
+///
+/// Longer than any shell path (a core round trip is milliseconds), short enough that a page never sits on
+/// a promise for a noticeable time. The engine drops held callbacks when the page goes away; this is the
+/// other half of the same promise: the shell always answers (ADR-034).
+constexpr int kPageAnswerMs = 5000;
+
 /// The origin of a URL (`scheme://host[:port]`), or "" when the scheme has no storable origin.
 ///
 /// The session ledger is keyed by origin, and a wipe must name the same string the browser uses: a
@@ -528,6 +535,17 @@ void MainWindow::openCard(const QString& url, const QString& title) {
 
 void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args,
                                   qint64 request) {
+    if (request > 0) {
+        // Every question is answered exactly once. The set remembers who is waiting; the watchdog answers
+        // what a path forgot, because a page promise that never settles is a hung page (ADR-034).
+        awaiting_page_reply_.insert(request);
+        QTimer::singleShot(kPageAnswerMs, this, [this, request] {
+            if (awaiting_page_reply_.contains(request)) {
+                setStatus(QStringLiteral("a lap kérése nem kapott választ időben (#%1)").arg(request));
+                replyToPage(request, {}, QStringLiteral("a shell nem válaszolt időben"));
+            }
+        });
+    }
     if (method == QStringLiteral("open_card")) {
         const QString url = args.value(QStringLiteral("url")).toString();
         const QString title = args.value(QStringLiteral("title")).toString();
@@ -602,6 +620,12 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
             });
             return;
         }
+        // A deliberately unanswered method, for the timeout check: it exists only when the environment
+        // asks for it, so a normal run cannot reach it and no page can hang the shell by accident.
+        if (qEnvironmentVariableIsSet("ANTIKOLT_BRIDGE_TEST") &&
+            method == QStringLiteral("test.hang")) {
+            return;
+        }
         replyToPage(request, {}, QStringLiteral("ismeretlen híd-kérdés: %1").arg(method));
         return;
     }
@@ -611,6 +635,11 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
 
 void MainWindow::replyToPage(qint64 request, const QJsonObject& json, const QString& error) {
     if (request <= 0 || engine_ == nullptr) {
+        return;
+    }
+    // The set is the single source of truth: a second answer (the watchdog and a late path, or two
+    // paths) is dropped instead of confusing the engine's request table.
+    if (!awaiting_page_reply_.remove(request)) {
         return;
     }
     engine_->bridgeReply(request, json, error);

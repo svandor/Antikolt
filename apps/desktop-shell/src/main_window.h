@@ -10,6 +10,7 @@
 
 #include <QJsonObject>
 #include <QMainWindow>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -163,6 +164,9 @@ private:
     /// Origins the policy marked due, with the storage list its plan touched: the wipe happens when
     /// that origin's card is opened next (or immediately, if it is already on screen).
     QHash<QString, PendingWipe> wipe_on_open_;
+    /// Page requests still waiting for an answer (protocol 2). Every request is answered exactly once —
+    /// `replyToPage` removes, the watchdog answers what a path forgot.
+    QSet<qint64> awaiting_page_reply_;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
 };

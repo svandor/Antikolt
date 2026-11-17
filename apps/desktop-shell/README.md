@@ -99,6 +99,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   page's witness (`window.antikoltPinState`) and a fresh core client must both report the opposite of what
   the card had before, whichever direction that is — a click that changed nothing would pass a weaker
   test.
+- `--timeouttest` — every page request is answered exactly once: a deliberately unanswered method
+  (`test.hang`, reachable only with `ANTIKOLT_BRIDGE_TEST=1`) must be *rejected* by the shell's watchdog in
+  about five seconds. A promise nobody settles would leak into every later interaction.
 - `--notetest` — the card's note editor writes too: the editor opens in place on the card (a re-render
   would throw the typed text away), "Mentés" goes through `cards.upsert` to the core, and three witnesses
   must agree — the editor's answer, the grid model and a fresh core client's record.
