@@ -120,6 +120,12 @@ private:
     void pushCardsToGrid(qint64 surface);
     /// Ask the core for the ledger and fill the panel with it.
     void refreshSessions();
+    /// Produce one card's preview image, once, and remember its name on the record (ADR-035).
+    ///
+    /// The card is already on screen when this runs, so the picture is the real page — the engine's own
+    /// compositor writes it (`capture`), the shell moves it into the profile's `previews` directory, and the
+    /// core stores the name. A card that already has a preview keeps it: this is not a screenshot loop.
+    void producePreview(qint64 surface);
     /// (Re)start the hibernation clock for the live card.
     void armIdleTimer();
     /// Any sign of the user: restarts the hibernation clock.
@@ -164,9 +170,17 @@ private:
     /// Origins the policy marked due, with the storage list its plan touched: the wipe happens when
     /// that origin's card is opened next (or immediately, if it is already on screen).
     QHash<QString, PendingWipe> wipe_on_open_;
-    /// Page requests still waiting for an answer (protocol 2). Every request is answered exactly once —
+    /// The page requests still waiting for an answer (protocol 2). Every request is answered exactly once —
     /// `replyToPage` removes, the watchdog answers what a path forgot.
     QSet<qint64> awaiting_page_reply_;
+    /// The engine's profile (`<user data>`), where `previews/` lives: the shell writes the preview images
+    /// there and the engine serves them (ADR-035).
+    QString engine_profile_;
+    /// The card the page asked to open (the request carries its id), used to name its preview.
+    QString pending_card_id_;
+    /// How many previews this run has produced; the cap keeps a long browsing session from filling the
+    /// disk with screenshots.
+    int previews_made_ = 0;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
 };

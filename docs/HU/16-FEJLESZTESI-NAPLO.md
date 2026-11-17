@@ -3,6 +3,44 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harmincegyedik szelet) — az előnézet elkészül: a kártya megnyitása képet ad neki
+
+A harmincadik szelet kiszolgálta az előnézetet; most **elő is állítja** a shell. A kártya rekordja additív
+`preview_ref` mezőt kapott (a régi tár továbbra is parse-olható), a rács adaptálja
+(`antikolt://blob/<név>`), és amikor a felhasználó megnyit egy kártyát, a shell a **valódi oldalról**
+készít képet (`capture`), átmozgatja a profil `previews/` mappájába, és a nevet visszaírja a rekordba.
+Egy kártya előnézete egyszer készül el (a meglévőt nem írja felül), és egy futás legfeljebb 40-et gyárt.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --previewgentest <motor>
+card_written=ok
+card_opened=ok
+preview_file=ok
+preview_ref=preview-probe.png
+preview_page=loaded:1560x857
+preview_generation=ok      (exit code 0)
+```
+
+### Két hiba a mérésből, mindkettő javítva
+
+1. **Elavult mag-bináris.** A shell a `preview_ref`-et írta, a mag `card_upsert`-je viszont a régi
+   binárison futott (a `preview_ref`-et ismeretlen mezőként eldobta) — a válasz sikeres volt, a tár nem
+   tartalmazta. Ez a **tooling** hibája volt: sem a `build.ps1`, sem a `verify.ps1` nem építette a Rust
+   magot. Most a `verify.ps1` `cargo build -p antikolt-core-service`-szel kezdi a magot, és ezt külön
+   ellenőrzésként is jelzi.
+2. A `Card` három inicializálója (a vetett kártyák) nem ismerte az új mezőt — a `cargo build` ezt azonnal
+   megfogta, és a mező most mindháromban `String::new()`.
+
+### Ami még nyitott
+
+- Az előnézet **frissítése**: ma egyszer készül; egy elavult kép nem cserélődik le.
+- A **napi ≤100** korlát: a számláló futás-szintű (memóriában), a tartós büdzséhez a magnak kellene
+  nyilvántartást vezetnie.
+- A preview-fájlok **takarítása** (a 24 órás politika nem érinti őket), és a háttérben (a felhasználó
+  kártyája nélkül) készített előnézetek — ez az I1 miatt külön szelet.
+
 ## 2026-11-17 (harmincadik szelet) — az előnézet-út: `antikolt://blob/` a motorból
 
 A lap már régóta hivatkozik `antikolt://blob/<ref>`-re, de senki nem szolgálta ki. Most a motor

@@ -83,13 +83,14 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 
 ## 4. Előnézetek
 
-> **Állapot: a kiszolgálás kész és mérve** (30. szelet, ADR-035). A motor az `antikolt` sémát regisztrálja,
-> és a `blob/<név>` kérést a `<user data>/previews/<név>` fájlból válaszolja meg, a nevet a könyvtáron
-> belül feloldva (`..`/elválasztó → elutasítás). `--previewtest`: `preview_load=loaded:4x3`,
-> `preview_traversal=refused`, `preview_delivery=ok`.
-> **Ami hátra van:** az **előállítás** — a kártya háttérben megnyitása (I1), `capture`, mentés a profil
-> `previews/` mappájába, additív `preview_ref` mező a kártya-rekordon, ütemező (egy kártya egyszerre,
-> ~8 s, napi ≤100), és a preview-fájlok takarítása.
+> **Állapot: kiszolgálás és előállítás is kész, mérve** (30–31. szelet, ADR-035). A motor az `antikolt`
+> sémát regisztrálja és a `blob/<név>` kérést a `<user data>/previews/<név>` fájlból válaszolja meg (a nevet
+> a könyvtáron belül feloldva); a shell a kártya megnyitásakor `capture`-rel képet készít, a profilba
+> mozgatja, és a `preview_ref` mezőbe írja a nevét. `--previewtest`: `preview_load=loaded:4x3`,
+> `preview_traversal=refused`. `--previewgentest`: `preview_ref=preview-probe.png`,
+> `preview_page=loaded:1560x857`, `preview_generation=ok`.
+> **Ami hátra van:** az előnézet **frissítése** (ma egyszer készül), a **napi ≤100** tartós korlát (a
+> számláló ma futás-szintű), a preview-fájlok takarítása, és a háttérben készített előnézetek (I1).
 
 **Miért:** F2 (rács-előnézet) — a `capture` primitív kész, a feldolgozó nincs.
 

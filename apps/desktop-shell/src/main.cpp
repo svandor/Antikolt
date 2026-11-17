@@ -1379,6 +1379,181 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove previews are *produced*: opening a card gives it a picture, and the grid can show it.
+///
+/// A card pointing at the local probe origin is written into the core without a preview. The grid shows it
+/// (the push carries the record), the test clicks it as a user would, and once the page has loaded the
+/// shell captures it, moves the image into the profile's `previews` directory and writes the name back to
+/// the record. Three witnesses: the file on disk, the record's `preview_ref`, and the page loading
+/// `antikolt://blob/<name>`.
+int runPreviewGenCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    ProbeOrigin probe(storageProbePage());
+    if (!probe.listening()) {
+        out << "server=FAILED " << probe.errorString() << '\n';
+        return 1;
+    }
+    const QString origin = probe.origin();
+    out << "origin=" << origin << '\n';
+
+    const QString core_dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/core");
+    QDir().mkpath(core_dir);
+    const QString profile =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/engine");
+    const QString card_id = QStringLiteral("preview-probe");
+    const QString preview_name = card_id + QStringLiteral(".png");
+    const QString target = profile + QStringLiteral("/previews/") + preview_name;
+    QDir().mkpath(profile + QStringLiteral("/previews"));
+    QFile::remove(target);
+
+    CoreClient oracle;
+    if (!oracle.start(MainWindow::coreExecutable(), core_dir)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    bool written = false;
+    {
+        QEventLoop loop;
+        QJsonObject card;
+        card.insert(QStringLiteral("id"), card_id);
+        card.insert(QStringLiteral("title"), QStringLiteral("Preview probe"));
+        card.insert(QStringLiteral("url"), origin + QStringLiteral("/"));
+        card.insert(QStringLiteral("container"), QStringLiteral("c-private"));
+        card.insert(QStringLiteral("status"), QStringLiteral("unknown"));
+        card.insert(QStringLiteral("pinned"), false);
+        card.insert(QStringLiteral("notes"), QString());
+        card.insert(QStringLiteral("preview_ref"), QString());
+        card.insert(QStringLiteral("last_opened_at_ms"), 0);
+        oracle.cardUpsert(card, [&](const QJsonObject&, const QString& error) {
+            written = error.isEmpty();
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    oracle.shutdown();
+    if (!written) {
+        out << "card_written=FAILED\n";
+        return 1;
+    }
+    out << "card_written=ok\n";
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool clicked = false;
+    QString preview_state;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:"))) {
+                                 // The grid is up with the pushed card: click that card, as a user would.
+                                 QTimer::singleShot(900, &loop, [&, id] {
+                                     window.engine()->evaluate(
+                                         id,
+                                         QStringLiteral(
+                                             "(function(){var els=document.querySelectorAll("
+                                             "'antikolt-card');for(var i=0;i<els.length;i++){"
+                                             "var c=els[i].card;"
+                                             "if(c&&String(c.url).indexOf('127.0.0.1')>=0){"
+                                             "els[i].shadowRoot.querySelector('.card').click();"
+                                             "return 'clicked:'+c.id;}}"
+                                             "return 'no-card';})()"),
+                                         [&](const QJsonObject& reply, const QString& error) {
+                                             const QString value =
+                                                 error.isEmpty()
+                                                     ? reply.value(QStringLiteral("value")).toString()
+                                                     : error;
+                                             clicked = value.startsWith(QStringLiteral("clicked:"));
+                                             out << "card_opened=" << (clicked ? "ok" : "FAILED")
+                                                 << '\n';
+                                             if (!clicked) {
+                                                 out << "card_opened_value=" << value << '\n';
+                                                 loop.quit();
+                                             }
+                                         });
+                                 });
+                                 return;
+                             }
+                             if (!url.startsWith(origin)) {
+                                 return;
+                             }
+                             // The card is loaded: the shell captures it, moves the file and writes the
+                             // name back. Give those three round trips their moment, then look.
+                             QTimer::singleShot(3500, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "window.__shot='pending';"
+                                         "(function(){var i=new Image();"
+                                         "i.onload=function(){window.__shot='loaded:'+"
+                                         "i.naturalWidth+'x'+i.naturalHeight;};"
+                                         "i.onerror=function(){window.__shot='error';};"
+                                         "i.src='antikolt://blob/preview-probe.png';})();"
+                                         " 'asked'"),
+                                     [&](const QJsonObject&, const QString&) {
+                                         QTimer::singleShot(1200, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id,
+                                                 QStringLiteral("String(window.__shot)"),
+                                                 [&](const QJsonObject& shot,
+                                                     const QString& shot_error) {
+                                                     preview_state = shot_error.isEmpty()
+                                                                         ? shot.value(QStringLiteral("value"))
+                                                                               .toString()
+                                                                         : shot_error;
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    QString stored_ref;
+    {
+        CoreClient verifier;
+        if (verifier.start(MainWindow::coreExecutable(), core_dir)) {
+            QEventLoop loop;
+            verifier.cardsList([&](const QJsonObject& listed, const QString& error) {
+                if (error.isEmpty()) {
+                    for (const QJsonValue& value :
+                         listed.value(QStringLiteral("cards")).toArray()) {
+                        const QJsonObject card = value.toObject();
+                        if (card.value(QStringLiteral("id")).toString() == card_id) {
+                            stored_ref = card.value(QStringLiteral("preview_ref")).toString();
+                        }
+                    }
+                }
+                loop.quit();
+            });
+            QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+            loop.exec();
+            verifier.shutdown();
+        }
+    }
+
+    const bool file_exists = QFileInfo::exists(target);
+    out << "preview_file=" << (file_exists ? "ok" : "FAILED") << '\n';
+    out << "preview_ref=" << stored_ref << '\n';
+    out << "preview_page=" << preview_state << '\n';
+    const bool ok = clicked && file_exists && stored_ref == preview_name &&
+                    preview_state.startsWith(QStringLiteral("loaded:"));
+    out << "preview_generation=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove a card preview can be delivered: the engine serves `antikolt://blob/…` from the profile.
 ///
 /// The preview file is written where the engine looks for it (the shell hands this profile to the engine),
@@ -2306,6 +2481,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("previewtest"),
         QStringLiteral("Prove a card preview is served to the page from the profile, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption previewgentest(
+        QStringLiteral("previewgentest"),
+        QStringLiteral("Prove opening a card produces its preview, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -2325,11 +2504,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(notetest);
     parser.addOption(timeouttest);
     parser.addOption(previewtest);
+    parser.addOption(previewgentest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(previewgentest)) {
+        return runPreviewGenCheck(parser.value(previewgentest));
     }
 
     if (parser.isSet(previewtest)) {

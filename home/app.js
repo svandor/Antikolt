@@ -184,7 +184,9 @@ function pageCardFromCore(row, index) {
     archived: false,
     size: pinned ? "l" : "m",
     container,
-    previewRef: null,
+    // The preview is produced by the shell and served by the engine from the profile (ADR-035): the
+    // record only carries its name, and an empty one means the card has no picture yet.
+    previewRef: String(row.preview_ref ?? "") || null,
     luminance: 0,
     lastOpenedAt: Number(row.last_opened_at_ms) || 0,
     workspaceId: index > 12 ? "w-read" : "w-home",

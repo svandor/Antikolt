@@ -78,6 +78,16 @@ if (-not $SkipBuild) {
     $engine = Find-FirstFile @(Get-ChildItem (Join-Path $repoRoot 'build') -Recurse -Filter 'antikolt-engine-host.exe' | ForEach-Object { $_.FullName })
 }
 
+# The core service is Cargo's, not CMake's: without this step the shell would talk to whatever binary was
+# last built by hand, and a field the shell writes (but the stale core does not know) disappears silently.
+Write-Host '=== Core service ===' -ForegroundColor Cyan
+& cargo build -p antikolt-core-service --manifest-path (Join-Path $repoRoot 'Cargo.toml')
+Add-Result 'core service' ($LASTEXITCODE -eq 0)
+$core = Find-FirstFile @(
+    (Join-Path $repoRoot 'target\debug\antikolt-core-service.exe'),
+    (Join-Path $repoRoot 'target\release\antikolt-core-service.exe')
+)
+
 $engineChecks = @(
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'lifecycletest'; Args = @('--lifecycletest') },
@@ -90,7 +100,8 @@ $engineChecks = @(
     @{ Name = 'pintest'; Args = @('--pintest') },
     @{ Name = 'notetest'; Args = @('--notetest') },
     @{ Name = 'timeouttest'; Args = @('--timeouttest') },
-    @{ Name = 'previewtest'; Args = @('--previewtest') }
+    @{ Name = 'previewtest'; Args = @('--previewtest') },
+    @{ Name = 'previewgentest'; Args = @('--previewgentest') }
 )
 
 foreach ($check in $engineChecks) {

@@ -39,12 +39,16 @@ namespace {
 /// valid JavaScript string escaping, so wrapping the document in double quotes — with the two
 /// characters that would end the literal escaped — is enough. U+2028/U+2029 are line terminators in
 /// JavaScript but not in JSON strings, so they are escaped explicitly.
-/// How long a page request may wait for the shell's answer before the watchdog answers it.
-///
+/// How long a page request may wait for the shell's answer before the watchdog answers it.///
 /// Longer than any shell path (a core round trip is milliseconds), short enough that a page never sits on
 /// a promise for a noticeable time. The engine drops held callbacks when the page goes away; this is the
 /// other half of the same promise: the shell always answers (ADR-034).
 constexpr int kPageAnswerMs = 5000;
+
+/// How many previews one run may produce. A browsing session that opens hundreds of cards should not fill
+/// the disk with screenshots; the cap is per run because the counter is in memory (a daily budget needs
+/// persistence the core does not have yet, and that is recorded as open work rather than faked).
+constexpr int kPreviewCap = 40;
 
 /// The origin of a URL (`scheme://host[:port]`), or "" when the scheme has no storable origin.
 ///
@@ -126,6 +130,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 // A card finished loading: if the policy queued this origin (see cleanupSessions), this
                 // is the moment to wipe it — on its own surface, with the plan's storage list.
                 live_origin_ = originOfUrl(url);
+                producePreview(surface);
                 const auto queued = wipe_on_open_.find(live_origin_);
                 if (live_origin_.isEmpty() || queued == wipe_on_open_.end()) {
                     return;
@@ -441,6 +446,8 @@ void MainWindow::startEngine() {
     const QString profile =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/engine");
     QDir().mkpath(profile);
+    engine_profile_ = profile;
+    QDir().mkpath(profile + QStringLiteral("/previews"));
 
     if (!engine_->start(enginePath, profile)) {
         return;
@@ -556,6 +563,7 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
             return;
         }
         pending_pinned_ = args.value(QStringLiteral("pinned")).toBool();
+        pending_card_id_ = args.value(QStringLiteral("id")).toString();
         openCard(url, title);
         // An acknowledgement, not a result: the card loads asynchronously and the page follows it
         // through the grid. Answered anyway, so a page that awaits never hangs.
@@ -742,6 +750,82 @@ void MainWindow::showSessions() {
     sessions_dock_->show();
     sessions_dock_->raise();
     refreshSessions();
+}
+
+void MainWindow::producePreview(qint64 surface) {
+    if (pending_card_id_.isEmpty() || engine_profile_.isEmpty() || previews_made_ >= kPreviewCap) {
+        return;
+    }
+    if (core_ == nullptr || !core_->isRunning()) {
+        return;
+    }
+    const QString card_id = pending_card_id_;
+    pending_card_id_.clear();
+    qInfo("[shell] preview: producing for %s (surface %lld)", qUtf8Printable(card_id),
+          static_cast<long long>(surface));
+    core_->cardsList([this, card_id, surface](const QJsonObject& listed, const QString& error) {
+        if (!error.isEmpty()) {
+            return;
+        }
+        QJsonObject record;
+        for (const QJsonValue& value : listed.value(QStringLiteral("cards")).toArray()) {
+            const QJsonObject card = value.toObject();
+            if (card.value(QStringLiteral("id")).toString() == card_id) {
+                record = card;
+                break;
+            }
+        }
+        if (record.isEmpty() || !record.value(QStringLiteral("preview_ref")).toString().isEmpty()) {
+            qInfo("[shell] preview: no record or already has one (%s)",
+                  record.isEmpty() ? "no record" : "has preview_ref");
+            return;  // unknown card, or one that already has a picture
+        }
+        const QString name = card_id + QStringLiteral(".png");
+        const QString target = engine_profile_ + QStringLiteral("/previews/") + name;
+        // The record learns the name; the grid shows the picture the next time it loads, because the push
+        // carries the record and the engine serves the file (ADR-035).
+        const auto remember = [this, record, name](const QString&) {
+            QJsonObject updated = record;
+            updated.insert(QStringLiteral("preview_ref"), name);
+            core_->cardUpsert(updated, [this, name](const QJsonObject&, const QString& upsert_error) {
+                if (!upsert_error.isEmpty()) {
+                    qInfo("[shell] preview: upsert failed: %s", qUtf8Printable(upsert_error));
+                    setStatus(QStringLiteral("az előnézet neve nem mentődött: %1").arg(upsert_error));
+                    return;
+                }
+                ++previews_made_;
+                qInfo("[shell] preview: record updated for %s", qUtf8Printable(name));
+                setStatus(QStringLiteral("előnézet kész: %1").arg(name));
+            });
+        };
+        if (QFileInfo::exists(target)) {
+            remember(name);
+            return;
+        }
+        engine_->capture(
+            surface, QStringLiteral("png"), 80,
+            [this, target, remember](const QJsonObject& shot, const QString& shot_error) {
+                qInfo("[shell] preview: capture error='%s' path='%s'", qUtf8Printable(shot_error),
+                      qUtf8Printable(shot.value(QStringLiteral("path")).toString()));
+                if (!shot_error.isEmpty()) {
+                    return;
+                }
+                const QString written = shot.value(QStringLiteral("path")).toString();
+                if (written.isEmpty()) {
+                    return;
+                }
+                // `capture` writes into `screenshots/`; the preview belongs in `previews/` under the name
+                // the card carries, so the engine's scheme handler finds it.
+                QFile::remove(target);
+                if (!QFile::copy(written, target)) {
+                    qInfo("[shell] preview: copy failed to %s", qUtf8Printable(target));
+                    setStatus(QStringLiteral("az előnézet nem került a profilba: %1").arg(target));
+                    return;
+                }
+                qInfo("[shell] preview: copied to %s", qUtf8Printable(target));
+                remember(target);
+            });
+    });
 }
 
 void MainWindow::refreshSessions() {

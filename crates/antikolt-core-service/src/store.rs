@@ -29,6 +29,14 @@ pub struct Card {
     pub pinned: bool,
     #[serde(default)]
     pub notes: String,
+    /// A preview image's name inside the profile's `previews` directory, served to the grid as
+    /// `antikolt://blob/<preview_ref>` (ADR-035). Empty means "no preview yet".
+    ///
+    /// Additive like every other field: a store written before previews existed still parses, and the
+    /// shell fills it in when it has a picture. It is a *name*, not a path and not an image — the image
+    /// lives in the profile so the card list stays small.
+    #[serde(default)]
+    pub preview_ref: String,
     /// Epoch milliseconds of the last time the user opened this card; `0` means never.
     #[serde(default)]
     pub last_opened_at_ms: u64,
@@ -133,6 +141,7 @@ fn seed_cards() -> Vec<Card> {
             status: "signed_in".to_string(),
             pinned: true,
             notes: "A fejlesztés itt zajlik".to_string(),
+            preview_ref: String::new(),
             last_opened_at_ms: 0,
         },
         Card {
@@ -143,6 +152,7 @@ fn seed_cards() -> Vec<Card> {
             status: "unknown".to_string(),
             pinned: false,
             notes: String::new(),
+            preview_ref: String::new(),
             last_opened_at_ms: 0,
         },
         Card {
@@ -153,6 +163,7 @@ fn seed_cards() -> Vec<Card> {
             status: "unknown".to_string(),
             pinned: false,
             notes: String::new(),
+            preview_ref: String::new(),
             last_opened_at_ms: 0,
         },
     ]
