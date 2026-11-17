@@ -40,6 +40,20 @@ Vagyis a Chromium ablaka **pontosan a kártya helyén és méretében** van (112
 DIP 125%-on), és a lap **900×640 CSS-pixelt** lát — nem többet. A kép tehát a kártyába kerül, nem egy
 külön ablakba.
 
+A geometria azonban még nem bizonyíték arra, hogy **történik is festés**: egy ablak lehet jó helyen és
+jó méretben, és akkor is üres. Ezért az önellenőrzés képernyőképet is készít a kártya területéről
+(`QScreen::grabWindow(card->winId())`), és megköveteli, hogy ne egyszínű legyen:
+
+```
+screenshot=C:/Users/info/AppData/Local/Temp/antikolt-embed.png
+screenshot_size=1125x800
+screenshot_colours=25
+paint=ok
+```
+
+A felvételen a `<h1>embedded</h1>` szöveg olvasható a kártya területén, ablakkeret és böngésző-chrome
+nélkül — vagyis a motor valóban a mi ablakunkba fest, nem külön ablakban nyílt meg.
+
 ### Négy hiba, amit ez a szelet hozott (mind javítva, mind mérve)
 
 1. **A beágyazott téglalap mértékegysége DIP, nem fizikai pixel.** Fizikai pixelt küldve a Chromium

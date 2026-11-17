@@ -18,8 +18,11 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QImage>
+#include <QPixmap>
 #include <QRegularExpression>
 #include <QScreen>
+#include <QSet>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QTextStream>
@@ -183,6 +186,7 @@ int runEmbedCheck(const QString& enginePath) {
     bool loaded = false;
     bool embed_ok = false;
     bool viewport_ok = false;
+    bool painted_ok = false;
 
     QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
         out << "engine_error=" << message << '\n';
@@ -269,6 +273,33 @@ int runEmbedCheck(const QString& enginePath) {
                                      const int page_h = value_of(QStringLiteral("h"));
                                      viewport_ok = std::abs(page_w - card->width()) <= 2 &&
                                                    std::abs(page_h - card->height()) <= 2;
+
+                                     // Geometry is not painting: grab the card's screen area and
+                                     // check that it is not a uniform rectangle. A window can sit at
+                                     // exactly the right place and size and still show nothing.
+                                     const QPixmap shot = card->screen()->grabWindow(card->winId());
+                                     if (shot.isNull()) {
+                                         out << "screenshot=FAILED\n";
+                                     } else {
+                                         const QImage image = shot.toImage();
+                                         QString path = QDir::temp().filePath(
+                                             QStringLiteral("antikolt-embed.png"));
+                                         const bool saved = image.save(path, "PNG");
+                                         out << "screenshot=" << (saved ? path : QStringLiteral("FAILED"))
+                                             << '\n';
+                                         out << "screenshot_size=" << image.width() << 'x'
+                                             << image.height() << '\n';
+                                         // Distinct colours prove that something was drawn, not
+                                         // just a filled background.
+                                         QSet<QRgb> colours;
+                                         for (int y = 0; y < image.height(); y += 8) {
+                                             for (int x = 0; x < image.width(); x += 8) {
+                                                 colours.insert(image.pixel(x, y));
+                                             }
+                                         }
+                                         out << "screenshot_colours=" << colours.size() << '\n';
+                                         painted_ok = colours.size() > 2;
+                                     }
                                      loop.quit();
                                  });
                          });
@@ -295,7 +326,8 @@ int runEmbedCheck(const QString& enginePath) {
     }
     out << "embed=" << (embed_ok ? "ok" : "FAILED") << '\n';
     out << "viewport_match=" << (viewport_ok ? "ok" : "FAILED") << '\n';
-    if (!embed_ok || !viewport_ok) {
+    out << "paint=" << (painted_ok ? "ok" : "FAILED") << '\n';
+    if (!embed_ok || !viewport_ok || !painted_ok) {
         ++failures;
     }
 
