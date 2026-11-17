@@ -12,7 +12,7 @@
 // This is the end-to-end proof of the seam between the shell/core and the engine: it speaks exactly
 // the JSON in crates/antikolt-ipc.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -90,10 +90,7 @@ fn same_host(final_url: &str, requested: &str) -> bool {
 }
 
 /// Start an engine host and open one surface on `url`.
-fn open_surface(
-    exe: &PathBuf,
-    url: &str,
-) -> Result<(EngineLink, SurfaceId), antikolt_ipc::LinkError> {
+fn open_surface(exe: &Path, url: &str) -> Result<(EngineLink, SurfaceId), antikolt_ipc::LinkError> {
     let profile = std::env::temp_dir().join(format!("antikolt-probe-{}", now_ms()));
     std::fs::create_dir_all(&profile).ok();
     let profile_arg = profile.to_string_lossy().to_string();
@@ -159,7 +156,10 @@ fn open_surface(
             url,
             reason,
         } => {
-            println!("load_failed surface={} url={url} reason={reason}", surface.0);
+            println!(
+                "load_failed surface={} url={url} reason={reason}",
+                surface.0
+            );
             return Err(antikolt_ipc::LinkError::Engine {
                 code: "load_failed".into(),
                 message: reason,
@@ -349,7 +349,10 @@ fn run_restore(
             .get("title")
             .and_then(|v| v.as_str())
             .unwrap_or(""),
-        verification.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+        verification
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
         verification
             .get("scrollY")
             .and_then(|v| v.as_i64())
