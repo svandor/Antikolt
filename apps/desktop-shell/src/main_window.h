@@ -14,6 +14,7 @@
 #include <QStringList>
 
 class QLabel;
+class QTimer;
 class EngineClient;
 class CoreClient;
 class LiveCard;
@@ -86,7 +87,15 @@ private:
     /// worth more than a grid showing the page's own sample data. A missing core is not an error
     /// here: the page then keeps its samples, and the status bar says why.
     void pushCardsToGrid(qint64 surface);
+    /// (Re)start the hibernation clock for the live card.
+    void armIdleTimer();
+    /// Any sign of the user: restarts the hibernation clock.
+    void noteActivity();
+    /// The clock ran out: hibernate the card, unless it must stay alive (playing media).
+    void onIdleTimeout();
     void setStatus(const QString& text);
+
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
     LiveCard* card_ = nullptr;
     QLabel* status_ = nullptr;
@@ -98,6 +107,14 @@ private:
     /// The surface that shows the home page, or 0 when a real card is in front. Only this surface
     /// receives the card list.
     qint64 home_surface_ = 0;
+    /// The hibernation clock (docs/HU/02 §4.2). Ten minutes of no user activity puts the live card
+    /// back on disk, which is the whole memory promise in one timer.
+    QTimer* idle_ = nullptr;
+    /// True while the card in front is being hibernated, so a late reply cannot re-arm the clock.
+    bool hibernating_ = false;
+    /// Set when the idle timeout hibernated the card: the grid comes back once the surface is gone,
+    /// so the window is never left showing an empty card area.
+    bool return_to_grid_ = false;
     /// The card waiting to be shown once a surface exists.
     QString pending_url_;
     QString pending_title_;

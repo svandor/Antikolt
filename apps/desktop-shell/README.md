@@ -64,6 +64,7 @@ antikolt-shell.exe --embedtest  build/apps/engine-host/antikolt-engine-host.exe
 antikolt-shell.exe --opentest   build/apps/engine-host/antikolt-engine-host.exe
 antikolt-shell.exe --capturetest build/apps/engine-host/antikolt-engine-host.exe
 antikolt-shell.exe --gridtest   build/apps/engine-host/antikolt-engine-host.exe
+antikolt-shell.exe --lifecycletest build/apps/engine-host/antikolt-engine-host.exe
 antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
 ```
 
@@ -80,6 +81,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   must agree. A push that never arrived, arrived empty or was overwritten by the page's sample cards
   fails here. Finally it clicks the grid's first tile and requires the shell to answer with a bridge
   call carrying that card's URL and a new surface for it.
+- `--lifecycletest` — a live card with no user activity hibernates by itself: with
+  `ANTIKOLT_HIBERNATE_MS` shortened, the card's surface is closed, a snapshot is written, and the grid
+  comes back on its own (the ten-minute default would only measure patience).
 - `--coretest` — the shell talks to the Rust core service: handshake, card list, card open (timestamp).
 
 Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).

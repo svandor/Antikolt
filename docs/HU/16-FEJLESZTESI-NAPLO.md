@@ -3,6 +3,61 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizenkilencedik szelet) — a kártya magától lemezre megy (10 perc tétlenség)
+
+A memória-ígéret lényege eddig nem volt bekötve: a fagyasztás csak kézi gombra működött. Most a shell
+**inaktivitás-órát** tart a nyitott kártya fölött: alapból 10 perc (a `02-ARCHITEKTURA.md` §4.2 szerint),
+`ANTIKOLT_HIBERNATE_MS`-sel rövidíthető (a teszthez). Aktivitásnak a felhasználó **egér- és
+billentyűeseménye** számít (a shell ablakában bárhol), nem a motor forgalma.
+
+Időtúllépéskor a shell előbb megkérdezi a lapot, hogy **játszik-e médiát** (a dokumentált kivétel), és ha
+nem, akkor pillanatkép → `destroy_surface` → **a rács visszajön**. A rácsot csak a `destroy_surface`
+*nyugtája* után kéri újra: ha előbb kér új felületet, a motor `engine_busy`-vel elutasítja (ezt a mérés
+mutatta, lásd lent).
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --lifecycletest <motor>
+card_surface=2
+card_closed=2
+grid_back=file:///D:/Szerver/Antikolt/home/index.html
+hibernated=ok
+grid_returned=ok      (exit code 0)
+```
+
+A motor naplója ugyanebből a futásból (a shell stderr-jén, időrendben):
+
+```
+op=eval        → bridge_call surface=1 method=open_card
+op=snapshot    → snapshot written: 17065 bytes MHTML, 411 bytes state
+op=destroy_surface surface=1
+op=create_surface → surface=2 → navigate https://github.com/antikolt/antikolt
+   … 1,5 s tétlenség (a teszt órája) …
+op=eval        → '(média?)' → idle
+op=snapshot    → snapshot written: 4419063 bytes MHTML, 526 bytes state
+op=destroy_surface surface=2
+op=create_surface → surface=3 → home (a rács visszajött)
+```
+
+### Két megfigyelés, ami a következő szeleteket is érinti
+
+1. **A motor valódi HTTPS-oldalt tölt be** (a github.com betöltődött, 4,4 MB-os MHTML-nel), miközben a
+   `curl` és a `cargo` TLS-e ezen a gépen elbukik (`schannel SEC_E_NO_CREDENTIALS`). A CEF a saját
+   TLS-stackjét használja, tehát **a böngésző képes a valódi webre** — a hálózatfüggő tesztek (és a
+   webfejlesztés) innentől nem kerülendők, csak a crate-letöltés blokkolt.
+2. **`create_surface` nem előzheti meg a `destroy_surface`-t**: a rács visszakérését a destroy nyugtája
+   után kell kérni, különben `engine_busy`. Ez a korábbi (nem hibernálásos) kártyaváltásra is igaz, ott
+   véletlenül nem ütközött.
+
+### Ami még nyitott
+
+- A **kitűzött (pinned) kártya kivétele** még nincs bekötve: a mag tudja (`pinned`), a hibernálás
+  egyelőre nem kérdezi meg.
+- A **24 órás `keep`/`sweep`/`wipe`** politika és a munkamenet-ledger továbbra is hiányzik; a híd
+  `cards.upsert`-ja (új kártya a lapról) szintén.
+- A média-kivétel kódja kész, de **nincs tesztje** (médiát játszó kártya a készletben nincs).
+
 ## 2026-11-17 (tizennyolcadik szelet) — a shell naplója látszik
 
 A tizennegyedik szelet nyitott tétele volt: „a motor `stderr`-je a shell alatt nem látszik (a `qInfo`

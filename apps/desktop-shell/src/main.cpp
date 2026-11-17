@@ -622,6 +622,97 @@ int runCaptureCheck(const QString& enginePath) {
     return failures == 0 ? 0 : 1;
 }
 
+/// Prove the hibernation clock: a live card with no user activity goes back to disk by itself.
+///
+/// The ten-minute rule is measured with a shortened clock (`ANTIKOLT_HIBERNATE_MS`), because waiting
+/// ten minutes in a self test measures nothing but patience. What must happen: the card's surface is
+/// closed, a snapshot is written, and the grid comes back on its own.
+int runLifecycleCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_HIBERNATE_MS", "1500");
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    EngineClient* client = window.engine();
+    QEventLoop loop;
+    qint64 home_surface = 0;
+    qint64 card_surface = 0;
+    bool home_loaded = false;
+    bool clicked = false;
+    bool closed = false;
+    bool back = false;
+
+    const auto finish = [&] {
+        if (closed && back) {
+            loop.quit();
+        }
+    };
+
+    QObject::connect(client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "engine_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(client, &EngineClient::surfaceClosed, &loop, [&](qint64 id) {
+        if (id == card_surface) {
+            closed = true;
+            out << "card_closed=" << id << '\n';
+            finish();
+        }
+    });
+    QObject::connect(client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int) {
+                         if (!home_loaded && url.startsWith(QStringLiteral("file:"))) {
+                             home_loaded = true;
+                             home_surface = id;
+                             out << "home_loaded=" << url << '\n';
+                             // Click a card as a user would, then say nothing and wait.
+                             QTimer::singleShot(500, &loop, [&, id] {
+                                 client->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "document.querySelector('#viewport antikolt-card').click();"
+                                         " 'clicked'"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         clicked = error.isEmpty() &&
+                                                   reply.value(QStringLiteral("value")).toString() ==
+                                                       QStringLiteral("clicked");
+                                         out << "card_click=" << (clicked ? "ok" : "FAILED")
+                                             << '\n';
+                                     });
+                             });
+                             return;
+                         }
+                         if (id != home_surface && url.startsWith(QStringLiteral("file:"))) {
+                             back = true;
+                             out << "grid_back=" << url << '\n';
+                             finish();
+                         }
+                     });
+    // The grid's own surface arrives (and loads) before anything is clicked, so the card's surface is
+    // the first one created *after* the grid is up. Getting this order wrong made the test close the
+    // grid instead of the card.
+    QObject::connect(client, &EngineClient::surfaceCreated, &loop, [&](qint64 id) {
+        if (!home_loaded || id == home_surface || card_surface != 0) {
+            return;
+        }
+        card_surface = id;
+        out << "card_surface=" << id << '\n';
+    });
+
+    QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    out << "hibernated=" << (closed ? "ok" : "FAILED") << '\n';
+    out << "grid_returned=" << (back ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return closed && back ? 0 : 1;
+}
+
 /// Prove the grid shows the cards the core owns, not the page's built-in samples.
 ///
 /// The core is asked directly for its list first (the oracle), then the home page is loaded in the
@@ -1072,6 +1163,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("gridtest"),
         QStringLiteral("Prove the home grid shows the core's cards, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption lifecycletest(
+        QStringLiteral("lifecycletest"),
+        QStringLiteral("Prove an idle card hibernates by itself, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -1082,11 +1177,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(opentest);
     parser.addOption(capturetest);
     parser.addOption(gridtest);
+    parser.addOption(lifecycletest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(lifecycletest)) {
+        return runLifecycleCheck(parser.value(lifecycletest));
     }
 
     if (parser.isSet(gridtest)) {

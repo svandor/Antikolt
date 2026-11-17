@@ -3,15 +3,18 @@
 #include "main_window.h"
 
 #include <QActionGroup>
+#include <QApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QEvent>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolBar>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -114,6 +117,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             home_surface_ = surface;
         } else {
             home_surface_ = 0;
+            // A card just came to the front: the hibernation clock starts now.
+            armIdleTimer();
         }
     });
     connect(card_, &LiveCard::surfaceDetached, this, [this](qint64 surface) {
@@ -123,8 +128,74 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(engine_, &EngineClient::bridgeCall, this, &MainWindow::handleBridgeCall);
 
+    // The hibernation clock: ten minutes of no user activity put the live card back on disk, which is
+    // the memory promise in one timer. `ANTIKOLT_HIBERNATE_MS` shortens it for the self test; without
+    // that a check would have to wait ten minutes to prove anything.
+    const int configured_ms = qEnvironmentVariableIntValue("ANTIKOLT_HIBERNATE_MS");
+    idle_ = new QTimer(this);
+    idle_->setSingleShot(true);
+    idle_->setInterval(configured_ms > 0 ? configured_ms : 10 * 60 * 1000);
+    connect(idle_, &QTimer::timeout, this, &MainWindow::onIdleTimeout);
+    // Activity is what the user does, not what the engine reports: mouse and keyboard, wherever they
+    // land inside the shell. The page's own input arrives in the engine's process, so the card also
+    // wakes the clock through the bridge (a page that is not touched never sends anything).
+    qApp->installEventFilter(this);
+
     setStatus(QStringLiteral("motor: nincs elindítva · kártyák: 0"));
     applyTheme(QStringLiteral("grey"));
+}
+
+void MainWindow::armIdleTimer() {
+    if (idle_ != nullptr) {
+        idle_->start();
+    }
+}
+
+void MainWindow::noteActivity() {
+    // Only a real card has something to hibernate: on the grid the clock would just tick away.
+    if (surface_ != 0 && surface_ != home_surface_) {
+        armIdleTimer();
+    }
+}
+
+void MainWindow::onIdleTimeout() {
+    if (surface_ == 0 || surface_ == home_surface_ || !card_->hasSurface() || hibernating_) {
+        return;
+    }
+    hibernating_ = true;
+    // The one documented exception a user would feel: a page that is playing sound or video keeps its
+    // card alive (docs/HU/02 §4.2). Everything else goes to disk, unpinned or not.
+    engine_->evaluate(
+        surface_,
+        QStringLiteral("(function(){var m=document.querySelectorAll('video,audio');"
+                       "for(var i=0;i<m.length;i++){if(!m[i].paused&&!m[i].ended)return 'playing';}"
+                       "return 'idle';})()"),
+        [this](const QJsonObject& reply, const QString& error) {
+            hibernating_ = false;
+            const QString value = reply.value(QStringLiteral("value")).toString();
+            if (error.isEmpty() && value == QStringLiteral("playing")) {
+                setStatus(QStringLiteral("a kártya médiát játszik — a hibernálás vár"));
+                armIdleTimer();
+                return;
+            }
+            setStatus(QStringLiteral("tétlenség: a kártya lemezre megy"));
+            return_to_grid_ = true;
+            freezeCard();
+        });
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    switch (event->type()) {
+        case QEvent::KeyPress:
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseMove:
+        case QEvent::Wheel:
+            noteActivity();
+            break;
+        default:
+            break;
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 MainWindow::~MainWindow() {
@@ -455,6 +526,7 @@ void MainWindow::freezeCard() {
     const qint64 surface = card_->surface();
     engine_->snapshot(surface, [this, surface](const QJsonObject& result, const QString& error) {
         if (!error.isEmpty()) {
+            return_to_grid_ = false;
             setStatus(QStringLiteral("fagyasztás hiba: %1").arg(error));
             return;
         }
@@ -463,7 +535,15 @@ void MainWindow::freezeCard() {
                       .arg(result.value(QStringLiteral("state_bytes")).toInt()));
         // Order matters: the state is on disk before the surface goes away.
         card_->detach();
-        engine_->destroySurface(surface);
+        // The grid comes back only once the old surface is really gone: asking for a new surface
+        // while the old one still exists is answered with `engine_busy`, and the grid then never
+        // loads (measured: create_surface racing destroy_surface, grid_returned=FAILED).
+        engine_->destroySurface(surface, [this](const QJsonObject&, const QString&) {
+            if (return_to_grid_) {
+                return_to_grid_ = false;
+                loadHome();
+            }
+        });
     });
 }
 
