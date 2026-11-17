@@ -51,12 +51,16 @@ pub enum SessionError {
     Json(#[from] serde_json::Error),
     #[error("the ledger refused the row: {0}")]
     Rejected(#[from] LedgerError),
+    /// A rule that is not a policy. Its own variant, so the reply says what was wrong instead of
+    /// borrowing a row-level error (a TTL typo reported as "unknown state" would be a lie).
+    #[error("the session rules were refused: {0}")]
+    Rules(&'static str),
 }
 
 impl SessionError {
     /// `true` when the request itself was wrong, rather than the storage.
     pub fn is_invalid_argument(&self) -> bool {
-        matches!(self, Self::Rejected(_))
+        matches!(self, Self::Rejected(_) | Self::Rules(_))
     }
 }
 
@@ -90,6 +94,24 @@ impl SessionStore {
     /// The container-wide rules.
     pub fn rules(&self) -> SessionRules {
         self.file.rules
+    }
+
+    /// Replace the container-wide rules, after checking them.
+    ///
+    /// The check is here, not in the caller: a TTL of a thousand years is a typo, not a policy, and it would
+    /// be stored as one. `ttl_ms` must be a real retention window (an hour to thirty days), because a zero
+    /// TTL would sweep every session the moment it is written.
+    pub fn set_rules(&mut self, rules: SessionRules) -> Result<SessionRules, SessionError> {
+        const MIN_TTL_MS: u64 = 60 * 60 * 1000;
+        const MAX_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+        if rules.ttl_ms < MIN_TTL_MS || rules.ttl_ms > MAX_TTL_MS {
+            return Err(SessionError::Rules(
+                "the TTL must be between one hour and thirty days",
+            ));
+        }
+        self.file.rules = rules;
+        self.save()?;
+        Ok(rules)
     }
 
     /// Rows ordered by origin, so the panel and the reply are stable.

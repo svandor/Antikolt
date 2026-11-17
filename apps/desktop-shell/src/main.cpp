@@ -2355,6 +2355,77 @@ int runPinCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the session rules can be changed over the wire, and that the core refuses nonsense (ADR-039).
+///
+/// Three steps: store a real policy, send an impossible one (the reply must *refuse* it), and read the rules
+/// back — the stored policy must be the first one, not the refused one.
+int runRulesCheck(const QString& corePath) {
+    QTextStream out(stdout);
+    const QString core_dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/core");
+    QDir().mkpath(core_dir);
+
+    CoreClient client;
+    if (!client.start(corePath, core_dir)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    const auto ask = [&client](const QJsonObject& rules, QJsonObject* saved, QString* error) {
+        QEventLoop loop;
+        client.sessionRules(rules, [&](const QJsonObject& reply, const QString& reply_error) {
+            if (saved != nullptr) {
+                *saved = reply.value(QStringLiteral("rules")).toObject();
+            }
+            if (error != nullptr) {
+                *error = reply_error;
+            }
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+
+    QJsonObject saved;
+    QString save_error;
+    ask(QJsonObject{{QStringLiteral("ttl_ms"), 7200000.0},
+                    {QStringLiteral("wipe_on_app_lock"), true},
+                    {QStringLiteral("container_default"), QStringLiteral("wipe")}},
+        &saved, &save_error);
+
+    QString refused;
+    ask(QJsonObject{{QStringLiteral("ttl_ms"), 1000.0},
+                    {QStringLiteral("wipe_on_app_lock"), false},
+                    {QStringLiteral("container_default"), QStringLiteral("sweep")}},
+        nullptr, &refused);
+
+    QJsonObject reread;
+    {
+        QEventLoop loop;
+        client.sessionList([&](const QJsonObject& reply, const QString&) {
+            reread = reply.value(QStringLiteral("rules")).toObject();
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    client.shutdown();
+
+    const qint64 stored_ttl = static_cast<qint64>(saved.value(QStringLiteral("ttl_ms")).toDouble());
+    const qint64 reread_ttl = static_cast<qint64>(reread.value(QStringLiteral("ttl_ms")).toDouble());
+    out << "rules_ttl_ms=" << stored_ttl << '\n';
+    out << "rules_lock_wipe="
+        << (saved.value(QStringLiteral("wipe_on_app_lock")).toBool() ? "true" : "false") << '\n';
+    out << "rules_refused=" << (refused.contains(QStringLiteral("TTL")) ? "refused" : refused)
+        << '\n';
+    out << "rules_reread_ttl_ms=" << reread_ttl << '\n';
+    const bool ok = save_error.isEmpty() && stored_ttl == 7200000 &&
+                    saved.value(QStringLiteral("wipe_on_app_lock")).toBool() &&
+                    refused.contains(QStringLiteral("TTL")) && reread_ttl == 7200000;
+    out << "session_rules=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the page can *ask*: protocol 2's request channel, end to end (ADR-034).
 ///
 /// The page calls `window.antikoltNative.request('cards.search', {q})` — a persistent `cefQuery` the
@@ -2867,6 +2938,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption rulestest(
+        QStringLiteral("rulestest"),
+        QStringLiteral("Prove the session rules can be changed over the wire, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption scrollzoomtest(
         QStringLiteral("scrollzoomtest"),
         QStringLiteral("Prove scrolling and zoom reach the page, then exit."),
@@ -2894,6 +2969,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(metricstest);
     parser.addOption(mediatest);
     parser.addOption(scrollzoomtest);
+    parser.addOption(rulestest);
     parser.addOption(coretest);
     parser.process(app);
 
@@ -2903,6 +2979,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(scrollzoomtest)) {
         return runScrollZoomCheck(parser.value(scrollzoomtest));
+    }
+
+    if (parser.isSet(rulestest)) {
+        return runRulesCheck(parser.value(rulestest));
     }
 
     if (parser.isSet(mediatest)) {

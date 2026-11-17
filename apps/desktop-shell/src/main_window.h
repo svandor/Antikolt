@@ -18,6 +18,8 @@ class QLabel;
 class QTimer;
 class QDockWidget;
 class QTableWidget;
+class QSpinBox;
+class QCheckBox;
 class EngineClient;
 class CoreClient;
 class LiveCard;
@@ -96,6 +98,8 @@ public:
     void cleanupSessions();
     /// Set the live page's zoom, in percent (25..500). Remembered and re-applied on every load (ADR-038).
     void setZoomPercent(int percent);
+    /// Send the panel's rules to the core (ADR-039). The core validates them; a refusal is shown, not hidden.
+    void saveSessionRules();
     /// Emulate the live page's site theme: `auto`, `dark` or `light` (ADR-037).
     ///
     /// The preference is remembered and re-applied when a surface attaches or loads, because the emulation
@@ -194,6 +198,9 @@ private:
     /// The page zoom in percent, re-applied on every load (ADR-038); the label shows it.
     int zoom_percent_ = 100;
     QAction* zoom_label_ = nullptr;
+    /// The panel's rule editors (ADR-039): the TTL in hours and the app-lock wipe.
+    QSpinBox* sessions_ttl_ = nullptr;
+    QCheckBox* sessions_lock_wipe_ = nullptr;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
 };

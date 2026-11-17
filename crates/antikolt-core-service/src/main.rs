@@ -22,7 +22,7 @@ mod store;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use antikolt_core::session::SessionLedgerEntry;
+use antikolt_core::session::{SessionLedgerEntry, SessionRules};
 use antikolt_ipc::{decode_json_frame, encode_json_frame, FrameError};
 use serde_json::{json, Value};
 
@@ -181,6 +181,27 @@ fn handle(request: &Value, store: &mut CardStore, sessions: &mut SessionStore) -
             ),
             true,
         ),
+        "session_rules" => {
+            let Some(rules) = request.get("rules") else {
+                return (
+                    error_reply(id, "invalid_argument", "session_rules needs rules"),
+                    true,
+                );
+            };
+            match serde_json::from_value::<SessionRules>(rules.clone()) {
+                Ok(rules) => match sessions.set_rules(rules) {
+                    Ok(rules) => (ok_reply(id, json!({ "rules": rules })), true),
+                    Err(error) => (
+                        error_reply(id, session_error_code(&error), &error.to_string()),
+                        true,
+                    ),
+                },
+                Err(error) => (
+                    error_reply(id, "invalid_argument", &error.to_string()),
+                    true,
+                ),
+            }
+        }
         "session_upsert" => {
             let Some(session) = request.get("session") else {
                 return (

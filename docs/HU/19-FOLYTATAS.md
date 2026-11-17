@@ -81,6 +81,12 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > dokumentáltsága a felhasználói doksiban (ma csak a shell README említi), és az, hogy a rács saját
 > keresése szándékosan lokális marad (a lap a teljes listát kapja).
 
+## 2b. Munkamenet-szabályok állítása (kész, ADR-039)
+
+> `session_rules` op + panel-szerkesztő (óra, app-zárnál törlés, Mentés). `--rulestest`: `rules_ttl_ms=7200000`,
+> `rules_lock_wipe=true`, `rules_refused=refused`, `rules_reread_ttl_ms=7200000`, `session_rules=ok`.
+> **Ami hátra van:** a szerkesztőmezők feltöltése a beolvasott szabályokból, kártyánkénti felülírás.
+
 ## 4. Előnézetek
 
 > **Állapot: kiszolgálás és előállítás is kész, mérve** (30–31. szelet, ADR-035). A motor az `antikolt`

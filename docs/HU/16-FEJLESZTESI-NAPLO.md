@@ -3,6 +3,35 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harmincötödik szelet) — a munkamenet-szabályok állíthatók
+
+A politika eddig csak megjeleníthető volt. Most a panelen beállítható: lejárat órában (1–720), „app-zárnál
+törlés" jelölő, Mentés gomb; a huzalon az új `session_rules` op, a magban a `SessionStore::set_rules`, ami
+**ellenőriz, mielőtt ír** (1 óra – 30 nap), és az elutasítás saját hiba-változatot kap, hogy a válasz azt
+mondja, mi a baj. A döntés az ADR-039-ben.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --rulestest <mag>
+rules_ttl_ms=7200000        ← 2 óra mentve
+rules_lock_wipe=true
+rules_refused=refused       ← az 1000 ms-os TTL-t a mag elutasítja ("the TTL must be …")
+rules_reread_ttl_ms=7200000 ← és a tárolt szabály maradt az első, nem az elutasított
+session_rules=ok      (exit code 0)
+```
+
+### Hiba a mérésből, javítva
+
+A `session_rules` először `SessionError::Rejected(LedgerError::UnknownState)`-et adott vissza TTL-hibára —
+a válasz „unknown state" lett volna egy elírásra. Külön `SessionError::Rules` változat készült, saját
+üzenettel.
+
+### Ami még nyitott
+
+- **Kártyánkénti** (origin-szintű) felülírás a konténer-szabály mellett.
+- A panel a szabályokat a `session_list` válaszából olvassa, de a szerkesztőmezők még nem töltődnek fel
+  belőlük (a Mentés felülírja őket) — ez a következő szelet.
 ## 2026-11-17 (harmincnegyedik szelet) — görgetés és nagyítás: a szerződés beváltva
 
 A `proto/README.md` régóta hirdette a `scroll` és a `set_zoom` opot, a motor `not_supported`-ot válaszolt.

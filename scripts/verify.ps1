@@ -133,6 +133,14 @@ if (-not $shell -or -not $engine -or -not $core) {
     Add-Result 'sessionpanel' ($LASTEXITCODE -eq 0)
 }
 
+Write-Host '=== rulestest ===' -ForegroundColor Cyan
+if (-not $shell -or -not $core) {
+    Add-Result 'rulestest' $false 'missing antikolt-shell.exe or antikolt-core-service.exe'
+} else {
+    & $shell --rulestest $core
+    Add-Result 'rulestest' ($LASTEXITCODE -eq 0)
+}
+
 if (-not $SkipRepo) {
     Write-Host '=== Repository checks ===' -ForegroundColor Cyan
     & (Join-Path $PSScriptRoot 'check-repo.ps1')

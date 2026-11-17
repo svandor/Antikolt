@@ -3,11 +3,13 @@
 #include "main_window.h"
 
 #include <QActionGroup>
+#include <QCheckBox>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDockWidget>
+#include <QHBoxLayout>
 #include <QDir>
 #include <QEvent>
 #include <QFileInfo>
@@ -18,6 +20,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSet>
+#include <QSpinBox>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTableWidget>
@@ -777,6 +780,23 @@ void MainWindow::showSessions() {
         sessions_table_->horizontalHeader()->setStretchLastSection(true);
         sessions_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         sessions_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        // The policy is the core's, and so is the decision — but the user must be able to *set* it
+        // (ADR-039). A TTL in hours is the unit a person thinks in; the core stores milliseconds.
+        auto* rules = new QWidget(panel);
+        auto* rules_layout = new QHBoxLayout(rules);
+        rules_layout->setContentsMargins(0, 0, 0, 0);
+        rules_layout->addWidget(new QLabel(QStringLiteral("Lejárat (óra):"), rules));
+        sessions_ttl_ = new QSpinBox(rules);
+        sessions_ttl_->setRange(1, 720);
+        sessions_ttl_->setValue(24);
+        rules_layout->addWidget(sessions_ttl_);
+        sessions_lock_wipe_ = new QCheckBox(QStringLiteral("App-zárnál törlés"), rules);
+        rules_layout->addWidget(sessions_lock_wipe_);
+        auto* save = new QPushButton(QStringLiteral("Mentés"), rules);
+        save->setObjectName(QStringLiteral("sessionRulesSave"));
+        connect(save, &QPushButton::clicked, this, &MainWindow::saveSessionRules);
+        rules_layout->addWidget(save);
+        layout->addWidget(rules);
         layout->addWidget(sessions_table_);
         sessions_dock_->setWidget(panel);
         // A companion of what is on screen, not a modal interruption of it.
@@ -785,6 +805,34 @@ void MainWindow::showSessions() {
     sessions_dock_->show();
     sessions_dock_->raise();
     refreshSessions();
+}
+
+void MainWindow::saveSessionRules() {
+    if (core_ == nullptr || !core_->isRunning()) {
+        setStatus(QStringLiteral("a mag nem fut, a szabályok nem menthetők"));
+        return;
+    }
+    const qint64 hours = (sessions_ttl_ != nullptr) ? sessions_ttl_->value() : 24;
+    const bool lock_wipe = (sessions_lock_wipe_ != nullptr) && sessions_lock_wipe_->isChecked();
+    // The core multiplies nothing and decides nothing: it validates and stores what it is told (ADR-033).
+    QJsonObject rules;
+    rules.insert(QStringLiteral("ttl_ms"), static_cast<double>(hours * 3600 * 1000));
+    rules.insert(QStringLiteral("wipe_on_app_lock"), lock_wipe);
+    rules.insert(QStringLiteral("container_default"), QStringLiteral("sweep"));
+    core_->sessionRules(rules, [this](const QJsonObject& saved, const QString& error) {
+        if (!error.isEmpty()) {
+            setStatus(QStringLiteral("a szabályok nem mentődtek: %1").arg(error));
+            return;
+        }
+        const QJsonObject stored = saved.value(QStringLiteral("rules")).toObject();
+        setStatus(QStringLiteral("munkamenet-szabályok: %1 óra%2")
+                      .arg(static_cast<qint64>(stored.value(QStringLiteral("ttl_ms")).toDouble() /
+                                               3600000.0))
+                      .arg(stored.value(QStringLiteral("wipe_on_app_lock")).toBool()
+                               ? QStringLiteral(", app-zárnál törlés")
+                               : QString()));
+        refreshSessions();
+    });
 }
 
 void MainWindow::setZoomPercent(int percent) {

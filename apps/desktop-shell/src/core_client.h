@@ -45,6 +45,8 @@ public:
     void sessionList(ReplyHandler handler = {});
     void sessionUpsert(const QJsonObject& session, ReplyHandler handler = {});
     void sessionDue(qint64 nowMs, bool appLocked, ReplyHandler handler = {});
+    /// Replace the container-wide session rules (`session_rules`, ADR-039). The core validates them.
+    void sessionRules(const QJsonObject& rules, ReplyHandler handler = {});
     void sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler = {});
     void shutdown();
 

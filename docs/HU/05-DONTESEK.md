@@ -3,6 +3,23 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-039 — A munkamenet-szabályokat a felhasználó állítja, a mag ellenőrzi (2026-11-17)
+
+**Kontextus.** A 24 órás politika eddig csak *megjeleníthető* volt: a panel mutatta a szabályokat, de
+módosítani nem lehetett őket (a ledger a `session_list` válaszában küldte a `rules`-t, írás nem volt
+rá). Egy „beállíthatatlan" biztonsági ígéret pedig nem ígéret.
+
+**Döntés.** Új huzal-op: `session_rules { rules }` → `{ rules }`, a panelen óraben megadott lejárat
+(1–720 óra), „app-zárnál törlés" jelölő és egy **Mentés** gomb. A **ellenőrzés a magban** van
+(`SessionStore::set_rules`): a TTL-nek valódi visszatartási ablaknak kell lennie (1 óra – 30 nap), mert a
+nulla TTL minden munkamenetet azonnal elseperne, és a 30 napon túli érték elírás, nem politika. Az
+elutasítás saját hiba-változat (`SessionError::Rules`), hogy a válasz azt mondja, mi a baj — nem egy
+sor-szintű hibát kölcsönöz.
+
+**Következmény.** (+) a felhasználó tényleg állíthatja a politikát, és a mag ugyanazt a `plan_cleanup`-ot
+hajtja végre, mint eddig; (+) a szabályok a `sessions.json`-ban maradnak, tehát újraindítás után is élnek;
+(−) a TTL-t órában adja meg a felület, ezért a nem egész órás értékek nem érhetők el (szándékos
+egyszerűsítés); (−) a pane­lenkénti (kártyánkénti) felülírás továbbra sem létezik, csak a konténer-szintű.
 ## ADR-038 — Scroll és zoom: a dokumentumon, illetve újratördeléssel (2026-11-17)
 
 **Kontextus.** A huzal-szerződés régóta hirdette a `scroll` és a `set_zoom` opokat, a motor `not_supported`-ot
@@ -275,6 +292,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-036 | A memóriát a motor méri (`metrics`), a lap a kérés-csatornán kapja; a büdzsé 0, amíg a profilok nem hordozzák | Elfogadva |
 | ADR-037 | Az oldal-témát a lap dönti el: `set_media` a `prefers-color-scheme`-et állítja, nem kényszerít színt | Elfogadva |
 | ADR-038 | `scroll` = `window.scrollBy`, `set_zoom` = újratördelő device-metrics felülírás, a DPR-rel szorozva | Elfogadva |
+| ADR-039 | A munkamenet-szabályokat a felhasználó állítja (`session_rules`), a mag ellenőrzi (TTL 1 óra – 30 nap) | Elfogadva |
 
 ---
 

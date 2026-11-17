@@ -107,6 +107,11 @@ void CoreClient::sessionDue(qint64 nowMs, bool appLocked, ReplyHandler handler) 
     send(QStringLiteral("session_due"), fields, std::move(handler));
 }
 
+void CoreClient::sessionRules(const QJsonObject& rules, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("rules"), rules);
+    send(QStringLiteral("session_rules"), fields, std::move(handler));
+}
 void CoreClient::sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("container_id"), containerId);
