@@ -2,10 +2,10 @@
 
 **Modern, memóriatakarékos, kártya-alapú böngésző.** Nyitott forrás, magyar és angol nyelven.
 
-> Állapot: **v0.3 — működő motor, mért memóriával**. A Rust mag (77 teszt), a Qt shell és a CEF
-> motorház is épül; a motor **valódi ablakban betölt egy oldalt** (load/title callbackek, önteszt exit 0).
-> Első mérés: egy cikk **177–185 MB**, YouTube **386–390 MB** motor-oldalon → a teljes böngésző
-> várhatóan **270–510 MB**, az 1 GB-os cél bőven tartható.
+> Állapot: **v0.4 — a böngésző két fele beszél egymással**. A Rust kliens (`antikolt-probe`) a valódi
+> protokollon indítja, navigálja és zárja le a CEF motorházat; a mérés szerint egy cikk **177–185 MB**,
+> YouTube **386–390 MB** motor-oldalon → a teljes böngésző várhatóan **270–510 MB**, az 1 GB-os cél
+> bőven tartható. A Rust mag 79 tesztje zöld.
 > Terv: `docs/HU/` (magyar) · angol összefoglaló: `docs/EN/` · napló:
 > [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) · F0 mérés:
 > [`docs/HU/18-F0-JELENTES.md`](docs/HU/18-F0-JELENTES.md) · eszközlánc:
@@ -20,7 +20,8 @@
 | `crates/antikolt-ipc` | 20 üzenet, hossz-előtagos keretezés, verzió- és hibakezelés, képesség-lekérdezés — [specifikáció](proto/README.md) |
 | `crates/antikolt-core` | azonosítók, óra, öt erőforrás-profil, kártya-életciklus-gép, `keep`/`sweep`/`wipe` munkamenet-politika, pillanatkép-manifest, migrációk |
 | `apps/desktop-shell` | Qt 6 ablak, vezérlősáv, négy téma, `--selftest` — **lefordul és fut** |
-| `apps/engine-host` | **valódi böngészőmotor**: CEF inicializálás, natív ablak, egy surface, load/title callbackek, `--selftest` / `--url` — **lefordul és betölt egy oldalt** |
+| `apps/engine-host` | **protokoll-szerver** a CEF felett: `hello`/`welcome`, `create_surface`, `navigate`, `destroy_surface`, `shutdown` + load/title/surface események |
+| `crates/antikolt-ipc` + `antikolt-probe` | stdio-kliens (`EngineLink`) és end-to-end próba — **bizonyítottan működik** (`load_finished status=200`) |
 | `perf/measure-engine.ps1` | memóriamérő: a motor folyamatfájának privát memóriája, markdown + JSON riport |
 | `home/` | a kezdőlap: `<antikolt-card>`, virtualizált rács, négy téma, keresés, billentyűzet — böngészőben önállóan is megnyitható |
 | Shell ↔ motor összekötés | **még nincs** — a következő szelet (IPC + fagyasztás) |

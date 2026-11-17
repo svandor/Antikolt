@@ -77,8 +77,9 @@ void printUsage() {
     std::printf(
         "usage: antikolt-engine-host [options]\n"
         "\n"
+        "  --stdio                 run as the shell's protocol server on stdin/stdout\n"
         "  --selftest              start CEF, load a data: URL, report and exit (CI uses this)\n"
-        "  --url <url>             open this page in a window\n"
+        "  --url <url>             open this page in a window (one-shot mode)\n"
         "  --size <WxH>            window client size (default 1280x800)\n"
         "  --hidden                create the window without showing it\n"
         "  --user-data-dir <path>  CEF cache/profile directory\n"
@@ -114,12 +115,15 @@ int main(int argc, char* argv[]) {
     config.user_data_path = DefaultUserDataPath();
 
     bool selftest = false;
+    bool stdio_mode = false;
     bool user_data_explicit = false;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
         if (std::strcmp(arg, "--selftest") == 0) {
             selftest = true;
+        } else if (std::strcmp(arg, "--stdio") == 0) {
+            stdio_mode = true;
         } else if (std::strcmp(arg, "--version") == 0) {
             printVersion();
             return 0;
@@ -183,7 +187,8 @@ int main(int argc, char* argv[]) {
         std::fflush(stdout);
     }
 
-    const int exit_code = antikolt::RunEngineHost(config);
+    const int exit_code =
+        stdio_mode ? antikolt::RunEngineHostServer(config) : antikolt::RunEngineHost(config);
 
     if (selftest && !user_data_explicit) {
         std::error_code cleanup_error;

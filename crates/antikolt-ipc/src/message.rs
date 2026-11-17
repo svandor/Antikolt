@@ -196,6 +196,24 @@ pub enum ErrorCode {
     Internal,
 }
 
+// The Display form is the wire form: diagnostics, logs and the protocol must never disagree about
+// what an error code is called.
+impl std::fmt::Display for ErrorCode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Self::Timeout => "timeout",
+            Self::NotSupported => "not_supported",
+            Self::InvalidArgument => "invalid_argument",
+            Self::SurfaceNotFound => "surface_not_found",
+            Self::EngineBusy => "engine_busy",
+            Self::VaultLocked => "vault_locked",
+            Self::Cancelled => "cancelled",
+            Self::Internal => "internal",
+        };
+        formatter.write_str(text)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EngineEvent {
@@ -246,6 +264,17 @@ pub enum EngineEvent {
         surface: SurfaceId,
         url: String,
         suggested_name: String,
+    },
+    /// A surface was created. CEF creates the browser asynchronously, so the reply to
+    /// `create_surface` may arrive before the browser actually exists.
+    SurfaceCreated {
+        surface: SurfaceId,
+    },
+    /// A surface went away: the renderer died, or the browser was closed.
+    SurfaceClosed {
+        surface: SurfaceId,
+        #[serde(default)]
+        reason: String,
     },
     RendererGone {
         surface: SurfaceId,
@@ -353,6 +382,9 @@ pub enum Message {
         #[serde(default)]
         storages: Vec<String>,
     },
+
+    /// Ask the engine host to exit. It replies first, then shuts down.
+    Shutdown,
 
     // ---- replies and events ---------------------------------------------------------------
     Reply {

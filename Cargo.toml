@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/antikolt-ipc",
     "crates/antikolt-core",
+    "crates/antikolt-probe",
 ]
 
 [workspace.package]

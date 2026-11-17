@@ -3,6 +3,66 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-16 (negyedik szelet) — a shell ↔ motorház protokoll **él**
+
+Ez a szelet köti össze a böngésző két felét: a Rust oldal (a leendő mag) és a C++ motorház most már
+ugyanazt a protokollt beszéli, amit a `crates/antikolt-ipc` definiál.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| `apps/engine-host/src/protocol.{h,cpp}` | stdio-csatorna (4 bájtos hossz-előtag + JSON), olvasó szál + parancssor, **CEF saját JSON-parserével**; `hello`/`welcome`, `ping`, `create_surface`, `navigate`, `destroy_surface`, `shutdown`; események: `surface_created`, `surface_closed`, `load_finished`, `load_failed`, `title_changed` |
+| `crates/antikolt-ipc/src/transport.rs` | `EngineLink`: gyermekfolyamat indítása, keretezés, kézfogás, kérés–válasz párosítás időkorláttal, esemény-várakozás |
+| `crates/antikolt-probe` | önálló bináris, ami **végigviszi** a folyamatot: spawn → handshake → create_surface → navigate → load_finished → destroy → shutdown |
+| Protokoll-bővítés | `Message::Shutdown`, `EngineEvent::SurfaceCreated/SurfaceClosed` (+ a JSON-formákra illesztett tesztek) |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+$ antikolt-probe antikolt-engine-host.exe https://example.com
+spawned pid=32488
+engine=cef version=158.0.3+g8c29be2+chromium-158.0.8127.18 chromium_major=Some(158) capabilities=4
+surface=1
+navigate=https://example.com
+load_finished surface=1 status=Some(200) url=https://example.com/
+surface_destroyed=1
+engine_host_exited
+probe=ok
+exit code = 0
+```
+
+Ez azt jelenti, hogy a **valódi oldalbetöltés a protokollon keresztül** működik: a kliens kér, a
+motorház CEF-fel betölt, eseményt küld, a kliens lezárja. A böngésző két fele **beszél egymással**.
+
+### Hat hiba, amit ez a szelet felszínre hozott (mind javítva)
+
+1. **A CEF JSON-író kapcsolója `JSON_WRITER_*`** (nem `JSONWRITER_*`), és a `cef_types.h`-ban van.
+2. **Egész számokat egészként kell írni.** A `SetDouble(1.0)` → `1.0` a JSON-ban, amit a Rust `u64`
+   nem tud fogadni. Javítás: `SetInt` + `JSON_WRITER_OMIT_DOUBLE_TYPE_PRESERVATION`. Ez a fajta hiba
+   némán megállítja a protokollt, ezért most **teszt** őrzi a C++ által küldött JSON-formákat.
+3. **`GetKeys()` out-paraméteres** ebben a CEF-verzióban.
+4. **A saját kliensem végtelen ciklusba futott**: a `request()` a nem illeszkedő eseményt visszatette a
+   várakozási sorba, majd újra kivette — miközben a válasz a csatornában várt. Javítás: az eseményeket
+   félreteszi, a válasz megérkezése után **egyszer** teszi vissza őket. (Ez volt a „miért nem jön
+   válasz, mikor a napló szerint minden válaszolt" rejtély.)
+5. **A PowerShell `$host` foglalt változó** — a saját tesztparancsom rossz argumentumot adott át.
+6. **Egy korábbi próba-folyamat életben maradt**, és zárolta az exe-t (`os error 5` a buildnél) — a
+   tesztek most mindig leállítják a maradék folyamatokat.
+
+Plusz: az `ANTIKOLT_ENGINE_DISABLE_GPU=1` környezeti kapcsoló, mert ebben a környezetben a
+**GPU-folyamat hatszor összeomlik**, és a CEF újraindításai megzavarják a mérést. Ez nem termékbeállítás,
+csak a determinisztikus futtatás eszköze (a `18-F0-JELENTES.md` fenntartásai között szerepel).
+
+### Következő szelet
+
+1. A **fagyasztás** prototípusa: `snapshot` parancs a motoron (MHTML), majd a motor megszüntetése és a
+   memória visszaesésének mérése — a termék legfontosabb mechanizmusa.
+2. A GPU-folyamat leállásának kivizsgálása (működő GPU-s mérés).
+3. A Qt-héj bekötése ugyanerre a `EngineLink`-re (első valódi shell ↔ motor hívás).
+
+---
+
 ## 2026-11-16 (harmadik szelet) — valódi böngészőablak és az első memóriamérés
 
 ### Interaktív mód: a bezárás is működik

@@ -20,6 +20,7 @@
 
 pub mod frame;
 pub mod message;
+pub mod transport;
 
 /** Bumped only for breaking changes; the host and engine host negotiate in [`message::Message::Hello`].*/
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -33,3 +34,4 @@ pub use message::{
     NavigateOpts, PermissionKind, PopupDisposition, ReplyOutcome, SurfaceConfig, SurfaceId,
     SurfaceMetrics, Viewport, World,
 };
+pub use transport::{EngineLink, LinkError, DEFAULT_TIMEOUT};

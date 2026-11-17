@@ -90,6 +90,7 @@ fn one_of_each() -> Vec<Message> {
                 retryable: true,
             },
         },
+        Message::Shutdown,
         Message::Event {
             event: EngineEvent::LoadFinished {
                 surface,
@@ -116,6 +117,21 @@ fn one_of_each() -> Vec<Message> {
                 surface,
                 origin: "https://example.com".into(),
                 kind: PermissionKind::Notifications,
+            },
+        },
+        Message::Event {
+            event: EngineEvent::SurfaceCreated { surface },
+        },
+        Message::Event {
+            event: EngineEvent::SurfaceClosed {
+                surface,
+                reason: "renderer gone".into(),
+            },
+        },
+        Message::Event {
+            event: EngineEvent::SurfaceClosed {
+                surface,
+                reason: String::new(),
             },
         },
         Message::Event {
@@ -272,5 +288,84 @@ fn default_quality_is_stable() {
     match envelope.message {
         Message::Capture { quality, .. } => assert_eq!(quality, 80),
         other => panic!("expected capture, got {other:?}"),
+    }
+}
+
+#[test]
+fn error_code_display_matches_the_wire_format() {
+    // Diagnostics and the protocol must not disagree about what an error is called.
+    let codes = [
+        ErrorCode::Timeout,
+        ErrorCode::NotSupported,
+        ErrorCode::InvalidArgument,
+        ErrorCode::SurfaceNotFound,
+        ErrorCode::EngineBusy,
+        ErrorCode::VaultLocked,
+        ErrorCode::Cancelled,
+        ErrorCode::Internal,
+    ];
+    for code in codes {
+        let wire = serde_json::to_value(code).expect("serialise error code");
+        assert_eq!(
+            wire.as_str().expect("error code is a string"),
+            code.to_string(),
+            "Display and serde disagree for {code:?}"
+        );
+    }
+}
+
+#[test]
+fn engine_events_from_the_host_deserialise() {
+    // Shapes the C++ engine host actually sends (see apps/engine-host/src/protocol.cpp).
+    let welcome = serde_json::json!({
+        "version": 1, "id": 1,
+        "message": {
+            "op": "welcome", "protocol": 1,
+            "engine": {
+                "name": "cef", "version": "158.0.3", "chromium_major": 158,
+                "capabilities": ["capture", "media_emulation", "isolated_world", "offscreen_surface"]
+            }
+        }
+    });
+    let envelope: Envelope = serde_json::from_value(welcome).expect("welcome");
+    match envelope.message {
+        Message::Welcome { protocol, engine } => {
+            assert_eq!(protocol, 1);
+            assert_eq!(engine.name, "cef");
+            assert!(engine.supports(Capability::IsolatedWorld));
+            assert!(!engine.supports(Capability::VirtualAuthenticator));
+        }
+        other => panic!("expected welcome, got {other:?}"),
+    }
+
+    let reply = serde_json::json!({
+        "version": 1, "id": 2,
+        "message": { "op": "reply", "to": 1, "outcome": { "kind": "ok", "json": { "surface": 7 } } }
+    });
+    let envelope: Envelope = serde_json::from_value(reply).expect("reply");
+    match envelope.message {
+        Message::Reply { to, outcome } => {
+            assert_eq!(to, 1);
+            match outcome {
+                ReplyOutcome::Ok { json } => assert_eq!(json["surface"], 7),
+                other => panic!("expected ok, got {other:?}"),
+            }
+        }
+        other => panic!("expected reply, got {other:?}"),
+    }
+
+    let closed = serde_json::json!({
+        "version": 1, "id": 3,
+        "message": { "op": "event", "event": { "type": "surface_closed", "surface": 7 } }
+    });
+    let envelope: Envelope =
+        serde_json::from_value(closed).expect("surface_closed without a reason");
+    match envelope.message {
+        Message::Event { event } => {
+            assert!(
+                matches!(event, EngineEvent::SurfaceClosed { reason, .. } if reason.is_empty())
+            );
+        }
+        other => panic!("expected event, got {other:?}"),
     }
 }

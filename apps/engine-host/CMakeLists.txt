@@ -34,6 +34,8 @@ add_executable(antikolt-engine-host
   src/main.cpp
   src/host.cpp
   src/host.h
+  src/protocol.cpp
+  src/protocol.h
 )
 
 target_include_directories(antikolt-engine-host PRIVATE "${CEF_ROOT}" src)

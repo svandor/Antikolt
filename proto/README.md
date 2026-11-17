@@ -7,9 +7,20 @@ Rust. Changing anything here is a protocol change: bump `PROTOCOL_VERSION`, and 
 
 ## Transport
 
-- Local socket only: a Windows named pipe or a Linux `AF_UNIX` socket in the user's runtime directory.
-- Access restricted to the same user (`0600` on Unix, a per-user pipe name with a random suffix).
-- The engine host **never** receives a filesystem path; it only ever learns a `partition` key.
+For this milestone the transport is the **child process's standard input/output**, because the engine
+host is a child process with exactly one client: that is simpler and sturdier than a socket, and it
+makes the lifecycle obvious (closing stdin ends the session). A local socket becomes worth its cost
+only when a second client appears (a debugger, an extension host).
+
+Rules that make stdio safe here:
+
+1. **stdout carries only frames.** Every human-readable diagnostic goes to stderr.
+2. CEF's helper processes inherit the handles, so nothing in the engine host writes to stdout except
+   the frame writer.
+3. A frame above **16 MiB** kills the link; it is never buffered "just in case".
+
+The switch to a local socket (named pipe / `AF_UNIX`) is a transport swap behind the same frames and
+the same [`antikolt_ipc::EngineLink`](../crates/antikolt-ipc/src/transport.rs) API.
 
 ## Framing
 
@@ -65,7 +76,8 @@ gracefully when a capability is missing, and must never assume one:
 | `snapshot` | core → engine | `surface` | `reply` (`{mhtml_bytes, integrity}`) |
 | `metrics` | core → engine | `surface` | `reply` (`{dom_nodes, js_heap_bytes, engine_working_set_bytes}`) |
 | `clear_origin_data` | core → engine | `partition`, `origin`, `storages[]` | `reply` |
-| `reply` | engine → core | `to`, `outcome` | — |
+| `shutdown` | core → engine | — | `reply`, then the process exits |
+| `reply` | engine → core | `to`, `outcome` (`kind`: `ok`/`err`) | — |
 | `event` | engine → core | `event` | — |
 
 `World`: `isolated` (where the password watcher and theming live) or `main` (the page's own world —
@@ -80,7 +92,23 @@ never receives a secret).
 `load_started`, `load_finished` (`http_status`), `load_failed` (`reason`), `title_changed`,
 `favicon_changed`, `audible_changed` (`audible`, `playing`), `form_submitted`, `popup_requested`
 (`disposition`: `authenticated_window` | `plain_window` | `blocked`), `permission_requested` (`kind`),
-`download_started`, `renderer_gone` (`reason`), `shutting_down` (`reason`).
+`download_started`, `surface_created`, `surface_closed` (`reason`), `renderer_gone` (`reason`),
+`shutting_down` (`reason`).
+
+`surface_created` exists because CEF creates the browser **asynchronously**: the reply to
+`create_surface` can arrive before the browser itself exists, so a client that needs to act on the
+live surface waits for this event.
+
+## What is implemented today
+
+| Message | Engine host status |
+|---|---|
+| `hello` / `welcome`, `ping` | implemented |
+| `create_surface`, `navigate`, `destroy_surface`, `shutdown` | implemented |
+| everything else (`snapshot`, `capture`, `eval`, `scroll`, `set_zoom`, `set_media`, `metrics`, `clear_origin_data`) | answers `not_supported` until the freeze milestone |
+
+`crates/antikolt-probe` exercises the implemented set end to end; `docs/HU/16-FEJLESZTESI-NAPLO.md`
+records the verified output.
 
 ## Errors
 

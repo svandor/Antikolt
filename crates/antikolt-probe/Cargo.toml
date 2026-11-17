@@ -1,0 +1,13 @@
+[package]
+name = "antikolt-probe"
+description = "Drives a real engine host over the protocol: the end-to-end proof of the shell/engine seam."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+antikolt-ipc = { path = "../antikolt-ipc" }
+serde_json.workspace = true

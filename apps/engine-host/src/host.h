@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 //
-// Engine host internals: the CEF application, the client, and the native window that hosts one
-// browser surface.
+// Engine host internals: the CEF application, the client, the native window that hosts one browser
+// surface, and the protocol server that the shell talks to.
 //
-// Scope of this milestone (F0 spike, first half): initialise CEF, create a real native window with
-// one browser surface, load a URL, report when the main frame finished loading. Rendering controls,
-// the core protocol (crates/antikolt-ipc), OSR and the sandbox arrive in the next slices.
+// Two modes share one pump loop:
+//   * **one-shot** (`--selftest`, `--url`): create one surface, optionally quit when it loads;
+//   * **server** (`--stdio`): no surface at start; commands create, navigate and destroy surfaces.
+//
+// The message loop is ours (external message pump) rather than CefRunMessageLoop, because a page can
+// finish loading before CEF's blocking loop starts, and then the quit signal is lost. The same shape
+// is what the Qt shell needs.
 
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <string>
 
 #include "include/cef_app.h"
@@ -22,29 +27,27 @@
 
 namespace antikolt {
 
-/// Everything the host needs to know to start one surface.
+/// Everything the host needs to know to start.
 struct HostConfig {
     /// Absolute path of the process's profile/cache directory.
     std::string user_data_path;
     /// The process executable, used as the CEF subprocess helper path.
     std::string exe_path;
-    /// Page to load.
+    /// Page to load (one-shot mode).
     std::string start_url = "about:blank";
     /// Window client size.
     int width = 1280;
     int height = 800;
     /// Do not show the window (used by --selftest so CI never pops a window).
     bool hidden = false;
-    /// Stop as soon as the main frame has loaded: pump the loop ourselves instead of blocking
-    /// in CefRunMessageLoop (a fast page can finish loading *before* that loop starts, and the quit
-    /// signal would then be lost — this was a real hang, not a theory).
+    /// Stop as soon as the main frame has loaded (selftest).
     bool quit_on_first_load = false;
 };
 
-/// State shared by the window procedure and the browser callbacks.
+/// State shared by the window procedure, the browser callbacks and the pump loop.
 ///
-/// The flags are atomic because the window procedure (and the deadline check) read them from the
-/// message-pump loop; everything else is only touched on the CEF UI thread.
+/// The flags are atomic because the window procedure and the reader thread touch them; the strings
+/// are only written on the CEF UI thread.
 struct HostState {
     std::atomic<bool> load_finished{false};
     std::atomic<bool> load_failed{false};
@@ -58,6 +61,9 @@ struct HostState {
     std::string final_url;
     std::string title;
     CefRefPtr<CefBrowser> browser;
+    /// Handle of the native window hosting the surface.
+    void* window = nullptr;
+    int64_t surface_id = 0;
 };
 
 /// The CEF application object. Handles the subprocess entry point and command-line switches.
@@ -109,12 +115,15 @@ private:
 };
 
 #ifdef _WIN32
-/// Create the native parent window for the surface. Returns nullptr on failure.
+/// Create the native parent window for a surface. Returns nullptr on failure.
 HWND CreateHostWindow(const HostConfig& config);
 #endif
 
-/// Run the engine host. Returns the process exit code.
+/// Run the one-shot engine host. Returns the process exit code.
 int RunEngineHost(const HostConfig& config);
+
+/// Run the protocol server on stdin/stdout (`--stdio`). Returns the process exit code.
+int RunEngineHostServer(const HostConfig& config);
 
 /// CEF re-launches this executable for its helper processes (`--type=renderer`, `--type=gpu-process`,
 /// `--type=utility`). Those processes must reach `CefExecuteProcess` before anything else touches

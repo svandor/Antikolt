@@ -3,11 +3,16 @@
 #include "host.h"
 
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <thread>
 
 #include "include/cef_command_line.h"
+#include "include/cef_version.h"
 #include "include/wrapper/cef_helpers.h"
+#include "protocol.h"
 
 namespace antikolt {
 
@@ -18,10 +23,27 @@ constexpr int kLoadTimeoutSeconds = 30;
 
 constexpr wchar_t kWindowClass[] = L"AntikoltEngineHostWindow";
 
+/// Never show a crash dialog: a failed run must exit with a code that CI can read.
+constexpr int kPumpIntervalMs = 2;
+
 /// The single host instance of this process. CEF is a process-wide singleton, so one host per
 /// process is the honest model; the window procedure needs it to translate WM_CLOSE into a request
 /// that the pump loop can act on.
 HostState* g_state = nullptr;
+
+/// True when the host runs as the shell's protocol server (stdout carries frames only).
+bool g_server_mode = false;
+
+int64_t g_next_surface_id = 1;
+
+void Log(const char* format, ...) {
+    // Diagnostics never go to stdout in server mode: stdout is the frame channel.
+    va_list args;
+    va_start(args, format);
+    std::vfprintf(stderr, format, args);
+    va_end(args);
+    std::fflush(stderr);
+}
 
 #ifdef _WIN32
 LRESULT CALLBACK HostWndProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -50,6 +72,112 @@ LRESULT CALLBACK HostWndProc(HWND window, UINT message, WPARAM wparam, LPARAM lp
 }
 #endif
 
+/// Initialise CEF once per process. Returns false on failure.
+bool InitializeCef(const HostConfig& config, CefRefPtr<EngineApp> app) {
+#ifdef _WIN32
+    CefMainArgs main_args(GetModuleHandleW(nullptr));
+#else
+    CefMainArgs main_args(0, nullptr);
+#endif
+    CefSettings settings;
+    CefString(&settings.browser_subprocess_path).FromString(config.exe_path);
+    // CEF 158 has no `user_data_path`: the per-profile cache directory is `cache_path`, and
+    // `root_cache_path` is the fallback root for request contexts that do not set their own.
+    CefString(&settings.cache_path).FromString(config.user_data_path);
+    CefString(&settings.root_cache_path).FromString(config.user_data_path);
+    CefString(&settings.log_file).FromString(config.user_data_path + "\\cef.log");
+    settings.log_severity = LOGSEVERITY_WARNING;
+    // We drive CEF from our own pump instead of letting it own a blocking loop. This is the same
+    // integration shape the Qt shell needs, and it avoids the lost-quit race that CefQuitMessageLoop
+    // produced when a page finished loading before the loop started.
+    settings.external_message_pump = true;
+    settings.multi_threaded_message_loop = false;
+    settings.windowless_rendering_enabled = false;
+
+    return CefInitialize(main_args, settings, app.get(), nullptr);
+}
+
+/// Create one native window with one browser surface. Returns false on failure.
+bool CreateSurface(const HostConfig& config, HostState* state, const std::string& url) {
+    HWND window = CreateHostWindow(config);
+    if (window == nullptr) {
+        return false;
+    }
+    state->window = window;
+    g_state = state;
+
+    RECT client = {};
+    GetClientRect(window, &client);
+
+    CefWindowInfo window_info;
+    window_info.SetAsChild(window,
+                           CefRect(0, 0, client.right - client.left, client.bottom - client.top));
+
+    CefRefPtr<EngineClient> client_handler(new EngineClient(state, config.quit_on_first_load));
+    CefBrowserSettings browser_settings;
+    if (!CefBrowserHost::CreateBrowser(window_info, client_handler, url, browser_settings, nullptr,
+                                       nullptr)) {
+        Log("[engine-host] CreateBrowser failed\n");
+        return false;
+    }
+
+    if (!config.hidden) {
+        ShowWindow(window, SW_SHOW);
+        UpdateWindow(window);
+    }
+    return true;
+}
+
+/// Escape hatch: the surface may have been created for a stopped browser.
+void DrainAndCloseBrowser(HostState* state) {
+    for (int i = 0; i < 50; ++i) {
+        CefDoMessageLoopWork();
+        std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
+    }
+    if (state->browser) {
+        state->browser->GetHost()->CloseBrowser(true);
+        for (int i = 0; i < 500 && state->browser; ++i) {
+            CefDoMessageLoopWork();
+            std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
+        }
+    }
+}
+
+#ifdef _WIN32
+void PumpWindowsMessages() {
+    MSG message = {};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != 0) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+}
+
+/// Destroy the native window that hosted a surface.
+void DestroyHostWindow(HostState* state) {
+    if (state->window != nullptr) {
+        DestroyWindow(static_cast<HWND>(state->window));
+        state->window = nullptr;
+    }
+}
+#else
+void PumpWindowsMessages() {}
+void DestroyHostWindow(HostState* state) { (void)state; }
+#endif
+
+CefRefPtr<CefDictionaryValue> MakeEngineInfo() {
+    CefRefPtr<CefDictionaryValue> engine = CefDictionaryValue::Create();
+    engine->SetString("name", "cef");
+    engine->SetString("version", CEF_VERSION);
+    engine->SetInt("chromium_major", CHROME_VERSION_MAJOR);
+    CefRefPtr<CefListValue> capabilities = CefListValue::Create();
+    capabilities->SetString(0, "capture");
+    capabilities->SetString(1, "media_emulation");
+    capabilities->SetString(2, "isolated_world");
+    capabilities->SetString(3, "offscreen_surface");
+    engine->SetList("capabilities", capabilities);
+    return engine;
+}
+
 }  // namespace
 
 void EngineApp::OnBeforeCommandLineProcessing(const CefString& process_type,
@@ -70,19 +198,46 @@ void EngineApp::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitch("disable-default-apps");
     command_line->AppendSwitch("no-first-run");
     command_line->AppendSwitch("disable-pdf-extension");
+
+    // Some environments (virtualised GPUs, locked-down sessions, CI) cannot initialise Chromium's GPU
+    // process: it aborts with a CHECK failure, CEF retries, and every retry costs a process. Setting
+    // ANTIKOLT_ENGINE_DISABLE_GPU=1 makes the host fall back to software compositing on purpose, so a
+    // measurement or a test can run deterministically. It is an environment switch, not a product
+    // setting, and it must never be used for a release measurement (see docs/HU/18-F0-JELENTES.md).
+    if (const char* disable_gpu = std::getenv("ANTIKOLT_ENGINE_DISABLE_GPU");
+        disable_gpu != nullptr && *disable_gpu != '\0' && std::strcmp(disable_gpu, "0") != 0) {
+        command_line->AppendSwitch("disable-gpu");
+        command_line->AppendSwitch("disable-gpu-compositing");
+    }
 }
 
 void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     state_->browser = browser;
     state_->browser_created = true;
+    if (g_server_mode) {
+        CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+        payload->SetInt("surface", static_cast<int>(state_->surface_id));
+        StdioLink::Instance().Event("surface_created", payload);
+    }
 }
 
 void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     state_->browser = nullptr;
+    if (g_server_mode) {
+        // The next command may create another surface, so "created" must go back to false.
+        state_->browser_created = false;
+        CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+        payload->SetInt("surface", static_cast<int>(state_->surface_id));
+        StdioLink::Instance().Event("surface_closed", payload);
+    }
     if (!quit_on_first_load_) {
-        CefQuitMessageLoop();
+        // One-shot interactive mode: closing the browser ends the process. In server mode the next
+        // command may create another surface, so the loop keeps running.
+        if (!g_server_mode) {
+            state_->quit_requested = true;
+        }
     }
 }
 
@@ -96,8 +251,16 @@ void EngineClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
     state_->http_status = httpStatusCode;
     state_->final_url = frame->GetURL().ToString();
     state_->load_finished = true;
-    std::printf("load_end url=%s status=%d\n", state_->final_url.c_str(), httpStatusCode);
-    std::fflush(stdout);
+
+    if (g_server_mode) {
+        CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+        payload->SetInt("surface", static_cast<int>(state_->surface_id));
+        payload->SetString("url", state_->final_url);
+        payload->SetInt("http_status", httpStatusCode);
+        StdioLink::Instance().Event("load_finished", payload);
+    } else {
+        Log("[engine-host] load_end url=%s status=%d\n", state_->final_url.c_str(), httpStatusCode);
+    }
 }
 
 void EngineClient::OnLoadError(CefRefPtr<CefBrowser> browser,
@@ -111,14 +274,28 @@ void EngineClient::OnLoadError(CefRefPtr<CefBrowser> browser,
     }
     state_->final_url = failedUrl.ToString();
     state_->load_failed = true;
-    std::printf("load_error code=%d text=%s url=%s\n", static_cast<int>(errorCode),
-                errorText.ToString().c_str(), state_->final_url.c_str());
-    std::fflush(stdout);
+
+    if (g_server_mode) {
+        CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+        payload->SetInt("surface", static_cast<int>(state_->surface_id));
+        payload->SetString("url", state_->final_url);
+        payload->SetString("reason", errorText.ToString());
+        StdioLink::Instance().Event("load_failed", payload);
+    } else {
+        Log("[engine-host] load_error code=%d text=%s url=%s\n", static_cast<int>(errorCode),
+            errorText.ToString().c_str(), state_->final_url.c_str());
+    }
 }
 
 void EngineClient::OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) {
     CEF_REQUIRE_UI_THREAD();
     state_->title = title.ToString();
+    if (g_server_mode) {
+        CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+        payload->SetInt("surface", static_cast<int>(state_->surface_id));
+        payload->SetString("title", state_->title);
+        StdioLink::Instance().Event("title_changed", payload);
+    }
 }
 
 #ifdef _WIN32
@@ -135,7 +312,7 @@ HWND CreateHostWindow(const HostConfig& config) {
     if (RegisterClassExW(&window_class) == 0) {
         const DWORD error = GetLastError();
         if (error != ERROR_CLASS_ALREADY_EXISTS) {  // harmless: an earlier run in the same process
-            std::fprintf(stderr, "RegisterClassEx failed: %lu\n", error);
+            Log("[engine-host] RegisterClassEx failed: %lu\n", error);
             return nullptr;
         }
     }
@@ -146,7 +323,7 @@ HWND CreateHostWindow(const HostConfig& config) {
                                   CW_USEDEFAULT, config.width, config.height, nullptr, nullptr,
                                   instance, nullptr);
     if (window == nullptr) {
-        std::fprintf(stderr, "CreateWindowEx failed: %lu\n", GetLastError());
+        Log("[engine-host] CreateWindowEx failed: %lu\n", GetLastError());
     }
     return window;
 }
@@ -168,131 +345,159 @@ int RunEngineHost(const HostConfig& config) {
 #else
     CefMainArgs main_args(0, nullptr);
 #endif
-
     CefRefPtr<EngineApp> app(new EngineApp());
-
-    // Subprocess entry point: CEF re-launches this executable for renderer/GPU/utility processes.
     const int subprocess_code = CefExecuteProcess(main_args, app.get(), nullptr);
     if (subprocess_code >= 0) {
         return subprocess_code;
     }
 
-    CefSettings settings;
-    CefString(&settings.browser_subprocess_path).FromString(config.exe_path);
-    // CEF 158 has no `user_data_path`: the per-profile cache directory is `cache_path`, and
-    // `root_cache_path` is the fallback root for request contexts that do not set their own.
-    CefString(&settings.cache_path).FromString(config.user_data_path);
-    CefString(&settings.root_cache_path).FromString(config.user_data_path);
-    CefString(&settings.log_file).FromString(config.user_data_path + "\\cef.log");
-    settings.log_severity = LOGSEVERITY_WARNING;
-    // We drive CEF from our own pump instead of letting it own a blocking loop. This is the same
-    // integration shape the Qt shell will need, and it avoids the lost-quit race that CefQuitMessageLoop
-    // produced when a page finished loading before the loop started.
-    settings.external_message_pump = true;
-    settings.multi_threaded_message_loop = false;
-    settings.windowless_rendering_enabled = false;
-
-    if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
-        std::fprintf(stderr, "CefInitialize failed\n");
+    if (!InitializeCef(config, app)) {
+        Log("[engine-host] CefInitialize failed\n");
         return 1;
     }
 
     HostState state;
-    HWND window = CreateHostWindow(config);
-    if (window == nullptr) {
+    state.surface_id = g_next_surface_id++;
+    if (!CreateSurface(config, &state, config.start_url)) {
         CefShutdown();
         return 1;
     }
-
-    RECT client = {};
-    GetClientRect(window, &client);
-
-    CefWindowInfo window_info;
-    window_info.SetAsChild(window,
-                           CefRect(0, 0, client.right - client.left, client.bottom - client.top));
-
-    CefRefPtr<EngineClient> client_handler(new EngineClient(&state, config.quit_on_first_load));
-    CefBrowserSettings browser_settings;
-    if (!CefBrowserHost::CreateBrowser(window_info, client_handler, config.start_url,
-                                       browser_settings, nullptr, nullptr)) {
-        std::fprintf(stderr, "CreateBrowser failed\n");
-        CefShutdown();
-        return 1;
-    }
-
-    if (!config.hidden) {
-        ShowWindow(window, SW_SHOW);
-        UpdateWindow(window);
-    }
-
-    g_state = &state;
 
     if (config.quit_on_first_load) {
-        // Deterministic pump instead of CefRunMessageLoop: the page may finish loading before that
-        // loop starts (a data: URL does), and then the quit signal is lost and the process hangs.
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(kLoadTimeoutSeconds);
-        while (!state.load_finished.load() && !state.load_failed.load()) {
+        while (!state.load_finished.load() && !state.load_failed.load() &&
+               !state.quit_requested.load()) {
+            PumpWindowsMessages();
             CefDoMessageLoopWork();
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
             if (std::chrono::steady_clock::now() > deadline) {
                 state.timed_out = true;
                 break;
             }
         }
-        // Let queued work drain so CefShutdown is not called in the middle of a navigation.
-        for (int i = 0; i < 50; ++i) {
-            CefDoMessageLoopWork();
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-
     } else {
-        // Interactive: pump Windows messages ourselves and let CEF do its work each round. CEF does
-        // not own a loop here, so closing the window is an orderly request (WM_CLOSE sets
-        // quit_requested) instead of a CefQuitMessageLoop that the blocking loop never sees.
-        MSG message = {};
         while (!state.quit_requested.load()) {
-            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != 0) {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
+            PumpWindowsMessages();
             CefDoMessageLoopWork();
-            // TODO(F1): CefBrowserProcessHandler::OnScheduleMessagePumpWork should wake this loop,
-            // so an idle window costs no CPU instead of polling every 2 ms.
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
             if (state.browser_created.load() && !state.browser) {
-                break;  // the browser closed itself (OnBeforeClose)
+                break;  // the browser closed itself
             }
         }
     }
 
-    // Both paths end here, and both need this: a live browser must be closed before CefShutdown.
-    // Shutting down with a browser still attached crashes (access violation) once the renderer/GPU
-    // teardown runs — that is the dialog the first interactive run produced.
-    if (state.browser) {
-        state.browser->GetHost()->CloseBrowser(true);
-        for (int i = 0; i < 500 && state.browser; ++i) {
-            CefDoMessageLoopWork();
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-    }
+    DrainAndCloseBrowser(&state);
 
     const bool timed_out = state.timed_out.load();
     const bool failed = state.load_failed.load();
     const bool loaded = state.load_finished.load();
     // "ok" must mean a page really loaded: an interactive run closed before any load reports "none".
-    std::printf("load=%s\n", timed_out ? "timeout" : (failed ? "error" : (loaded ? "ok" : "none")));
-    std::printf("url=%s\n", state.final_url.c_str());
-    std::printf("status=%d\n", state.http_status);
-    std::printf("title=%s\n", state.title.c_str());
-    std::fflush(stdout);
+    Log("load=%s\n", timed_out ? "timeout" : (failed ? "error" : (loaded ? "ok" : "none")));
+    Log("url=%s\n", state.final_url.c_str());
+    Log("status=%d\n", state.http_status);
+    Log("title=%s\n", state.title.c_str());
 
     CefShutdown();
     if (timed_out || failed) {
         return 1;
     }
-    // A measurement run exists to load one page; if it never did, that is a failure.
     return (config.quit_on_first_load && !loaded) ? 1 : 0;
+}
+
+int RunEngineHostServer(const HostConfig& config) {
+#ifdef _WIN32
+    CefMainArgs main_args(GetModuleHandleW(nullptr));
+#else
+    CefMainArgs main_args(0, nullptr);
+#endif
+    CefRefPtr<EngineApp> app(new EngineApp());
+    const int subprocess_code = CefExecuteProcess(main_args, app.get(), nullptr);
+    if (subprocess_code >= 0) {
+        return subprocess_code;
+    }
+
+    g_server_mode = true;
+    if (!InitializeCef(config, app)) {
+        Log("[engine-host] CefInitialize failed\n");
+        return 1;
+    }
+
+    StdioLink& link = StdioLink::Instance();
+    link.Start();
+    Log("[engine-host] protocol server ready on stdio\n");
+
+    HostState state;
+    bool shutdown_requested = false;
+
+    while (!shutdown_requested && link.active()) {
+        PumpWindowsMessages();
+        CefDoMessageLoopWork();
+
+        Command command;
+        while (link.TryPop(&command)) {
+            Log("[engine-host] op=%s id=%lld surface=%lld\n", command.op.c_str(),
+                static_cast<long long>(command.id), static_cast<long long>(command.surface));
+            if (command.op == "hello") {
+                // The handshake answer is a `welcome` message, not a reply (proto/README.md).
+                CefRefPtr<CefDictionaryValue> welcome = CefDictionaryValue::Create();
+                welcome->SetString("op", "welcome");
+                welcome->SetInt("protocol", 1);
+                welcome->SetDictionary("engine", MakeEngineInfo());
+                link.SendMessage(welcome);
+            } else if (command.op == "ping") {
+                link.Reply(command.id);
+            } else if (command.op == "create_surface") {
+                if (state.browser || state.browser_created) {
+                    link.ReplyError(command.id, "engine_busy", "only one surface at a time");
+                    continue;
+                }
+                HostConfig surface_config = config;
+                if (command.width > 0) {
+                    surface_config.width = command.width;
+                }
+                if (command.height > 0) {
+                    surface_config.height = command.height;
+                }
+                surface_config.hidden = config.hidden;
+                state.surface_id = g_next_surface_id++;
+                if (!CreateSurface(surface_config, &state, command.url.empty() ? "about:blank"
+                                                                              : command.url)) {
+                    link.ReplyError(command.id, "internal", "could not create the surface");
+                    continue;
+                }
+                CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+                result->SetInt("surface", static_cast<int>(state.surface_id));
+                link.Reply(command.id, result);
+            } else if (command.op == "navigate") {
+                if (!state.browser) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                state.browser->GetMainFrame()->LoadURL(command.url);
+                link.Reply(command.id);
+            } else if (command.op == "destroy_surface") {
+                DrainAndCloseBrowser(&state);
+                DestroyHostWindow(&state);
+                link.Reply(command.id);
+            } else if (command.op == "shutdown") {
+                shutdown_requested = true;
+                link.Reply(command.id);
+            } else {
+                link.ReplyError(command.id, "not_supported",
+                                "this milestone implements hello, ping, create_surface, navigate, "
+                                "destroy_surface and shutdown");
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
+    }
+
+    DrainAndCloseBrowser(&state);
+    DestroyHostWindow(&state);
+    Log("[engine-host] shutting down\n");
+    CefShutdown();
+    return 0;
 }
 
 }  // namespace antikolt
