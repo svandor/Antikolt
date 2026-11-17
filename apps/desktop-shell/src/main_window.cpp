@@ -129,6 +129,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 if (page_media_ != QStringLiteral("auto") && engine_ != nullptr) {
                     engine_->setMedia(surface, page_media_, nullptr);
                 }
+                // Same for the zoom: it is a preference of this browser window, not of one page (ADR-038).
+                if (zoom_percent_ != 100 && engine_ != nullptr) {
+                    engine_->setZoom(surface, zoom_percent_, nullptr);
+                }
                 // The grid must show the cards the core owns, so the list is pushed once the page is
                 // there to receive it. Only the home surface gets it; a real card is not a grid.
                 if (surface == home_surface_) {
@@ -783,6 +787,22 @@ void MainWindow::showSessions() {
     refreshSessions();
 }
 
+void MainWindow::setZoomPercent(int percent) {
+    const int clamped = std::clamp(percent, 25, 500);
+    zoom_percent_ = clamped;
+    if (zoom_label_ != nullptr) {
+        zoom_label_->setText(QStringLiteral("🔍 %1%").arg(clamped));
+    }
+    if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0) {
+        setStatus(QStringLiteral("nagyítás: %1% (nincs élő felület)").arg(clamped));
+        return;
+    }
+    engine_->setZoom(surface_, clamped, [this, clamped](const QJsonObject&, const QString& error) {
+        setStatus(error.isEmpty() ? QStringLiteral("nagyítás: %1%").arg(clamped)
+                                  : QStringLiteral("nagyítás hiba: %1").arg(error));
+    });
+}
+
 void MainWindow::setPageMedia(const QString& media) {
     if (media != QStringLiteral("auto") && media != QStringLiteral("dark") &&
         media != QStringLiteral("light")) {
@@ -1050,6 +1070,17 @@ void MainWindow::buildToolBar() {    auto* toolbar = addToolBar(QStringLiteral("
         setPageMedia(modes.at(next));
         siteTheme->setText(QStringLiteral("🌓 Oldal-téma: %1").arg(page_media_));
     });
+
+    // Zoom (ADR-038): the label is the state, the two buttons are the only way to change it.
+    auto* zoomOut = toolbar->addAction(QStringLiteral("−"));
+    zoomOut->setObjectName(QStringLiteral("zoomOutAction"));
+    connect(zoomOut, &QAction::triggered, this, [this] { setZoomPercent(zoom_percent_ - 25); });
+    zoom_label_ = toolbar->addAction(QStringLiteral("🔍 %1%").arg(zoom_percent_));
+    zoom_label_->setObjectName(QStringLiteral("zoomLabel"));
+    zoom_label_->setEnabled(false);
+    auto* zoomIn = toolbar->addAction(QStringLiteral("+"));
+    zoomIn->setObjectName(QStringLiteral("zoomInAction"));
+    connect(zoomIn, &QAction::triggered, this, [this] { setZoomPercent(zoom_percent_ + 25); });
 
     auto* spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);

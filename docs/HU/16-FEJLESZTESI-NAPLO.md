@@ -10,13 +10,21 @@ Mindkettő elkészült, a döntésekkel együtt az ADR-038-ban: a `scroll` a **d
 (`window.scrollBy`, determinisztikus, pointer nélkül), a `set_zoom` pedig **újratördeli** a lapot
 (`Emulation.setDeviceMetricsOverride`), a méretarányt a képernyő saját DPR-jével **szorozva**.
 
+### A shell oldala is kész: nagyítás-gomb és emlékezés
+
+A toolbaron `−` / `🔍 100%` / `+` (25 %-os lépések, 25–500 % között), és a választás **emlékszik**: minden
+felület-becsatolásnál és betöltésnél újra alkalmazzuk (mint az oldal-témát), mert a nagyítás a böngésző
+beállítása, nem egy oldalé. A gombok ugyanazt a publikus `setZoomPercent()`-et hívják, amit a teszt is — egy
+kódút, nem kettő.
+
 ### Bizonyíték (a tényleges kimenet)
 
 ```
 antikolt-shell --scrollzoomtest <motor>
 scroll_y=600
-dpr_at_150=1.875      ← 1,25 (a kijelő saját DPR-je) × 1,5
+dpr_at_150=1.875      ← 1,25 (a kijelző saját DPR-je) × 1,5
 dpr_at_100=1.25       ← a felülírás törlése a természetes értéket adja vissza
+dpr_at_125=1.5625     ← a shell saját útja (toolbar-metódus): 1,25 × 1,25
 scroll_zoom=ok      (exit code 0)
 ```
 

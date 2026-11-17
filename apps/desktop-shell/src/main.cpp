@@ -1446,6 +1446,7 @@ int runScrollZoomCheck(const QString& enginePath) {
     QString scroll_y;
     QString dpr_zoomed;
     QString dpr_reset;
+    QString dpr_125;
     {
         QEventLoop loop;
         const auto eval = [&window](qint64 surface, const QString& expression,
@@ -1533,7 +1534,17 @@ int runScrollZoomCheck(const QString& enginePath) {
                                                                                                [&](const QString& back) {
                                                                                                    dpr_reset =
                                                                                                        back;
-                                                                                                   loop.quit();
+                                                                                                   // The shell's own zoom path (the toolbar calls the same method): 125 % must be
+                                                                                                   // 1.25 x the natural DPR.
+                                                                                                   window.setZoomPercent(125);
+                                                                                                   QTimer::singleShot(700, &loop, [&, id] {
+                                                                                                       eval(id, QStringLiteral("String(window.devicePixelRatio)"),
+                                                                                                            [&](const QString& at125) {
+                                                                                                                dpr_125 = at125;
+                                                                                                                window.setZoomPercent(100);
+                                                                                                                loop.quit();
+                                                                                                            });
+                                                                                                   });
                                                                                                });
                                                                                        });
                                                                                });
@@ -1554,9 +1565,11 @@ int runScrollZoomCheck(const QString& enginePath) {
     out << "scroll_y=" << scroll_y << '\n';
     out << "dpr_at_150=" << dpr_zoomed << '\n';
     out << "dpr_at_100=" << dpr_reset << '\n';
+    out << "dpr_at_125=" << dpr_125 << '\n';
     // The zoom multiplies the screen's own DPR, so the *ratio* is what the browser controls:
     // 1.875 / 1.25 = 1.5 on a 125 % display, and 1.5 / 1.0 = 1.5 on a plain one.
-    const bool ok = scrolled >= 500 && reset > 0.0 && std::abs(zoomed / reset - 1.5) < 0.05;
+    const bool ok = scrolled >= 500 && reset > 0.0 && std::abs(zoomed / reset - 1.5) < 0.05 &&
+                    std::abs(dpr_125.toDouble() / reset - 1.25) < 0.05;
     out << "scroll_zoom=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

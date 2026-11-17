@@ -122,7 +122,9 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > A motor `scroll` (`window.scrollBy`) és `set_zoom` (`Emulation.setDeviceMetricsOverride`, a DPR-rel
 > szorozva) opja kész. `--scrollzoomtest`: `scroll_y=600`, `dpr_at_150=1.875`, `dpr_at_100=1.25`,
 > `scroll_zoom=ok`.
-> **Ami hátra van:** shell-oldali nagyítás-gomb és scroll-pozíció visszaállítás, gesztus-alapú görgetés.
+> A shell oldala is kész: toolbar `−` / `🔍 100%` / `+`, emlékezett és minden betöltésnél újra alkalmazott
+> nagyítás (`dpr_at_125=1.5625`).
+> **Ami hátra van:** scroll-pozíció visszaállítás kártyánként, gesztus-alapú görgetés.
 
 ## 5. Széf és passkey
 **Miért:** F4/F4b; a varrat kész (`crates/antikolt-core/src/vault.rs`, 10 teszt, ADR-031).

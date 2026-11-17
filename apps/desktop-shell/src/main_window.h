@@ -94,6 +94,8 @@ public:
     /// when their card is next opened, because this shell has exactly one live surface (I1) and a
     /// cleanup must not steal the page the user is reading.
     void cleanupSessions();
+    /// Set the live page's zoom, in percent (25..500). Remembered and re-applied on every load (ADR-038).
+    void setZoomPercent(int percent);
     /// Emulate the live page's site theme: `auto`, `dark` or `light` (ADR-037).
     ///
     /// The preference is remembered and re-applied when a surface attaches or loads, because the emulation
@@ -189,6 +191,9 @@ private:
     int previews_made_ = 0;
     /// The site theme the user asked for (`auto`, `dark`, `light`), re-applied on every surface (ADR-037).
     QString page_media_ = QStringLiteral("auto");
+    /// The page zoom in percent, re-applied on every load (ADR-038); the label shows it.
+    int zoom_percent_ = 100;
+    QAction* zoom_label_ = nullptr;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
 };
