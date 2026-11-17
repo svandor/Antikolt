@@ -124,6 +124,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(card_, &LiveCard::surfaceDetached, this, [this](qint64 surface) {
         surface_ = 0;
         home_surface_ = 0;
+        live_card_pinned_ = false;
         setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
     });
     connect(engine_, &EngineClient::bridgeCall, this, &MainWindow::handleBridgeCall);
@@ -160,6 +161,13 @@ void MainWindow::noteActivity() {
 
 void MainWindow::onIdleTimeout() {
     if (surface_ == 0 || surface_ == home_surface_ || !card_->hasSurface() || hibernating_) {
+        return;
+    }
+    // The documented opt-out, and the user asked for it explicitly: a pinned card stays alive. The
+    // clock keeps running, so unpinning it (or pinning a different card) needs no extra bookkeeping.
+    if (live_card_pinned_) {
+        setStatus(QStringLiteral("kitűzött kártya — a hibernálás kimarad"));
+        armIdleTimer();
         return;
     }
     hibernating_ = true;
@@ -467,6 +475,7 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                           .arg(surface));
             return;
         }
+        live_card_pinned_ = args.value(QStringLiteral("pinned")).toBool();
         openCard(url, title);
         return;
     }

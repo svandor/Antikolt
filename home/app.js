@@ -746,6 +746,9 @@ function withNativeOpen(mock) {
             id,
             url: card.url,
             title: card.title,
+            // The shell cannot see the list, so the pinned flag has to travel with the request: a
+            // pinned card is the documented opt-out from automatic hibernation.
+            pinned: Boolean(card.pinned),
           });
         } catch (error) {
           console.warn("openCard failed", error);

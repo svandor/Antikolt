@@ -115,6 +115,10 @@ private:
     /// Set when the idle timeout hibernated the card: the grid comes back once the surface is gone,
     /// so the window is never left showing an empty card area.
     bool return_to_grid_ = false;
+    /// Whether the card in front is pinned. A pinned card is the documented opt-out from automatic
+    /// hibernation (docs/HU/02 §4.2); the flag arrives with the page's open request, because the shell
+    /// does not keep the card list.
+    bool live_card_pinned_ = false;
     /// The card waiting to be shown once a surface exists.
     QString pending_url_;
     QString pending_title_;
