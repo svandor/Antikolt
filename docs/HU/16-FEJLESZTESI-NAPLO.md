@@ -54,6 +54,14 @@ paint=ok
 A felvételen a `<h1>embedded</h1>` szöveg olvasható a kártya területén, ablakkeret és böngésző-chrome
 nélkül — vagyis a motor valóban a mi ablakunkba fest, nem külön ablakban nyílt meg.
 
+A negyedik láncszem a **fókusz**: egy másik folyamat gyerekablaka nem örökli az aktiválást, ezért a
+shell `focus` üzenetet küld, és a lapnak egyet kell értenie:
+
+```
+page_has_focus=true
+embed=ok  viewport_match=ok  paint=ok  focus=ok        (exit code 0)
+```
+
 ### Négy hiba, amit ez a szelet hozott (mind javítva, mind mérve)
 
 1. **A beágyazott téglalap mértékegysége DIP, nem fizikai pixel.** Fizikai pixelt küldve a Chromium
@@ -72,11 +80,15 @@ nélkül — vagyis a motor valóban a mi ablakunkba fest, nem külön ablakban 
    `-2066,198` koordinátája hibának látszott, pedig a CEF helyesen dolgozott. A mérés most explicit
    pozíciót ad (`window.move(120, 90)`), és a kártya fizikai képernyő-origóját (`ClientToScreen`) a
    gyerekablak `GetWindowRect`-jával hasonlítja össze.
+5. **Az `eval` válasza csak szöveget adott vissza.** A `document.hasFocus()` logikai értéke üresen
+   érkezett (`page_has_focus=`), mert a motor `GetString("value")`-vel olvasta a DevTools eredményét.
+   Most a primitívek (logikai, egész, tört) a JSON-szövegükké alakulnak, a `value` pedig továbbra is
+   mindig szöveg a protokollon — így nem kellett és nem is szabadott a válasz alakját megváltoztatni.
 
 ### Ami még nyitott
 
-- A beágyazott felület **fókusza és billentyűzete** bekötve van (`focus` üzenet), de élesben, kattintásra
-  még nem ellenőriztem — ez a következő szelet első tétele.
+- A beágyazott felület fókusza **mérve** működik (`page_has_focus=true`), de valódi billentyűleütést
+  még nem küldtem át a gyerekablakon — az első interaktív teszt a következő szeletben lesz.
 - A kártyaváltás (mentés → megsemmisítés → új felület) a shell `❄ Fagyasztás` gombján át működik, de a
   „másik kártya megnyitása” még nem.
 - A GPU-t ebben a környezetben továbbra is ki kell kapcsolni (`ANTIKOLT_ENGINE_DISABLE_GPU=1`), különben

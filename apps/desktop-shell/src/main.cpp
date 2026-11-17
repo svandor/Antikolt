@@ -187,6 +187,7 @@ int runEmbedCheck(const QString& enginePath) {
     bool embed_ok = false;
     bool viewport_ok = false;
     bool painted_ok = false;
+    bool focus_ok = false;
 
     QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
         out << "engine_error=" << message << '\n';
@@ -299,8 +300,32 @@ int runEmbedCheck(const QString& enginePath) {
                                          }
                                          out << "screenshot_colours=" << colours.size() << '\n';
                                          painted_ok = colours.size() > 2;
+
+                                         // Focus is the last link: a child window in another process
+                                         // does not inherit activation, so the shell sends `focus` and
+                                         // the page must agree that it has the keyboard.
+                                         card->setFocus(Qt::OtherFocusReason);
+                                         client.focus(id, true);
+                                         QTimer::singleShot(300, &loop, [&, id] {
+                                             client.evaluate(
+                                                 id, QStringLiteral("document.hasFocus()"),
+                                                 [&](const QJsonObject& focused,
+                                                     const QString& failure) {
+                                                     if (!failure.isEmpty()) {
+                                                         out << "focus_eval=FAILED " << failure
+                                                             << '\n';
+                                                     } else {
+                                                         const QString value = focused
+                                                                                   .value(QStringLiteral(
+                                                                                       "value"))
+                                                                                   .toString();
+                                                         out << "page_has_focus=" << value << '\n';
+                                                         focus_ok = value == QStringLiteral("true");
+                                                     }
+                                                     loop.quit();
+                                                 });
+                                         });
                                      }
-                                     loop.quit();
                                  });
                          });
                      });
@@ -327,7 +352,8 @@ int runEmbedCheck(const QString& enginePath) {
     out << "embed=" << (embed_ok ? "ok" : "FAILED") << '\n';
     out << "viewport_match=" << (viewport_ok ? "ok" : "FAILED") << '\n';
     out << "paint=" << (painted_ok ? "ok" : "FAILED") << '\n';
-    if (!embed_ok || !viewport_ok || !painted_ok) {
+    out << "focus=" << (focus_ok ? "ok" : "FAILED") << '\n';
+    if (!embed_ok || !viewport_ok || !painted_ok || !focus_ok) {
         ++failures;
     }
 

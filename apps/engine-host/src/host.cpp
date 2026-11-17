@@ -736,7 +736,34 @@ public:
         CefRefPtr<CefDictionaryValue> reply = CefDictionaryValue::Create();
         reply->SetBool("ok", true);
         reply->SetString("type", inner->GetString("type").ToString());
-        reply->SetString("value", inner->GetString("value").ToString());
+        // `value` is always a string on the wire, whatever the script returned. Reading it with
+        // GetString made every boolean and number come back empty — `document.hasFocus()` answered
+        // nothing at all — so primitives are rendered to their JSON text here.
+        CefRefPtr<CefValue> value = inner->GetValue("value");
+        if (!value) {
+            reply->SetString("value", "");
+        } else {
+            switch (value->GetType()) {
+                case VTYPE_BOOL:
+                    reply->SetString("value", value->GetBool() ? "true" : "false");
+                    break;
+                case VTYPE_INT:
+                    reply->SetString("value", std::to_string(value->GetInt()));
+                    break;
+                case VTYPE_DOUBLE: {
+                    std::ostringstream text;
+                    text << value->GetDouble();
+                    reply->SetString("value", text.str());
+                    break;
+                }
+                case VTYPE_STRING:
+                    reply->SetString("value", value->GetString().ToString());
+                    break;
+                default:
+                    reply->SetString("value", "");
+                    break;
+            }
+        }
         StdioLink::Instance().Reply(request_id_, reply);
     }
 
