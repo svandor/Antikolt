@@ -97,6 +97,19 @@ folyamatfa memóriáját, fázisonként.
 A pillanatkép mellé **állapotfájl** is készül (`surface-N-M.state.json`, ~4,4 KB): görgetés, horgony,
 18 űrlapmező, `sessionStorage`, média-pozíció, viewport/DPR — jelszómezők nélkül.
 
+### Visszaállítás (offline, ugyanazzal a motorral)
+
+A mentett MHTML `file://` címen betöltve, majd az állapot visszaírva — **hálózat nélkül**:
+
+```
+mentés:  scrollY=600, 18 űrlapmező
+visszaállítás: navigate=file:///…/surface-1-0.mhtml → status=200
+               restore applied: forms=18 scrollY=600
+               verified: title="Webböngésző – Wikipédia" scrollY=600 fields=18 text="Ugrás a tartalomhoz…"
+```
+
+Ez zárja be a ciklust: **élő oldal → lemez → visszaadott RAM → offline visszaállítás**.
+
 A MHTML-változat a teljes oldalt menti (DOM **és** beágyazott kép/CSS), ezért nagyobb a fájl és ~5,6 MB-tal
 megemeli a csúcsot a mentés pillanatában (az MHTML a memóriában áll össze) — cserébe a kártya **offline is
 megjeleníthető**.

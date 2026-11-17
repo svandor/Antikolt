@@ -237,6 +237,15 @@ private:
 /// Monotonic id for snapshot files, so two freezes never overwrite each other.
 int64_t s_snapshot_counter = 0;
 
+/// Monotonic id for DevTools method calls.
+///
+/// The id must be **unique per request**: reusing one silently drops the second reply, which looks
+/// exactly like a hung engine. Every capture object takes its own ids from here.
+int NextDevToolsId() {
+    static int next = 100;
+    return next++;
+}
+
 /// Decode standard base64. CDP's `Page.captureSnapshot` returns `data` as a `binary` type, which is
 /// base64 on the wire; older/other builds hand back the MHTML as-is, and the caller decides by
 /// looking at the first bytes.
@@ -370,7 +379,10 @@ public:
           base_path_(std::move(base_path)),
           surface_id_(surface_id),
           url_(std::move(url)),
-          title_(std::move(title)) {}
+          title_(std::move(title)),
+          enable_id_(NextDevToolsId()),
+          capture_id_(NextDevToolsId()),
+          evaluate_id_(NextDevToolsId()) {}
 
     /// Attach the observer and start the sequence. Returns false when DevTools cannot be used at all,
     /// so the caller can fall back to the DOM-only capture.
@@ -378,7 +390,7 @@ public:
         registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
         CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
         const int submitted =
-            browser->GetHost()->ExecuteDevToolsMethod(kEnableMessageId, "Page.enable", params);
+            browser->GetHost()->ExecuteDevToolsMethod(enable_id_, "Page.enable", params);
         if (submitted == 0) {
             registration_ = nullptr;
             return false;
@@ -398,30 +410,24 @@ public:
         Log("[engine-host] devtools id=%d success=%d bytes=%zu\n", message_id, success ? 1 : 0,
             result_size);
 
-        switch (message_id) {
-            case kEnableMessageId:
-                SubmitCapture(browser);
-                break;
-            case kCaptureMessageId:
-                OnCaptured(browser, success, raw);
-                break;
-            case kEvaluateMessageId:
-                OnEvaluated(success, raw);
-                break;
-            default:
-                break;
+        if (message_id == enable_id_) {
+            SubmitCapture(browser);
+        } else if (message_id == capture_id_) {
+            OnCaptured(browser, success, raw);
+        } else if (message_id == evaluate_id_) {
+            OnEvaluated(success, raw);
         }
     }
 
 private:
-    static constexpr int kEnableMessageId = 1;
-    static constexpr int kCaptureMessageId = 2;
-    static constexpr int kEvaluateMessageId = 3;
+    int enable_id_;
+    int capture_id_;
+    int evaluate_id_;
 
     void SubmitCapture(CefRefPtr<CefBrowser> browser) {
         CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
         params->SetString("format", "mhtml");
-        if (browser->GetHost()->ExecuteDevToolsMethod(kCaptureMessageId, "Page.captureSnapshot",
+        if (browser->GetHost()->ExecuteDevToolsMethod(capture_id_, "Page.captureSnapshot",
                                                       params) == 0) {
             Finish("could not submit Page.captureSnapshot");
         }
@@ -471,7 +477,7 @@ private:
         CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
         params->SetString("expression", kStateExpression);
         params->SetBool("returnByValue", true);
-        if (browser->GetHost()->ExecuteDevToolsMethod(kEvaluateMessageId, "Runtime.evaluate",
+        if (browser->GetHost()->ExecuteDevToolsMethod(evaluate_id_, "Runtime.evaluate",
                                                       params) == 0) {
             FinishOk();  // MHTML is on disk; a missing state file is degraded, not fatal.
         }
@@ -544,6 +550,79 @@ private:
 
     IMPLEMENT_REFCOUNTING(MhtmlCapture);
     DISALLOW_COPY_AND_ASSIGN(MhtmlCapture);
+};
+
+/// Evaluates JavaScript in the page through DevTools and replies with the resulting value.
+///
+/// The main world is used deliberately: this is the shell's own script (restore, measurement), not a
+/// credential or a page-visible secret. Anything secret must go through an isolated world instead.
+class EvalCapture : public CefDevToolsMessageObserver {
+public:
+    EvalCapture(int64_t request_id, std::string script)
+        : request_id_(request_id), script_(std::move(script)), message_id_(NextDevToolsId()) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", script_);
+        params->SetBool("returnByValue", true);
+        if (browser->GetHost()->ExecuteDevToolsMethod(message_id_, "Runtime.evaluate", params) ==
+            0) {
+            registration_ = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
+                                int message_id,
+                                bool success,
+                                const void* result,
+                                size_t result_size) override {
+        if (message_id != message_id_) {
+            return;
+        }
+        registration_ = nullptr;
+        if (!success || result == nullptr || result_size == 0) {
+            StdioLink::Instance().ReplyError(request_id_, "internal", "Runtime.evaluate failed");
+            return;
+        }
+        const std::string raw(static_cast<const char*>(result), result_size);
+        CefRefPtr<CefValue> parsed = CefParseJSON(CefString(raw), JSON_PARSER_RFC);
+        if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+            StdioLink::Instance().ReplyError(request_id_, "internal", "unparseable evaluate result");
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
+        if (CefRefPtr<CefValue> error = root->GetValue("error")) {
+            if (error->GetType() == VTYPE_DICTIONARY) {
+                const std::string message =
+                    error->GetDictionary()->GetString("message").ToString();
+                StdioLink::Instance().ReplyError(request_id_, "invalid_argument", message.c_str());
+                return;
+            }
+        }
+        CefRefPtr<CefDictionaryValue> inner = root;
+        if (CefRefPtr<CefValue> result_value = root->GetValue("result")) {
+            if (result_value->GetType() == VTYPE_DICTIONARY) {
+                inner = result_value->GetDictionary();
+            }
+        }
+        CefRefPtr<CefDictionaryValue> reply = CefDictionaryValue::Create();
+        reply->SetBool("ok", true);
+        reply->SetString("type", inner->GetString("type").ToString());
+        reply->SetString("value", inner->GetString("value").ToString());
+        StdioLink::Instance().Reply(request_id_, reply);
+    }
+
+private:
+    int64_t request_id_;
+    int message_id_;
+    std::string script_;
+    CefRefPtr<CefRegistration> registration_;
+
+    IMPLEMENT_REFCOUNTING(EvalCapture);
+    DISALLOW_COPY_AND_ASSIGN(EvalCapture);
 };
 
 }  // namespace
@@ -875,10 +954,25 @@ int RunEngineHostServer(const HostConfig& config) {
             } else if (command.op == "shutdown") {
                 shutdown_requested = true;
                 link.Reply(command.id);
+            } else if (command.op == "eval") {
+                if (!state.browser) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                if (command.script.empty()) {
+                    link.ReplyError(command.id, "invalid_argument", "empty script");
+                    continue;
+                }
+                CefRefPtr<EvalCapture> capture(new EvalCapture(command.id, command.script));
+                if (!capture->Start(state.browser)) {
+                    link.ReplyError(command.id, "not_supported",
+                                    "DevTools is unavailable, cannot evaluate");
+                }
+                // The reply is sent by EvalCapture when the value arrives.
             } else {
                 link.ReplyError(command.id, "not_supported",
                                 "this milestone implements hello, ping, create_surface, navigate, "
-                                "destroy_surface and shutdown");
+                                "eval, destroy_surface and shutdown");
             }
         }
 

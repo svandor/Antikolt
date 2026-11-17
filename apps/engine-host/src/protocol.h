@@ -36,6 +36,8 @@ struct Command {
     int64_t id = 0;
     int64_t surface = 0;
     std::string url;
+    /// JavaScript to evaluate (`eval`), executed in the page's main world.
+    std::string script;
     std::string partition;
     int width = 1280;
     int height = 800;

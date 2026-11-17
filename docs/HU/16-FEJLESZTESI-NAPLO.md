@@ -3,7 +3,52 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
-## 2026-11-17 (hetedik szelet) — a MHTML mellé a lap állapota is
+## 2026-11-17 (nyolcadik szelet) — a ciklus bezárva: mentés → visszaállítás offline
+
+A böngésző legfontosabb ígérete most már **végig** bizonyított: egy oldal lemezre mentése és **offline
+visszaállítása** ugyanazzal a motorral, hálózat nélkül.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| `eval` parancs (C++) | DevTools `Runtime.evaluate {returnByValue}` → `{type, value}` válasz; erre épül a visszaállítás |
+| `antikolt-probe --restore <state.json>` | az MHTML megnyitása `file://` címen (offline), majd az állapot visszaírása: görgetés, űrlapértékek (`input`/`change` eseményekkel), `sessionStorage`, média-pozíció |
+| Ellenőrzés | a visszaállítás után egy második `eval` igazolja a címet, a görgetést, a mezők számát és a megjelenő szöveget |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+pre-scroll: scrollY=600
+snapshot bytes=1440193 state_bytes=4452 ...
+state loaded: title="Webböngésző – Wikipédia" scrollY=600 forms=18
+navigate=file:///C:/…/surface-1-0.mhtml
+load_finished status=Some(200) url=file:///…/surface-1-0.mhtml
+restore applied: forms=18 session=0 media=0 scrollY=600
+verified: title="Webböngésző – Wikipédia" url=file:///… scrollY=600 fields=18
+          text="Ugrás a tartalomhoz\nFőmenü\nKeresés\nAdományok\n…"
+probe=ok        (exit code 0)
+```
+
+Vagyis: **a lap szövege megjelenik offline**, a **görgetés (600 px) visszaáll**, a **18 űrlapmező
+visszakapja az értékét** — motorral, de hálózat nélkül.
+
+### Két újabb hiba, amit ez a szelet hozott (mind javítva)
+
+1. **A DevTools üzenet-azonosítónak egyedinek kell lennie.** Állandó id-t használtam, ezért a *második*
+   `Runtime.evaluate` válasza némán elveszett — pontosan úgy nézett ki, mint egy beragadt motor. Most
+   minden DevTools-hívás a `NextDevToolsId()` számlálóból kap id-t, és a választ a saját id-jére illeszti.
+2. **PowerShell-foglalt változnevek**: a `$host` után a `$profile` is elhasalt (a szkriptem hibázott, nem
+   a program). A mérési szkriptek most tudatosan kerülik ezeket.
+
+### Őszinte korlát
+
+A visszaállított MHTML **statikus dokumentum**: a DOM, a stílusok, a képek és az űrlapértékek megvannak,
+de az oldal saját JavaScriptje nem fut újra „élő" SPA-ként. Ezért a visszaállítás **olvasásra és
+folytatásra** jó, nem arra, hogy egy összetett webalkalmazás futásidejű állapota pontosan folytatódjon —
+ezt a `02-ARCHITEKTURA.md` 5.1. pontja már az elején kimondta.
+
+---
 
 A kártya lemezre mentése most már **két fájlt** ír: a teljes oldalt (MHTML) és a DOM-on túli állapotot
 (JSON). Ez a teljes hibernálási csomag.

@@ -95,6 +95,7 @@ bool ParseCommand(const std::string& payload, Command* out) {
 
     out->surface = static_cast<int64_t>(GetNumber(message, "surface"));
     out->url = GetString(message, "url");
+    out->script = GetString(message, "script");
     out->protocol = static_cast<int>(GetNumber(message, "protocol"));
 
     CefRefPtr<CefDictionaryValue> config = GetDictionary(message, "config");
