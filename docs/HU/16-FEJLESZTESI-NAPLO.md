@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonhetedik szelet) — a rács ír: a pin-jelvény a magig ér
+
+A huszonhatodik szelet átadta a csatornát, de a rács még nem használta. Most a kártya **pin-jelvénye
+kattintható**: a jelvény egy `button` a kártya shadow rootjában, `stopPropagation`-nal (különben a
+kattintás meg is nyitná a kártyát), és egy `antikolt-pin` composed eseménnyel jut el a laphoz, ami a
+`cards.upsert`-tel a maghoz adja. A rács **csak a mag válasza után** renderel újra — így egy elbukott
+írás nem hagyja a rácsot olyat állítani, amit a tár nem tartalmaz.
+
+A lap oldalán két buktatót kellett kezelni: (1) a `withNativeOpen` kompozíció eddig csak az `open`-t
+fordította át, ezért `cards.upsert` nem létezett (`a híd nem tud írni (nincs motor)`); (2) a modell
+nézet, a mag rekordja viszont **más alak** (a modellben `container` objektum, a rekordban string) — ezért
+az írás a mag rekordját küldi (`coreRowById`), nem a nézetet.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --pintest <motor>
+pin_click=ok
+pin_id=01SEED000000000000000001 before=pinned
+pin_page=unpinned pinned_count=2
+pin_error=
+pin_core=unpinned
+pin_write=ok      (exit code 0)
+```
+
+Az állítás szándékosan a **megfordítás**, nem a „pin igaz lesz”: a tár megosztott a többi önteszttel (a
+`--bridgetest` is billenti a pint), ezért a teszt az első kártyát kattintja, és azt követeli, hogy a lap
+**és** a mag ugyanarra az ellenkező állapotra jusson. Két futtatás egymás után: `pinned → unpinned`, majd
+`unpinned → pinned` — mindkettő `pin_write=ok`. Két független tanú egyezik: a lap saját
+`window.antikoltPinState()`-je és egy **friss** mag-kliens `cards_list`-je.
+
 ## 2026-11-17 (huszonhatodik szelet) — a lap kérdezhet: a híd kétirányú (protokoll v2)
 
 Az ADR-032 egyirányú hídja elég volt a rács feltöltéséhez, de a lap nem tudott **választ** kapni a magtól.

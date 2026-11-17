@@ -302,10 +302,24 @@ class AntikoltCard extends HTMLElement {
     domain.className = "card-domain";
     domain.textContent = card.domain;
 
-    const badge = document.createElement("span");
-    badge.className = "badge";
+    const badge = document.createElement("button");
+    badge.type = "button";
+    badge.className = "badge pin";
     badge.textContent = `${card.pinned ? "📌 " : ""}${card.archived ? "💤 " : ""}${status.icon}`;
-    badge.title = status.label;
+    badge.title = card.pinned ? "Kitűzés levétele" : "Kitűzés";
+    // The card itself opens on click, so the pin must not travel further: it is a control inside a
+    // link-shaped surface, and a click on it would otherwise also open the card.
+    badge.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.dispatchEvent(
+        new CustomEvent("antikolt-pin", {
+          detail: { id: this.card?.id },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    });
 
     meta.append(dot, domain, badge);
     body.append(title, meta);
@@ -349,6 +363,8 @@ function cardStyles() {
     .card-domain { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
     .badge { margin-left: auto; flex: none; }
+    .pin { background: none; border: 0; padding: 0 2px; font: inherit; color: inherit; cursor: pointer; border-radius: 4px; }
+    .pin:hover, .pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     @media (prefers-reduced-motion: reduce) { .card { transition: none; } }
   `;
 }
@@ -397,6 +413,7 @@ class HomePage {
     this.allCards = this.coreCards
       ? this.coreCards.map(pageCardFromCore)
       : await this.bridge.cards.list();
+    if (this.coreCards) this.indexCoreRows();
     this.cards = this.allCards.slice();
     cardLookup.rows = this.allCards;
     this.applyFilter();
@@ -415,12 +432,59 @@ class HomePage {
    */
   acceptCards(rows) {
     this.coreCards = Array.isArray(rows) ? rows : [];
+    this.indexCoreRows();
     this.allCards = this.coreCards.map(pageCardFromCore);
     this.cards = this.allCards.slice();
     cardLookup.rows = this.allCards;
     this.cardSource = "core";
     this.applyFilter();
     this.refreshSystem().catch(() => {});
+  }
+
+  /**
+   * Remember the core's own records by id.
+   *
+   * The grid's model is a *view* (a domain, a container object, a preview reference); the core's record
+   * is what `cards.upsert` validates. Writing must send the record, not the view — sending the view was
+   * the kind of mistake that fails as a type error somewhere else entirely.
+   */
+  indexCoreRows() {
+    this.coreRowById = new Map((this.coreCards || []).map((row) => [row.id, row]));
+  }
+
+  /**
+   * Pin or unpin one card, through the shell (`cards.upsert`), which asks the core.
+   *
+   * The grid re-renders from the answer: the page shows a change only after the core has it, so a failed
+   * write cannot leave the grid claiming something the store does not hold. In sample mode (no engine)
+   * there is no channel and nothing is pretended.
+   */
+  async togglePin(id) {
+    if (!id) return;
+    const model = this.allCards.find((card) => card.id === id);
+    const record = this.coreRowById?.get(id);
+    if (!model || !record) {
+      this.lastPin = { id, error: "nincs mag-rekord ehhez a kártyához" };
+      return;
+    }
+    if (typeof this.bridge?.cards?.upsert !== "function") {
+      this.lastPin = { id, error: "a híd nem tud írni (nincs motor)" };
+      return;
+    }
+    const next = { ...record, pinned: !record.pinned };
+    try {
+      const answer = await this.bridge.cards.upsert(next);
+      const saved = answer?.card ?? next;
+      const stored = this.coreRowById.get(id);
+      if (stored) stored.pinned = Boolean(saved.pinned);
+      model.pinned = Boolean(saved.pinned);
+      model.size = model.pinned ? "l" : "m";
+      this.lastPin = { id, pinned: model.pinned, error: "" };
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+    } catch (error) {
+      this.lastPin = { id, error: String(error?.message ?? error) };
+    }
   }
 
   bindEvents() {
@@ -450,6 +514,10 @@ class HomePage {
     });
 
     document.addEventListener("keydown", (event) => this.onKeydown(event));
+
+    // The pin badge lives inside a card's shadow root, so its click arrives as a composed event from
+    // the host. It is handled here, before anything else, because a pin is not an "open".
+    document.addEventListener("antikolt-pin", (event) => this.togglePin(event.detail?.id));
 
     // Delegated on the document on purpose: the pinned row lives outside `#viewport`, so a listener
     // bound there never saw a click on a pinned card — the most prominent cards were inert. One
@@ -754,6 +822,15 @@ function withNativeOpen(mock) {
           console.warn("openCard failed", error);
         }
       },
+      // The write half of the channel (protocol 2). In a plain browser there is no engine, so the
+      // answer is an honest rejection instead of a write that never happened.
+      upsert: async (card) => {
+        const native = nativeBridge();
+        if (!native?.cards?.upsert) {
+          throw new Error("a híd nem tud írni (nincs motor)");
+        }
+        return native.cards.upsert(card);
+      },
     },
     system: {
       ...mock.system,
@@ -771,9 +848,8 @@ page.start().catch((error) => {
   console.error("home page failed to start", error);
 });
 
-// The shell pushes the cards the core owns. The bridge is one-way today (the persistent `cefQuery`
-// that would let the page ask is a separate slice), so the shell calls this hook with the JSON it
-// received from the core. The payload is data, never code: the shell hands over a JSON string.
+// The shell pushes the cards the core owns. The push stays because it is how a fresh grid is filled
+// without asking; the two-way channel (protocol 2) is what the page uses to *write*.
 window.antikoltAcceptCards = (payload) => {
   const parsed = typeof payload === "string" ? JSON.parse(payload) : payload;
   const rows = Array.isArray(parsed?.cards) ? parsed.cards : [];
@@ -791,4 +867,14 @@ window.antikoltGridState = () => ({
   firstId: page.cards[0]?.id ?? "",
   firstUrl: page.cards[0]?.url ?? "",
   titles: page.cards.map((card) => card.title),
+});
+
+// The pin witness: what the last pin did, and the pinned titles as the grid now shows them.
+window.antikoltPinState = () => ({
+  source: page.cardSource,
+  pinnedCount: page.cards.filter((card) => card.pinned).length,
+  pinnedTitles: page.cards.filter((card) => card.pinned).map((card) => card.title),
+  lastId: page.lastPin?.id ?? "",
+  lastPinned: page.lastPin?.pinned ?? null,
+  lastError: page.lastPin?.error ?? "",
 });

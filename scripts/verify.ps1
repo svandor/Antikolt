@@ -86,7 +86,8 @@ $engineChecks = @(
     @{ Name = 'capturetest'; Args = @('--capturetest') },
     @{ Name = 'wipetest'; Args = @('--wipetest') },
     @{ Name = 'cleanuptest'; Args = @('--cleanuptest') },
-    @{ Name = 'bridgetest'; Args = @('--bridgetest') }
+    @{ Name = 'bridgetest'; Args = @('--bridgetest') },
+    @{ Name = 'pintest'; Args = @('--pintest') }
 )
 
 foreach ($check in $engineChecks) {

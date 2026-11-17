@@ -1378,6 +1378,133 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the grid can *write*: a pin click travels through the bridge to the core and persists.
+///
+/// The page's own witness (`window.antikoltPinState`) says what the grid shows; a fresh core client says
+/// what the store holds. Both must agree about the same card, and the card must have been unpinned before
+/// the click — a click that changes nothing would pass a weaker test.
+int runPinCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    QString clicked_id;
+    bool pinned_before = false;
+    QJsonObject state;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             QTimer::singleShot(900, &loop, [&, id] {
+                                 // The first card, whatever its state: the assertion is the *flip*, so the
+                                 // test does not depend on how many cards are already pinned in the store
+                                 // (other checks toggle pins too, and the store is shared).
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "(function(){var els=document.querySelectorAll("
+                                         "'antikolt-card');if(!els.length)return 'no-card';"
+                                         "var host=els[0],c=host.card;if(!c)return 'no-model';"
+                                         "var b=host.shadowRoot.querySelector('.pin');"
+                                         "if(!b)return 'no-pin';"
+                                         "var before=c.pinned?1:0;b.click();"
+                                         "return 'clicked:'+c.id+':'+before;})()"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         const QString value = error.isEmpty()
+                                                                   ? reply.value(QStringLiteral("value"))
+                                                                         .toString()
+                                                                   : error;
+                                         const QStringList parts = value.split(QLatin1Char(':'));
+                                         const bool clicked =
+                                             parts.size() == 3 &&
+                                             parts.at(0) == QStringLiteral("clicked");
+                                         out << "pin_click=" << (clicked ? "ok" : "FAILED") << '\n';
+                                         if (!clicked) {
+                                             out << "pin_click_value=" << value << '\n';
+                                             loop.quit();
+                                             return;
+                                         }
+                                         clicked_id = parts.at(1);
+                                         pinned_before = parts.at(2) == QStringLiteral("1");
+                                         QTimer::singleShot(1200, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id,
+                                                 QStringLiteral(
+                                                     "JSON.stringify(window.antikoltPinState())"),
+                                                 [&](const QJsonObject& state_reply,
+                                                     const QString& state_error) {
+                                                     if (state_error.isEmpty()) {
+                                                         state = QJsonDocument::fromJson(
+                                                                     state_reply
+                                                                         .value(QStringLiteral("value"))
+                                                                         .toString()
+                                                                         .toUtf8())
+                                                                     .object();
+                                                     }
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    // What the store holds, read by a fresh client (a running one would report its own copy).
+    bool stored_pinned = false;
+    {
+        CoreClient verifier;
+        const QString core_dir =
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+            QStringLiteral("/core");
+        if (verifier.start(MainWindow::coreExecutable(), core_dir)) {
+            QEventLoop loop;
+            verifier.cardsList([&](const QJsonObject& listed, const QString& error) {
+                if (error.isEmpty()) {
+                    for (const QJsonValue& value :
+                         listed.value(QStringLiteral("cards")).toArray()) {
+                        const QJsonObject card = value.toObject();
+                        if (card.value(QStringLiteral("id")).toString() == clicked_id) {
+                            stored_pinned = card.value(QStringLiteral("pinned")).toBool();
+                        }
+                    }
+                }
+                loop.quit();
+            });
+            QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+            loop.exec();
+            verifier.shutdown();
+        }
+    }
+
+    const QString pin_error = state.value(QStringLiteral("lastError")).toString();
+    const bool expected_pinned = !pinned_before;
+    out << "pin_id=" << clicked_id << " before=" << (pinned_before ? "pinned" : "unpinned") << '\n';
+    out << "pin_page=" << (state.value(QStringLiteral("lastPinned")).toBool() ? "pinned" : "unpinned")
+        << " pinned_count=" << state.value(QStringLiteral("pinnedCount")).toInt() << '\n';
+    out << "pin_error=" << pin_error << '\n';
+    out << "pin_core=" << (stored_pinned ? "pinned" : "unpinned") << '\n';
+    // Both witnesses must show the *flipped* state: a click that changed nothing would pass a weaker
+    // test, and a page that changed without the store (or the reverse) is exactly the bug this guards.
+    const bool ok = !clicked_id.isEmpty() && pin_error.isEmpty() &&
+                    state.value(QStringLiteral("lastPinned")).toBool() == expected_pinned &&
+                    stored_pinned == expected_pinned &&
+                    state.value(QStringLiteral("lastId")).toString() == clicked_id;
+    out << "pin_write=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the page can *ask*: protocol 2's request channel, end to end (ADR-034).
 ///
 /// The page calls `window.antikoltNative.request('cards.search', {q})` — a persistent `cefQuery` the
@@ -1862,6 +1989,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("bridgetest"),
         QStringLiteral("Prove the page can ask the shell a question, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption pintest(
+        QStringLiteral("pintest"),
+        QStringLiteral("Prove a pin click on the grid reaches the core, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -1877,11 +2008,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(wipetest);
     parser.addOption(cleanuptest);
     parser.addOption(bridgetest);
+    parser.addOption(pintest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(pintest)) {
+        return runPinCheck(parser.value(pintest));
     }
 
     if (parser.isSet(bridgetest)) {

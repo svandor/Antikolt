@@ -94,6 +94,11 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   in the test process) writes a cookie and a localStorage entry, the test reads them, asks the engine to
   clear them through `Storage.clearDataForOrigin`, and requires the second read to come back empty. The
   wipe is proven by the difference, not by the reply.
+- `--pintest` — the grid can write: the first card's pin badge is clicked inside its shadow root, and the
+  click must travel through the bridge (`cards.upsert`) to the core. The assertion is the *flip*: the
+  page's witness (`window.antikoltPinState`) and a fresh core client must both report the opposite of what
+  the card had before, whichever direction that is — a click that changed nothing would pass a weaker
+  test.
 - `--cleanuptest` — the policy's verdict is executed: a due row is written with `last_seen_ms: 0` and a
   `wipe` policy, the window cleans up while the grid is showing (nothing can be wiped immediately — one
   surface, I1), then the card for that origin is opened and the engine clears it. The page's own witness
