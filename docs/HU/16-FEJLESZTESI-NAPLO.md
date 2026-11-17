@@ -3,7 +3,39 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
-## 2026-11-17 (ötödik szelet) — a fagyasztás működik, mérve
+## 2026-11-17 (hatodik szelet) — valódi MHTML: a hibernálás teljes állapota
+
+A pillanatkép most már nem csak a DOM: a **teljes oldal, beágyazott erőforrásokkal**, egyetlen MHTML
+fájlban — ez az, amit a kártya lemezre mentésekor tényleg meg kell őrizni, mert ez olvasható vissza
+hálózat és motor nélkül.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| `MhtmlCapture` (C++) | CEF DevTools-csatorna: `Page.enable` → `Page.captureSnapshot {format: mhtml}`; a válasz a `CefDevToolsMessageObserver::OnDevToolsMethodResult`-ban érkezik, base64-detektálással (a CEF a kész MHTML-t adja, más átvitelek base64-et), majd `<user_data>/snapshots/surface-N-M.mhtml` |
+| Fallback | ha a DevTools-módszer nem indítható, a régi `GetSource` DOM-mentés fut — soha nincs „nincs pillanatkép" |
+| Diagnosztika | minden DevTools-válasz nyers első 240 bájtja a stderr-en (a csatorna tisztán marad) |
+
+### Mért eredmény (2026-11-17, Wikipédia-cikk)
+
+| Fázis | Medián | Megjegyzés |
+|---|---|---|
+| betöltve | 179,0 MB | |
+| pillanatkép közben | 184,6 MB | a csúcs +5,6 MB: az MHTML a memóriában áll össze, mielőtt lemezre kerül |
+| lemezen (frozen) | 117,8 MB | |
+| **visszaadott RAM** | **61,2 MB** | 179,0 → 117,8 MB |
+
+A pillanatkép-fájl **1 440 191 bájt**, fejléce `From: <Saved by Blink>`, és a mérés ellenőrizte, hogy
+**beágyazott képet és CSS-t is tartalmaz** — tehát offline, motor nélkül is megjeleníthető.
+
+### Tanulság, amit érdemes megjegyezni
+
+A DevTools `OnDevToolsMethodResult` a **kész MHTML-t** adja vissza (nem base64-et), és a **result
+objektumot** kapja, nem a `{"id":..,"result":{..}}` burkolót. Ez a két apróság némán „nincs adat" hibát
+okoz, ezért a kód mindkét formát elfogadja, és a nyers választ naplózza.
+
+---
 
 A termék legfontosabb mechanizmusa most már **működik és mérhető**: a motor kimenti a lap DOM-ját
 fájlba, a surface megszűnik, és a mérés mutatja, mennyi RAM szabadul fel.

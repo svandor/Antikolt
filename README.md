@@ -2,10 +2,11 @@
 
 **Modern, memóriatakarékos, kártya-alapú böngésző.** Nyitott forrás, magyar és angol nyelven.
 
-> Állapot: **v0.5 — a fagyasztás működik, mérve**. A Rust kliens a valódi protokollon indítja,
-> navigálja, **pillanatképezi** és zárja le a CEF motorházat. Mérés: a Wikipédia-cikk betöltve
-> **182,6 MB**, a kártya lemezre mentése után **115,9 MB** → **66,7 MB RAM visszaadva**; a maradék a
-> motor alapja, amit a T2/ultra-low mód ad vissza. A Rust mag 79 tesztje zöld.
+> Állapot: **v0.6 — valódi MHTML hibernálás, mérve**. A Rust kliens a valódi protokollon indítja,
+> navigálja, **MHTML-be menti** és zárja le a CEF motorházat. Mérés a Wikipédia-cikken: betöltve
+> **179,0 MB**, a kártya lemezre mentése után **117,8 MB** → **61,2 MB RAM visszaadva**, a pillanatkép
+> **1,44 MB** valódi MHTML (beágyazott képekkel és CSS-sel, offline olvasható). A maradék a motor
+> alapja, amit a T2/ultra-low mód ad vissza. A Rust mag 79 tesztje zöld.
 > Terv: `docs/HU/` (magyar) · angol összefoglaló: `docs/EN/` · napló:
 > [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) · F0 mérés:
 > [`docs/HU/18-F0-JELENTES.md`](docs/HU/18-F0-JELENTES.md) · eszközlánc:

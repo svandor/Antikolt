@@ -70,6 +70,7 @@ a `03-MEMORIA.md` 5. fejezete pontosan megmondja, mit, hogyan és milyen küszö
 | Oldal | Betöltve | Lemezen | Visszaadott RAM |
 |---|---|---|---|
 | `example.com` | 127,3 MB | 107,7 MB | 19,6 MB |
-| Wikipédia-cikk | 182,6 MB | 115,9 MB | 66,7 MB |
+| Wikipédia-cikk (DOM) | 182,6 MB | 115,9 MB | 66,7 MB |
+| Wikipédia-cikk (MHTML, 1,44 MB) | 179,0 MB | 117,8 MB | 61,2 MB |
 
 A naplót lásd: `docs/HU/16-FEJLESZTESI-NAPLO.md`.

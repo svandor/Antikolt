@@ -12,6 +12,9 @@
 #include <thread>
 
 #include "include/cef_command_line.h"
+#include "include/cef_devtools_message_observer.h"
+#include "include/cef_parser.h"
+#include "include/cef_registration.h"
 #include "include/cef_string_visitor.h"
 #include "include/cef_version.h"
 #include "include/wrapper/cef_helpers.h"
@@ -233,6 +236,193 @@ private:
 
 /// Monotonic id for snapshot files, so two freezes never overwrite each other.
 int64_t s_snapshot_counter = 0;
+
+/// Decode standard base64. CDP's `Page.captureSnapshot` returns `data` as a `binary` type, which is
+/// base64 on the wire; older/other builds hand back the MHTML as-is, and the caller decides by
+/// looking at the first bytes.
+std::string Base64Decode(const std::string& input) {
+    auto value_of = [](unsigned char character) -> int {
+        if (character >= 'A' && character <= 'Z') {
+            return character - 'A';
+        }
+        if (character >= 'a' && character <= 'z') {
+            return character - 'a' + 26;
+        }
+        if (character >= '0' && character <= '9') {
+            return character - '0' + 52;
+        }
+        if (character == '+') {
+            return 62;
+        }
+        if (character == '/') {
+            return 63;
+        }
+        return -1;
+    };
+
+    std::string out;
+    out.reserve(input.size() * 3 / 4);
+    int accumulator = 0;
+    int bits = -8;
+    for (unsigned char character : input) {
+        const int value = value_of(character);
+        if (value < 0) {
+            continue;  // padding and whitespace
+        }
+        accumulator = (accumulator << 6) | value;
+        bits += 6;
+        if (bits >= 0) {
+            out.push_back(static_cast<char>((accumulator >> bits) & 0xFF));
+            bits -= 8;
+        }
+    }
+    return out;
+}
+
+/// Captures the full page as MHTML through the DevTools protocol and replies to the `snapshot`
+/// request.
+///
+/// This is the real hibernation artifact: the DOM *and* its resources inlined, so a card can be read
+/// offline without the network and without the engine. The MHTML itself is produced by Chromium
+/// (`Page.captureSnapshot`), not by us.
+class MhtmlCapture : public CefDevToolsMessageObserver {
+public:
+    MhtmlCapture(int64_t request_id,
+                 std::string path,
+                 int64_t surface_id,
+                 std::string url,
+                 std::string title)
+        : request_id_(request_id),
+          path_(std::move(path)),
+          surface_id_(surface_id),
+          url_(std::move(url)),
+          title_(std::move(title)) {}
+
+    /// Attach the observer and ask Chromium for the snapshot. Returns false when the DevTools method
+    /// could not even be submitted, so the caller can fall back to the DOM-only capture.
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
+        // The Page domain must be enabled before its methods answer; asking for the snapshot first
+        // returns a result without `data`.
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        const int submitted =
+            browser->GetHost()->ExecuteDevToolsMethod(kEnableMessageId, "Page.enable", params);
+        if (submitted == 0) {
+            registration_ = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
+                                int message_id,
+                                bool success,
+                                const void* result,
+                                size_t result_size) override {
+        const std::string raw =
+            (result != nullptr && result_size > 0)
+                ? std::string(static_cast<const char*>(result), result_size)
+                : std::string();
+        Log("[engine-host] devtools id=%d success=%d bytes=%zu: %.240s\n", message_id,
+            success ? 1 : 0, result_size, raw.c_str());
+
+        if (message_id == kEnableMessageId) {
+            // Whatever enabling returned, try the capture: some builds answer enable with an error
+            // and still serve the method.
+            CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+            params->SetString("format", "mhtml");
+            if (browser->GetHost()->ExecuteDevToolsMethod(kCaptureMessageId, "Page.captureSnapshot",
+                                                          params) == 0) {
+                registration_ = nullptr;
+                StdioLink::Instance().ReplyError(request_id_, "internal",
+                                                 "could not submit Page.captureSnapshot");
+            }
+            return;
+        }
+
+        if (message_id != kCaptureMessageId) {
+            return;
+        }
+        // Detach first: the registration holds this object alive, and we are done either way.
+        registration_ = nullptr;
+
+        if (!success || raw.empty()) {
+            StdioLink::Instance().ReplyError(request_id_, "internal",
+                                             "Page.captureSnapshot failed");
+            return;
+        }
+
+        CefRefPtr<CefValue> parsed = CefParseJSON(CefString(raw), JSON_PARSER_RFC);
+        if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+            StdioLink::Instance().ReplyError(request_id_, "internal", "unparseable DevTools result");
+            return;
+        }
+        if (CefRefPtr<CefValue> error = parsed->GetDictionary()->GetValue("error")) {
+            if (error->GetType() == VTYPE_DICTIONARY) {
+                const std::string message =
+                    error->GetDictionary()->GetString("message").ToString();
+                Log("[engine-host] Page.captureSnapshot error: %s\n", message.c_str());
+                StdioLink::Instance().ReplyError(request_id_, "not_supported", message.c_str());
+                return;
+            }
+        }
+
+        // CEF hands the *result object* to the observer, not the full {"id":..,"result":{..}}
+        // envelope; other DevTools transports wrap it, so accept both shapes.
+        CefRefPtr<CefDictionaryValue> result_object = parsed->GetDictionary();
+        if (CefRefPtr<CefValue> nested = result_object->GetValue("result")) {
+            if (nested->GetType() == VTYPE_DICTIONARY) {
+                result_object = nested->GetDictionary();
+            }
+        }
+        const std::string data = result_object->GetString("data").ToString();
+        if (data.empty()) {
+            StdioLink::Instance().ReplyError(request_id_, "internal", "DevTools result has no data");
+            return;
+        }
+
+        // MHTML starts with "From:"; anything else here is the base64 form of the same bytes.
+        const std::string mhtml = data.rfind("From:", 0) == 0 ? data : Base64Decode(data);
+        if (!WriteFileBytes(mhtml)) {
+            StdioLink::Instance().ReplyError(request_id_, "internal", "could not write the snapshot");
+            return;
+        }
+
+        CefRefPtr<CefDictionaryValue> reply = CefDictionaryValue::Create();
+        reply->SetBool("ok", true);
+        reply->SetBool("mhtml", true);
+        reply->SetString("path", path_);
+        reply->SetInt("bytes", static_cast<int>(mhtml.size()));
+        reply->SetString("url", url_);
+        reply->SetString("title", title_);
+        reply->SetInt("surface", static_cast<int>(surface_id_));
+        StdioLink::Instance().Reply(request_id_, reply);
+        Log("[engine-host] MHTML snapshot written: %s (%zu bytes)\n", path_.c_str(), mhtml.size());
+    }
+
+private:
+    static constexpr int kEnableMessageId = 1;
+    static constexpr int kCaptureMessageId = 2;
+
+    bool WriteFileBytes(const std::string& bytes) const {
+        std::ofstream out(path_, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            return false;
+        }
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        return out.good();
+    }
+
+    int64_t request_id_;
+    std::string path_;
+    int64_t surface_id_;
+    std::string url_;
+    std::string title_;
+    CefRefPtr<CefRegistration> registration_;
+
+    IMPLEMENT_REFCOUNTING(MhtmlCapture);
+    DISALLOW_COPY_AND_ASSIGN(MhtmlCapture);
+};
 
 }  // namespace
 
@@ -537,18 +727,25 @@ int RunEngineHostServer(const HostConfig& config) {
                     link.ReplyError(command.id, "surface_not_found", "no live surface");
                     continue;
                 }
-                // `<user_data>/snapshots/surface-N-M.html`: a real file the shell can verify, and
+                // `<user_data>/snapshots/surface-N-M.mhtml`: a real file the shell can verify, and
                 // later move into the content-addressed blob store.
                 std::error_code dir_error;
                 std::filesystem::create_directories(config.user_data_path + "\\snapshots",
                                                     dir_error);
-                const std::string path = config.user_data_path + "\\snapshots\\surface-" +
+                const std::string base = config.user_data_path + "\\snapshots\\surface-" +
                                          std::to_string(state.surface_id) + "-" +
-                                         std::to_string(s_snapshot_counter++) + ".html";
-                CefRefPtr<SnapshotVisitor> visitor(
-                    new SnapshotVisitor(command.id, path, state.final_url, state.title));
-                state.browser->GetMainFrame()->GetSource(visitor);
-                // The reply is sent from SnapshotVisitor::Visit when the DOM arrives.
+                                         std::to_string(s_snapshot_counter++);
+                // Preferred: full MHTML (DOM plus inlined resources) through the DevTools protocol.
+                CefRefPtr<MhtmlCapture> capture(new MhtmlCapture(
+                    command.id, base + ".mhtml", state.surface_id, state.final_url, state.title));
+                if (!capture->Start(state.browser)) {
+                    // Fallback: DOM only. Less useful offline, but never a missing snapshot.
+                    Log("[engine-host] DevTools unavailable, falling back to a DOM-only snapshot\n");
+                    CefRefPtr<SnapshotVisitor> visitor(new SnapshotVisitor(
+                        command.id, base + ".html", state.final_url, state.title));
+                    state.browser->GetMainFrame()->GetSource(visitor);
+                }
+                // The reply is sent by the capture object when the payload arrives.
             } else if (command.op == "destroy_surface") {
                 DrainAndCloseBrowser(&state);
                 DestroyHostWindow(&state);
