@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszadik szelet) — egy parancs minden ellenőrzésre
+
+A hat önteszt eddig hat külön, fejből tudott parancs volt — és egy munkamenet, amely egyet elfelejt,
+olyan zöld állapotot jelent, amit nem mért meg. Most van `scripts/verify.ps1`: build + `--gridtest`,
+`--lifecycletest`, `--opentest`, `--embedtest`, `--capturetest`, `--coretest` + `check-repo.ps1`, és a
+végén egy táblázat meg egyetlen `ALL SELF TESTS PASSED`. Hiányzó binárist **FAIL**-ként jelent, nem
+hagyja ki csendben; `-SkipBuild` / `-SkipRepo` a részmunkához.
+
+Mérve:
+
+```
+Check         Result Detail
+-----         ------ ------
+gridtest      ok
+lifecycletest ok
+opentest      ok
+embedtest     ok
+capturetest   ok
+coretest      ok
+
+ALL SELF TESTS PASSED
+```
+
+Ez a szkript nem kapu (a CI kapuja továbbra is `check-repo.ps1`), hanem az a parancs, amit egy
+munkamenet a állításai előtt lefuttat.
+
 ## 2026-11-17 (tizenkilencedik szelet) — a kártya magától lemezre megy (10 perc tétlenség)
 
 A memória-ígéret lényege eddig nem volt bekötve: a fagyasztás csak kézi gombra működött. Most a shell
