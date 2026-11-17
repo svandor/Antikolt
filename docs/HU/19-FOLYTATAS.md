@@ -26,8 +26,14 @@ Amit **kötelező** tiszteletben tartani (a szeletek ettől függnek):
 
 ## 1. Kitűzött kártya kivétele a hibernálásból
 
+> **Állapot: az 1–5. lépés kész és zöld** (`50ded02`) — a `pinned` jelző végigmegy a hídon
+> (`app.js` → `open_card` args → `MainWindow::live_card_pinned_`), az `onIdleTimeout` kihagyja a
+> hibernálást, a `surfaceDetached` nullázza. Ami **hiányzik: a kitűzött ág mérése** — a 6. lépés
+> (a `--lifecycletest` második fázisa) az, ami ezt lezárja. A meglévő öntesztek a jelzővel együtt is
+> zöldek (`hibernated=ok`, `grid_returned=ok`, `grid_matches_core=ok`, `grid_click_open=ok`).
+
 **Miért:** a dokumentált opt-out (`02-ARCHITEKTURA.md` §4.2) — a felhasználó kérheti, hogy egy kártya
-maradjon életben. Ma a hibernálás nem kérdezi.
+maradjon életben. A hibernálás ezt a szelet előtt nem kérdezte.
 
 **Hogyan (a javasolt, legkisebb út):** a `pinned` jelző **a megnyitási kérésben** utazzon, mert a lap
 már ismeri a kártyáját — így nem kell a maghoz új API:
@@ -39,10 +45,11 @@ már ismeri a kártyáját — így nem kell a maghoz új API:
    `if (live_card_pinned_) { setStatus("kitűzött kártya — a hibernálás kimarad"); armIdleTimer(); return; }`.
 5. `main_window.cpp` `surfaceDetached`: `live_card_pinned_ = false;`.
 
-**Bizonyíték:** a `--lifecycletest` második fázisa: `eval` a rácson
+**Bizonyíték (még hiányzik):** a `--lifecycletest` második fázisa: `eval` a rácson
 `window.antikoltNative.openCard({id:'probe', url:'data:text/html,<title>p</title>p', title:'p',
 pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után **nem** záródik be; a teszt
-`pinned_honoured=ok`-ot ír, és a két fázis együtt exit 0.
+`pinned_honoured=ok`-ot ír, és a két fázis együtt exit 0. Ezt kell megírni a következő lépésben:
+`runLifecycleCheck` a `apps/desktop-shell/src/main.cpp`-ben, a meglévő első fázis után.
 
 ## 2. 24 órás munkamenet-politika + ledger
 
