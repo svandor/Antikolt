@@ -3,7 +3,41 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
-## 2026-11-17 (hatodik szelet) — valódi MHTML: a hibernálás teljes állapota
+## 2026-11-17 (hetedik szelet) — a MHTML mellé a lap állapota is
+
+A kártya lemezre mentése most már **két fájlt** ír: a teljes oldalt (MHTML) és a DOM-on túli állapotot
+(JSON). Ez a teljes hibernálási csomag.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| `kStateExpression` (JS) | görgetés (x/y), **horgony** (legfelső látható elem szelektora + eltolás), űrlapmezők (`input`/`textarea`/`select`, mezőnként max. 2000 karakter), `sessionStorage`, média-pozíció (`currentTime`, `paused`), viewport/DPR |
+| `MhtmlCapture` állapotgép | `Page.enable` → `Page.captureSnapshot` → `Runtime.evaluate {returnByValue:true}` → két fájl, egy válasz |
+| Biztonsági szabály | **jelszó- és hidden mezők soha nem kerülnek a pillanatképbe** — a snapshot nem hitelesítőadat-tár |
+| Válasz | `path`, `bytes`, `state_path`, `state_bytes`, `url`, `title`, `surface` |
+
+### Mért/ellenőrzött eredmény (magyar Wikipédia-cikk)
+
+```
+surface-1-0.mhtml       1 440 191 bájt   (From: <Saved by Blink>, beágyazott kép + CSS)
+surface-1-0.state.json      4 386 bájt
+title=Webböngésző – Wikipédia
+scrollY=0  viewport=1263x754  dpr=1,25
+anchor=html > body:nth-of-type(1) > div:nth-of-type(2)
+forms=18  session_keys=0  media=0
+```
+
+A 18 űrlapmező a Wikipédia keresőmezője és a lap egyéb vezérlői — a jelszómezők kimaradtak, ahogy kell.
+
+### Egy újabb CEF-interop buktató (érdemes megjegyezni)
+
+A **`CefValue` tulajdonolja a belső szótárát**: ha egy segédfüggvény visszaadja a `CefValue`-ból kinyert
+`CefDictionaryValue`-t, a `CefValue` megszűnésekor a szótár **kiürül** — a `HasKey()` hamis lesz, a
+`GetKeys()` üres. Ez némán „nincs adat" hibát okoz. A megoldás: a parse-olt `CefValue`-t életben kell
+tartani addig, amíg olvassuk belőle a szótárat (a segédfüggvényt ezért ki is vettem).
+
+---
 
 A pillanatkép most már nem csak a DOM: a **teljes oldal, beágyazott erőforrásokkal**, egyetlen MHTML
 fájlban — ez az, amit a kártya lemezre mentésekor tényleg meg kell őrizni, mert ez olvasható vissza

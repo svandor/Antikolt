@@ -279,31 +279,103 @@ std::string Base64Decode(const std::string& input) {
     return out;
 }
 
-/// Captures the full page as MHTML through the DevTools protocol and replies to the `snapshot`
-/// request.
+/// The page state a card must not lose, gathered in the page and returned as one JSON string.
 ///
-/// This is the real hibernation artifact: the DOM *and* its resources inlined, so a card can be read
-/// offline without the network and without the engine. The MHTML itself is produced by Chromium
-/// (`Page.captureSnapshot`), not by us.
+/// Rules encoded here (docs/HU/02 §5.1):
+///   * password fields are **never** captured — a snapshot is not a credential store;
+///   * values are truncated, so one pathological textarea cannot blow up the snapshot;
+///   * the anchor is captured because a reload of an infinite feed cannot find the position by number.
+constexpr const char* kStateExpression = R"JS(
+(function () {
+  function selectorOf(el) {
+    if (!el || !el.tagName) return '';
+    var parts = [];
+    while (el && el.nodeType === 1 && parts.length < 8) {
+      var part = el.tagName.toLowerCase();
+      var parent = el.parentElement;
+      if (parent) {
+        var index = 1;
+        for (var sib = el.previousElementSibling; sib; sib = sib.previousElementSibling) {
+          if (sib.tagName === el.tagName) index++;
+        }
+        part += ':nth-of-type(' + index + ')';
+      }
+      parts.unshift(part);
+      el = parent;
+    }
+    return parts.join(' > ');
+  }
+  function anchorOf() {
+    var nodes = document.querySelectorAll('body *');
+    for (var i = 0; i < nodes.length; i++) {
+      var r = nodes[i].getBoundingClientRect();
+      if (r.top >= -2 && r.height > 4) { return { selector: selectorOf(nodes[i]), dy: Math.round(r.top) }; }
+    }
+    return null;
+  }
+  function sessionDump() {
+    var out = {};
+    try {
+      for (var i = 0; i < sessionStorage.length; i++) {
+        var k = sessionStorage.key(i);
+        out[k] = String(sessionStorage.getItem(k)).slice(0, 2000);
+      }
+    } catch (e) { }
+    return out;
+  }
+  var forms = [];
+  var fields = document.querySelectorAll('input, textarea, select');
+  for (var i = 0; i < fields.length; i++) {
+    var el = fields[i];
+    var type = (el.getAttribute('type') || el.tagName).toLowerCase();
+    if (type === 'password' || type === 'hidden') continue;
+    var value = null;
+    try { value = String(el.value).slice(0, 2000); } catch (e) { }
+    forms.push({ selector: selectorOf(el), type: type, value: value, checked: !!el.checked });
+  }
+  var media = [];
+  var players = document.querySelectorAll('video, audio');
+  for (var i = 0; i < players.length; i++) {
+    media.push({ currentTime: players[i].currentTime || 0, paused: !!players[i].paused });
+  }
+  return JSON.stringify({
+    url: location.href,
+    title: document.title,
+    scrollX: window.scrollX || 0,
+    scrollY: window.scrollY || 0,
+    anchor: anchorOf(),
+    forms: forms.slice(0, 200),
+    session: sessionDump(),
+    media: media,
+    viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio }
+  });
+})()
+)JS";
+
+/// Captures the page as MHTML plus its runtime state through the DevTools protocol, then replies to
+/// the `snapshot` request.
+///
+/// This is the full hibernation artifact: the DOM with its resources inlined (readable offline) and a
+/// small JSON file with everything the DOM does not carry (scroll, anchor, form values, session
+/// storage, media position). The sequence is a small state machine because DevTools answers
+/// asynchronously: enable -> capture -> evaluate -> write.
 class MhtmlCapture : public CefDevToolsMessageObserver {
 public:
     MhtmlCapture(int64_t request_id,
-                 std::string path,
+                 std::string base_path,
                  int64_t surface_id,
                  std::string url,
                  std::string title)
         : request_id_(request_id),
-          path_(std::move(path)),
+          base_path_(std::move(base_path)),
           surface_id_(surface_id),
           url_(std::move(url)),
           title_(std::move(title)) {}
 
-    /// Attach the observer and ask Chromium for the snapshot. Returns false when the DevTools method
-    /// could not even be submitted, so the caller can fall back to the DOM-only capture.
+    /// Attach the observer and start the sequence. Returns false when DevTools cannot be used at all,
+    /// so the caller can fall back to the DOM-only capture.
     bool Start(CefRefPtr<CefBrowser> browser) {
         registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
-        // The Page domain must be enabled before its methods answer; asking for the snapshot first
-        // returns a result without `data`.
         CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
         const int submitted =
             browser->GetHost()->ExecuteDevToolsMethod(kEnableMessageId, "Page.enable", params);
@@ -323,89 +395,137 @@ public:
             (result != nullptr && result_size > 0)
                 ? std::string(static_cast<const char*>(result), result_size)
                 : std::string();
-        Log("[engine-host] devtools id=%d success=%d bytes=%zu: %.240s\n", message_id,
-            success ? 1 : 0, result_size, raw.c_str());
+        Log("[engine-host] devtools id=%d success=%d bytes=%zu\n", message_id, success ? 1 : 0,
+            result_size);
 
-        if (message_id == kEnableMessageId) {
-            // Whatever enabling returned, try the capture: some builds answer enable with an error
-            // and still serve the method.
-            CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-            params->SetString("format", "mhtml");
-            if (browser->GetHost()->ExecuteDevToolsMethod(kCaptureMessageId, "Page.captureSnapshot",
-                                                          params) == 0) {
-                registration_ = nullptr;
-                StdioLink::Instance().ReplyError(request_id_, "internal",
-                                                 "could not submit Page.captureSnapshot");
-            }
-            return;
+        switch (message_id) {
+            case kEnableMessageId:
+                SubmitCapture(browser);
+                break;
+            case kCaptureMessageId:
+                OnCaptured(browser, success, raw);
+                break;
+            case kEvaluateMessageId:
+                OnEvaluated(success, raw);
+                break;
+            default:
+                break;
         }
-
-        if (message_id != kCaptureMessageId) {
-            return;
-        }
-        // Detach first: the registration holds this object alive, and we are done either way.
-        registration_ = nullptr;
-
-        if (!success || raw.empty()) {
-            StdioLink::Instance().ReplyError(request_id_, "internal",
-                                             "Page.captureSnapshot failed");
-            return;
-        }
-
-        CefRefPtr<CefValue> parsed = CefParseJSON(CefString(raw), JSON_PARSER_RFC);
-        if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
-            StdioLink::Instance().ReplyError(request_id_, "internal", "unparseable DevTools result");
-            return;
-        }
-        if (CefRefPtr<CefValue> error = parsed->GetDictionary()->GetValue("error")) {
-            if (error->GetType() == VTYPE_DICTIONARY) {
-                const std::string message =
-                    error->GetDictionary()->GetString("message").ToString();
-                Log("[engine-host] Page.captureSnapshot error: %s\n", message.c_str());
-                StdioLink::Instance().ReplyError(request_id_, "not_supported", message.c_str());
-                return;
-            }
-        }
-
-        // CEF hands the *result object* to the observer, not the full {"id":..,"result":{..}}
-        // envelope; other DevTools transports wrap it, so accept both shapes.
-        CefRefPtr<CefDictionaryValue> result_object = parsed->GetDictionary();
-        if (CefRefPtr<CefValue> nested = result_object->GetValue("result")) {
-            if (nested->GetType() == VTYPE_DICTIONARY) {
-                result_object = nested->GetDictionary();
-            }
-        }
-        const std::string data = result_object->GetString("data").ToString();
-        if (data.empty()) {
-            StdioLink::Instance().ReplyError(request_id_, "internal", "DevTools result has no data");
-            return;
-        }
-
-        // MHTML starts with "From:"; anything else here is the base64 form of the same bytes.
-        const std::string mhtml = data.rfind("From:", 0) == 0 ? data : Base64Decode(data);
-        if (!WriteFileBytes(mhtml)) {
-            StdioLink::Instance().ReplyError(request_id_, "internal", "could not write the snapshot");
-            return;
-        }
-
-        CefRefPtr<CefDictionaryValue> reply = CefDictionaryValue::Create();
-        reply->SetBool("ok", true);
-        reply->SetBool("mhtml", true);
-        reply->SetString("path", path_);
-        reply->SetInt("bytes", static_cast<int>(mhtml.size()));
-        reply->SetString("url", url_);
-        reply->SetString("title", title_);
-        reply->SetInt("surface", static_cast<int>(surface_id_));
-        StdioLink::Instance().Reply(request_id_, reply);
-        Log("[engine-host] MHTML snapshot written: %s (%zu bytes)\n", path_.c_str(), mhtml.size());
     }
 
 private:
     static constexpr int kEnableMessageId = 1;
     static constexpr int kCaptureMessageId = 2;
+    static constexpr int kEvaluateMessageId = 3;
 
-    bool WriteFileBytes(const std::string& bytes) const {
-        std::ofstream out(path_, std::ios::binary | std::ios::trunc);
+    void SubmitCapture(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("format", "mhtml");
+        if (browser->GetHost()->ExecuteDevToolsMethod(kCaptureMessageId, "Page.captureSnapshot",
+                                                      params) == 0) {
+            Finish("could not submit Page.captureSnapshot");
+        }
+    }
+
+    void OnCaptured(CefRefPtr<CefBrowser> browser, bool success, const std::string& raw) {
+        if (!success || raw.empty()) {
+            Finish("Page.captureSnapshot failed");
+            return;
+        }
+        // The parsed CefValue owns its dictionaries: keep it alive while reading them, otherwise the
+        // inner dictionary comes back empty (a real bug that cost a debugging round).
+        CefRefPtr<CefValue> parsed = CefParseJSON(CefString(raw), JSON_PARSER_RFC);
+        if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+            Finish("unparseable DevTools result");
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
+        if (CefRefPtr<CefValue> error = root->GetValue("error")) {
+            if (error->GetType() == VTYPE_DICTIONARY) {
+                Finish(error->GetDictionary()->GetString("message").ToString());
+                return;
+            }
+        }
+        std::string data;
+        if (CefRefPtr<CefValue> result_value = root->GetValue("result")) {
+            if (result_value->GetType() == VTYPE_DICTIONARY) {
+                data = result_value->GetDictionary()->GetString("data").ToString();
+            }
+        }
+        if (data.empty()) {
+            data = root->GetString("data").ToString();
+        }
+        if (data.empty()) {
+            Finish("DevTools result has no data");
+            return;
+        }
+        // CEF hands over the finished MHTML; other DevTools transports base64-encode it. "From:" at
+        // the start is the reliable discriminator.
+        mhtml_ = data.rfind("From:", 0) == 0 ? data : Base64Decode(data);
+        if (!WriteFileBytes(base_path_ + ".mhtml", mhtml_)) {
+            Finish("could not write the snapshot");
+            return;
+        }
+
+        // Second half: the runtime state the MHTML cannot carry.
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", kStateExpression);
+        params->SetBool("returnByValue", true);
+        if (browser->GetHost()->ExecuteDevToolsMethod(kEvaluateMessageId, "Runtime.evaluate",
+                                                      params) == 0) {
+            FinishOk();  // MHTML is on disk; a missing state file is degraded, not fatal.
+        }
+    }
+
+    void OnEvaluated(bool success, const std::string& raw) {
+        Log("[engine-host] state evaluate success=%d bytes=%zu\n", success ? 1 : 0, raw.size());
+        if (success) {
+            CefRefPtr<CefValue> parsed = CefParseJSON(CefString(raw), JSON_PARSER_RFC);
+            if (parsed && parsed->GetType() == VTYPE_DICTIONARY) {
+                CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
+                CefRefPtr<CefDictionaryValue> value_holder = root;
+                if (CefRefPtr<CefValue> result_value = root->GetValue("result")) {
+                    if (result_value->GetType() == VTYPE_DICTIONARY) {
+                        value_holder = result_value->GetDictionary();
+                    }
+                }
+                const std::string json = value_holder->GetString("value").ToString();
+                const std::string state_path = base_path_ + ".state.json";
+                if (!json.empty() && WriteFileBytes(state_path, json)) {
+                    state_bytes_ = json.size();
+                    Log("[engine-host] state: %zu bytes written\n", json.size());
+                } else {
+                    Log("[engine-host] state: no usable value\n");
+                }
+            }
+        }
+        FinishOk();
+    }
+
+    void FinishOk() {
+        registration_ = nullptr;
+        CefRefPtr<CefDictionaryValue> reply = CefDictionaryValue::Create();
+        reply->SetBool("ok", true);
+        reply->SetBool("mhtml", !mhtml_.empty());
+        reply->SetString("path", base_path_ + (mhtml_.empty() ? ".html" : ".mhtml"));
+        reply->SetString("state_path", base_path_ + ".state.json");
+        reply->SetInt("bytes", static_cast<int>(mhtml_.size()));
+        reply->SetInt("state_bytes", static_cast<int>(state_bytes_));
+        reply->SetString("url", url_);
+        reply->SetString("title", title_);
+        reply->SetInt("surface", static_cast<int>(surface_id_));
+        StdioLink::Instance().Reply(request_id_, reply);
+        Log("[engine-host] snapshot written: %zu bytes MHTML, %zu bytes state\n", mhtml_.size(),
+            state_bytes_);
+    }
+
+    void Finish(const std::string& error) {
+        registration_ = nullptr;
+        StdioLink::Instance().ReplyError(request_id_, "internal", error.c_str());
+    }
+
+    static bool WriteFileBytes(const std::string& path, const std::string& bytes) {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
         if (!out) {
             return false;
         }
@@ -414,10 +534,12 @@ private:
     }
 
     int64_t request_id_;
-    std::string path_;
+    std::string base_path_;
     int64_t surface_id_;
     std::string url_;
     std::string title_;
+    std::string mhtml_;
+    size_t state_bytes_ = 0;
     CefRefPtr<CefRegistration> registration_;
 
     IMPLEMENT_REFCOUNTING(MhtmlCapture);
@@ -735,9 +857,9 @@ int RunEngineHostServer(const HostConfig& config) {
                 const std::string base = config.user_data_path + "\\snapshots\\surface-" +
                                          std::to_string(state.surface_id) + "-" +
                                          std::to_string(s_snapshot_counter++);
-                // Preferred: full MHTML (DOM plus inlined resources) through the DevTools protocol.
+                // Preferred: full MHTML plus the runtime state, through the DevTools protocol.
                 CefRefPtr<MhtmlCapture> capture(new MhtmlCapture(
-                    command.id, base + ".mhtml", state.surface_id, state.final_url, state.title));
+                    command.id, base, state.surface_id, state.final_url, state.title));
                 if (!capture->Start(state.browser)) {
                     // Fallback: DOM only. Less useful offline, but never a missing snapshot.
                     Log("[engine-host] DevTools unavailable, falling back to a DOM-only snapshot\n");

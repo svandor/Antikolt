@@ -94,6 +94,9 @@ folyamatfa memóriáját, fázisonként.
 | Wikipédia-cikk | 182,6 MB | 183,7 MB | 115,9 MB | **66,7 MB** | 345 KB (DOM) |
 | Wikipédia-cikk (MHTML) | 179,0 MB | 184,6 MB | 117,8 MB | **61,2 MB** | **1,44 MB (MHTML)** |
 
+A pillanatkép mellé **állapotfájl** is készül (`surface-N-M.state.json`, ~4,4 KB): görgetés, horgony,
+18 űrlapmező, `sessionStorage`, média-pozíció, viewport/DPR — jelszómezők nélkül.
+
 A MHTML-változat a teljes oldalt menti (DOM **és** beágyazott kép/CSS), ezért nagyobb a fájl és ~5,6 MB-tal
 megemeli a csúcsot a mentés pillanatában (az MHTML a memóriában áll össze) — cserébe a kártya **offline is
 megjeleníthető**.
