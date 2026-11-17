@@ -2,9 +2,9 @@
 //
 // The shell's main window.
 //
-// It owns the theme palette (docs/HU/08-DIZAJN.md) and the engine link: the status bar reports what
-// the engine host says, and the toolbar drives it. The card surface still lives in the engine's own
-// native window until cross-process embedding lands, but the protocol between the two halves is real.
+// It owns the theme palette (docs/HU/08-DIZAJN.md), the one live card and the engine link. The card
+// is a native widget whose window handle the engine host embeds Chromium into (ADR-004): the shell
+// keeps one UI process and one engine process, and the pixels never travel through the protocol.
 
 #pragma once
 
@@ -15,6 +15,7 @@
 
 class QLabel;
 class EngineClient;
+class LiveCard;
 
 /// One theme's colour tokens, mirroring docs/HU/08-DIZAJN.md §1.
 struct ThemePalette {
@@ -55,17 +56,24 @@ public:
     /// The home page to load in the engine (the editable card grid).
     static QString homePageUrl();
 
-private slots:
+    /// The live card, exposed so the embedding self test can drive it.
+    LiveCard* liveCard() const { return card_; }
+
+    /// The engine link, exposed for the same reason.
+    EngineClient* engine() const { return engine_; }
+
+public slots:
     void startEngine();
     void loadHome();
     void freezeCard();
 
 private:
     void buildToolBar();
-    void buildPlaceholder();
+    void buildCardArea();
+    void ensureSurface();
     void setStatus(const QString& text);
 
-    QLabel* placeholder_ = nullptr;
+    LiveCard* card_ = nullptr;
     QLabel* status_ = nullptr;
     QString currentTheme_;
     EngineClient* engine_ = nullptr;

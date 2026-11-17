@@ -1,14 +1,17 @@
 # SPDX-License-Identifier: MPL-2.0
 #
-# The Qt shell: window, chrome (toolbar) and the home page host.
+# The Qt shell: window, chrome (toolbar), the live card and the engine link.
 #
-# For now it is a window with a placeholder. The home page host (a CEF surface) arrives with the
-# engine host; the point of this target today is that the toolchain is proven and CI can build it.
+# The card is a native widget: its window handle goes to the engine host, which embeds Chromium into
+# it (ADR-004). That keeps the UI process and the engine process separate while still showing the
+# page inside our own window.
 
 qt_add_executable(antikolt-shell
   src/main.cpp
   src/main_window.cpp
   src/main_window.h
+  src/live_card.cpp
+  src/live_card.h
   src/engine_client.cpp
   src/engine_client.h
 )

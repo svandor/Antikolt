@@ -5,8 +5,8 @@
 #include <QActionGroup>
 #include <QCoreApplication>
 #include <QDir>
-#include <QJsonArray>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QLabel>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include "engine_client.h"
+#include "live_card.h"
 
 namespace {
 
@@ -37,7 +38,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setMinimumSize(760, 480);
 
     buildToolBar();
-    buildPlaceholder();
+    buildCardArea();
 
     status_ = new QLabel(this);
     statusBar()->addWidget(status_);
@@ -51,11 +52,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                       .arg(info.value(QStringLiteral("name")).toString(),
                            info.value(QStringLiteral("version")).toString())
                       .arg(info.value(QStringLiteral("capabilities")).toArray().size()));
-        loadHome();
-    });
-    connect(engine_, &EngineClient::surfaceCreated, this, [this](qint64 surface) {
-        surface_ = surface;
-        setStatus(QStringLiteral("kártya felület: %1").arg(surface));
+        ensureSurface();
     });
     connect(engine_, &EngineClient::loadFinished, this,
             [this](qint64 surface, const QString& url, int httpStatus) {
@@ -64,9 +61,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                               .arg(httpStatus)
                               .arg(url));
             });
-    connect(engine_, &EngineClient::surfaceClosed, this, [this](qint64) {
+    connect(engine_, &EngineClient::loadFailed, this,
+            [this](qint64 surface, const QString& url, const QString& reason) {
+                setStatus(QStringLiteral("betöltési hiba (#%1): %2 — %3").arg(surface).arg(url, reason));
+            });
+
+    // The card owns the surface lifecycle locally; the window mirrors it for the status bar.
+    connect(card_, &LiveCard::surfaceAttached, this, [this](qint64 surface) {
+        surface_ = surface;
+        setStatus(QStringLiteral("kártya felület: %1 (%2×%3 fizikai pixel)")
+                      .arg(surface)
+                      .arg(card_->physicalSize().width())
+                      .arg(card_->physicalSize().height()));
+        engine_->navigate(surface, homePageUrl());
+    });
+    connect(card_, &LiveCard::surfaceDetached, this, [this](qint64 surface) {
         surface_ = 0;
-        setStatus(QStringLiteral("kártya lemezre mentve · memória felszabadítva"));
+        setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
     });
 
     setStatus(QStringLiteral("motor: nincs elindítva · kártyák: 0"));
@@ -101,13 +112,6 @@ ThemePalette MainWindow::paletteFor(const QString& theme) {
 QString MainWindow::styleSheetFor(const ThemePalette& palette) {
     return QStringLiteral(R"(
         QMainWindow, QWidget#antikoltRoot { background: %1; color: %4; }
-        QLabel#antikoltPlaceholder {
-            background: %2;
-            color: %4;
-            border: 1px solid %6;
-            border-radius: 14px;
-            padding: 32px;
-        }
         QLabel#antikoltHint { color: %5; }
         QToolBar {
             background: %1;
@@ -144,8 +148,15 @@ bool MainWindow::applyTheme(const QString& theme) {
     windowPalette.setColor(QPalette::WindowText, QColor(colors.text));
     windowPalette.setColor(QPalette::Base, QColor(colors.surface));
     windowPalette.setColor(QPalette::Text, QColor(colors.text));
+    windowPalette.setColor(QPalette::Mid, QColor(colors.textMuted));
     windowPalette.setColor(QPalette::Highlight, QColor(colors.accent));
     setPalette(windowPalette);
+
+    // The card paints itself (it is a native window), so it needs the palette too.
+    if (card_ != nullptr) {
+        card_->setPalette(windowPalette);
+        card_->update();
+    }
 
     currentTheme_ = theme;
     return true;
@@ -208,41 +219,43 @@ void MainWindow::startEngine() {
     engine_->handshake();
 }
 
-void MainWindow::loadHome() {
+void MainWindow::ensureSurface() {
     if (!engine_->isRunning()) {
         return;
     }
-    if (surface_ != 0) {
-        engine_->navigate(surface_, homePageUrl());
+    if (card_->hasSurface()) {
+        engine_->navigate(card_->surface(), homePageUrl());
         return;
     }
-    const int scalePercent = static_cast<int>(devicePixelRatioF() * 100.0);
-    engine_->createSurface(
-        QStringLiteral("persist:home"), 1280, 800, scalePercent,
-        [this](const QJsonObject& result, const QString& error) {
-            if (!error.isEmpty()) {
-                setStatus(QStringLiteral("felület hiba: %1").arg(error));
-                return;
-            }
-            surface_ = static_cast<qint64>(result.value(QStringLiteral("surface")).toDouble());
-            engine_->navigate(surface_, homePageUrl());
-        });
+    if (!card_->attach(engine_, QStringLiteral("persist:home"))) {
+        setStatus(QStringLiteral("a kártya nem tudott felületet kérni a motortól"));
+    }
+}
+
+void MainWindow::loadHome() {
+    if (!engine_->isRunning()) {
+        setStatus(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot"));
+        return;
+    }
+    ensureSurface();
 }
 
 void MainWindow::freezeCard() {
-    if (!engine_->isRunning() || surface_ == 0) {
+    if (!engine_->isRunning() || !card_->hasSurface()) {
         setStatus(QStringLiteral("nincs mit fagyasztani"));
         return;
     }
-    const qint64 surface = surface_;
+    const qint64 surface = card_->surface();
     engine_->snapshot(surface, [this, surface](const QJsonObject& result, const QString& error) {
         if (!error.isEmpty()) {
             setStatus(QStringLiteral("fagyasztás hiba: %1").arg(error));
             return;
         }
-        setStatus(QStringLiteral("pillanatkép: %1 bájt + állapot %2 bájt")
+        setStatus(QStringLiteral("pillanatkép: %1 bájt · állapot %2 bájt · motor leállítása")
                       .arg(result.value(QStringLiteral("bytes")).toInt())
                       .arg(result.value(QStringLiteral("state_bytes")).toInt()));
+        // Order matters: the state is on disk before the surface goes away.
+        card_->detach();
         engine_->destroySurface(surface);
     });
 }
@@ -272,30 +285,25 @@ void MainWindow::buildToolBar() {
     }
 }
 
-void MainWindow::buildPlaceholder() {
+void MainWindow::buildCardArea() {
     auto* root = new QWidget(this);
     root->setObjectName(QStringLiteral("antikoltRoot"));
 
     auto* layout = new QVBoxLayout(root);
-    layout->setContentsMargins(24, 24, 24, 24);
-    layout->setSpacing(16);
+    layout->setContentsMargins(16, 16, 16, 8);
+    layout->setSpacing(8);
 
-    placeholder_ = new QLabel(root);
-    placeholder_->setObjectName(QStringLiteral("antikoltPlaceholder"));
-    placeholder_->setAlignment(Qt::AlignCenter);
-    placeholder_->setWordWrap(true);
-    placeholder_->setText(QStringLiteral(
-        "A kezdőlap itt jelenik meg.\n\n"
-        "A kártyarácsot a motorház tölti be; a felület és a motor a saját protokolljukon beszélnek.\n"
-        "Nyomd meg a „Motor indítása” gombot: a motorház megnyílik, betölti a kezdőlapot; a "
-        "„Fagyasztás” lemezre menti a kártyát és felszabadítja a memóriát."));
+    // The live card: a native hole in the Qt layout that the engine paints into.
+    card_ = new LiveCard(root);
+    card_->setObjectName(QStringLiteral("antikoltCard"));
 
     auto* hint = new QLabel(root);
     hint->setObjectName(QStringLiteral("antikoltHint"));
     hint->setText(QStringLiteral(
-        "Következő lépés: a motor ablaka a saját ablakunkba ágyazva (cross-process embedding)."));
+        "A motor külön folyamatban fut; a kártya natív ablaka ebbe az ablakba van ágyazva, így a "
+        "kép és a bemenet az operációs rendszeren megy át, nem a protokollon."));
 
-    layout->addWidget(placeholder_, 1);
+    layout->addWidget(card_, 1);
     layout->addWidget(hint, 0);
 
     setCentralWidget(root);

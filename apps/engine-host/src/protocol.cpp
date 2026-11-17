@@ -101,6 +101,15 @@ bool ParseCommand(const std::string& payload, Command* out) {
     CefRefPtr<CefDictionaryValue> config = GetDictionary(message, "config");
     if (config) {
         out->partition = GetString(config, "partition");
+        // A 64-bit native handle travels as a JSON number; JSON numbers are doubles, so the value is
+        // exact only up to 2^53. Windows handles fit comfortably below that, and a handle above it
+        // is rejected rather than silently truncated into someone else's window.
+        const double parent_window = GetNumber(config, "parent_window");
+        if (parent_window < 0 || parent_window > 9007199254740992.0) {
+            std::fprintf(stderr, "[engine-host] parent_window out of range\n");
+            return false;
+        }
+        out->parent_window = static_cast<uint64_t>(parent_window);
         CefRefPtr<CefDictionaryValue> viewport = GetDictionary(config, "viewport");
         if (viewport) {
             const double width = GetNumber(viewport, "width");
@@ -111,6 +120,23 @@ bool ParseCommand(const std::string& payload, Command* out) {
             if (height > 0) {
                 out->height = static_cast<int>(height);
             }
+        }
+    }
+
+    // `set_bounds` replaces the placement of an embedded surface. The rectangle is physical pixels and
+    // may start at a negative origin when the card is scrolled partly out of view.
+    CefRefPtr<CefDictionaryValue> bounds = GetDictionary(message, "bounds");
+    if (bounds) {
+        out->bounds_x = static_cast<int>(GetNumber(bounds, "x"));
+        out->bounds_y = static_cast<int>(GetNumber(bounds, "y"));
+        out->bounds_width = static_cast<int>(GetNumber(bounds, "width"));
+        out->bounds_height = static_cast<int>(GetNumber(bounds, "height"));
+    }
+
+    // Only `focus` sends this; `focused` defaults to true so an omitted key means "give it focus".
+    if (CefRefPtr<CefValue> focused = message->GetValue("focused")) {
+        if (focused->GetType() == VTYPE_BOOL) {
+            out->focused = focused->GetBool();
         }
     }
     return true;

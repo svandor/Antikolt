@@ -42,6 +42,14 @@ struct HostConfig {
     bool hidden = false;
     /// Stop as soon as the main frame has loaded (selftest).
     bool quit_on_first_load = false;
+    /// Native window to embed the surface into; `nullptr` means the host creates a top-level window.
+    ///
+    /// This is how the one live card lives inside the Qt shell's window while the engine keeps its
+    /// own process (ADR-004). The handle belongs to the shell process, so the host never destroys it.
+    void* parent_window = nullptr;
+    /// Placement inside `parent_window`, in physical pixels.
+    int origin_x = 0;
+    int origin_y = 0;
 };
 
 /// State shared by the window procedure, the browser callbacks and the pump loop.
@@ -63,6 +71,18 @@ struct HostState {
     CefRefPtr<CefBrowser> browser;
     /// Handle of the native window hosting the surface.
     void* window = nullptr;
+    /// True when `window` was created by this process. An embedded surface lives in a window the
+    /// shell owns, and destroying that window would take the whole UI down with it.
+    bool window_owned = false;
+    /// Placement the shell asked for, in device independent pixels, and whether it still has to be
+    /// applied. The first `set_bounds` usually arrives *before* Chromium has created its child
+    /// window, so the rectangle is remembered and applied as soon as the child exists; dropping it
+    /// left the surface parked at a negative coordinate, invisible.
+    int bounds_x = 0;
+    int bounds_y = 0;
+    int bounds_width = 0;
+    int bounds_height = 0;
+    bool bounds_pending = false;
     int64_t surface_id = 0;
 };
 

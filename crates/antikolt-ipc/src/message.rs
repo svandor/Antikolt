@@ -95,7 +95,9 @@ pub enum Capability {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Viewport {
+    /// Width in device independent pixels (the page's CSS pixels), never physical pixels.
     pub width: u32,
+    /// Height in device independent pixels.
     pub height: u32,
     /// Device pixel ratio in hundredths (`125` = 1.25), to stay exact across platforms.
     pub device_scale_percent: u16,
@@ -115,6 +117,34 @@ impl Viewport {
     }
 }
 
+/// A rectangle in physical pixels, used to place an embedded surface inside its parent window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Rect {
+    pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// An empty rectangle: nothing to show, so the engine parks the surface at zero size.
+    pub const EMPTY: Self = Self {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+    };
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceConfig {
     /// Engine partition key, e.g. `persist:c_01h...` for a container or `persist:home`.
@@ -126,6 +156,14 @@ pub struct SurfaceConfig {
     pub proxy: Option<String>,
     /// Whether this surface is the user-facing card (only one may exist at a time).
     pub is_primary: bool,
+    /// Native window handle the surface is embedded into, as an integer; `0` means "the engine host
+    /// owns a top-level window".
+    ///
+    /// This is the seam that lets the one live card sit inside the shell's window while the engine
+    /// still runs in its own process (ADR-004). It is platform-specific on purpose: validating it
+    /// belongs to the shell, and the engine only ever calls `SetAsChild` with it.
+    #[serde(default)]
+    pub parent_window: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -307,6 +345,11 @@ impl Envelope {
 
 /// The closed set of control messages. Adding a variant is a protocol change: bump
 /// [`crate::PROTOCOL_VERSION`] and describe the migration in `docs/HU/02-ARCHITEKTURA.md`.
+///
+/// Compatibility rule (proto/README.md): a *purely additive* field that carries a `serde(default)`
+/// value — an omitted `parent_window` reads as "not embedded" — is a compatible change and does not
+/// bump the version, because both peers ignore keys they do not know. Removing or renaming a field,
+/// or changing what an existing key means, does bump it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Message {
@@ -333,6 +376,21 @@ pub enum Message {
         url: String,
         #[serde(default)]
         opts: NavigateOpts,
+    },
+    /// Place the embedded surface inside its parent window, in physical pixels.
+    ///
+    /// Only meaningful for surfaces created with a non-zero `parent_window`; a top-level surface
+    /// answers `not_supported`.
+    SetBounds {
+        surface: SurfaceId,
+        bounds: Rect,
+    },
+    /// Give the surface keyboard focus, or take it away. The shell forwards window activation,
+    /// because a cross-process child window does not inherit focus on its own.
+    Focus {
+        surface: SurfaceId,
+        #[serde(default = "default_true")]
+        focused: bool,
     },
 
     // ---- page interaction -----------------------------------------------------------------
@@ -398,6 +456,10 @@ pub enum Message {
 
 fn default_quality() -> u8 {
     80
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Message {

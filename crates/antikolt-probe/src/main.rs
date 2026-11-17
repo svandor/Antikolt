@@ -112,6 +112,8 @@ fn open_surface(exe: &Path, url: &str) -> Result<(EngineLink, SurfaceId), antiko
         viewport: Viewport::new(1280, 800, 100),
         proxy: None,
         is_primary: true,
+        // The probe never embeds: the engine host owns the surface's window in its own process.
+        parent_window: 0,
     };
     let created = link.request_ok(Message::CreateSurface { config }, Duration::from_secs(20))?;
     let surface_id = created

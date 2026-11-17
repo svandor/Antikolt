@@ -42,6 +42,16 @@ struct Command {
     int width = 1280;
     int height = 800;
     int protocol = 0;
+    /// Native window handle the shell wants the surface embedded into (`create_surface`); 0 means
+    /// the host creates its own top-level window.
+    uint64_t parent_window = 0;
+    /// Placement inside the parent window, in physical pixels (`create_surface` and `set_bounds`).
+    int bounds_x = 0;
+    int bounds_y = 0;
+    int bounds_width = 0;
+    int bounds_height = 0;
+    /// Whether the surface should hold keyboard focus (`focus`).
+    bool focused = true;
 };
 
 /// Upper bound for one frame. Mirrors antikolt_ipc::MAX_FRAME_BYTES.

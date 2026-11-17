@@ -100,24 +100,63 @@ bool InitializeCef(const HostConfig& config, CefRefPtr<EngineApp> app) {
     settings.multi_threaded_message_loop = false;
     settings.windowless_rendering_enabled = false;
 
-    return CefInitialize(main_args, settings, app.get(), nullptr);
+    const bool initialised = CefInitialize(main_args, settings, app.get(), nullptr);
+#ifdef _WIN32
+    if (initialised) {
+        // Embedding lives or dies on units: log what this process believes about DPI so a size
+        // mismatch in the shell is diagnosable from a log line instead of by guesswork.
+        const int awareness = static_cast<int>(
+            GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()));
+        Log("[engine-host] dpi_awareness=%d system_dpi=%u desktop_dpi=%u\n", awareness,
+            GetDpiForSystem(), GetDpiForWindow(GetDesktopWindow()));
+    }
+#endif
+    return initialised;
 }
 
 /// Create one native window with one browser surface. Returns false on failure.
+///
+/// With `config.parent_window` set the surface is embedded into a window owned by another process
+/// (the shell) instead of getting a top-level window of its own: `SetAsChild` makes Chromium create
+/// its `Chrome_WidgetWin_0` as a child of that handle, in *that* process's window tree. Input and
+/// painting then flow through the OS, so pixels never cross our protocol.
 bool CreateSurface(const HostConfig& config, HostState* state, const std::string& url) {
-    HWND window = CreateHostWindow(config);
-    if (window == nullptr) {
-        return false;
+    HWND window = nullptr;
+    if (config.parent_window != nullptr) {
+        window = static_cast<HWND>(config.parent_window);
+        if (IsWindow(window) == FALSE) {
+            Log("[engine-host] parent window handle is not a window\n");
+            return false;
+        }
+        state->window_owned = false;
+    } else {
+        window = CreateHostWindow(config);
+        if (window == nullptr) {
+            return false;
+        }
+        state->window_owned = true;
     }
     state->window = window;
     g_state = state;
 
-    RECT client = {};
-    GetClientRect(window, &client);
+    int origin_x = 0;
+    int origin_y = 0;
+    int width = 0;
+    int height = 0;
+    if (state->window_owned) {
+        RECT client = {};
+        GetClientRect(window, &client);
+        width = client.right - client.left;
+        height = client.bottom - client.top;
+    } else {
+        origin_x = config.origin_x;
+        origin_y = config.origin_y;
+        width = config.width;
+        height = config.height;
+    }
 
     CefWindowInfo window_info;
-    window_info.SetAsChild(window,
-                           CefRect(0, 0, client.right - client.left, client.bottom - client.top));
+    window_info.SetAsChild(window, CefRect(origin_x, origin_y, width, height));
 
     CefRefPtr<EngineClient> client_handler(new EngineClient(state, config.quit_on_first_load));
     CefBrowserSettings browser_settings;
@@ -127,12 +166,92 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
         return false;
     }
 
-    if (!config.hidden) {
+    if (state->window_owned && !config.hidden) {
         ShowWindow(window, SW_SHOW);
         UpdateWindow(window);
     }
     return true;
 }
+
+#ifdef _WIN32
+/// The Chromium window that `SetAsChild` created inside our parent handle.
+///
+/// The class name is `Chrome_WidgetWin_1` (the `_0` variant is for top-level windows), and it must be
+/// searched for by prefix: assuming `_0` made the lookup fail silently and left the embedded surface
+/// parked at a negative coordinate, invisible, while every size still looked right.
+HWND FindSurfaceChild(HWND parent) {
+    struct Search {
+        HWND found = nullptr;
+    } search;
+    EnumChildWindows(
+        parent,
+        [](HWND child, LPARAM param) -> BOOL {
+            wchar_t class_name[64] = {};
+            if (GetClassNameW(child, class_name, 64) > 0 &&
+                wcsncmp(class_name, L"Chrome_WidgetWin_", 17) == 0) {
+                reinterpret_cast<Search*>(param)->found = child;
+                return FALSE;  // the first one is the browser's own window
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
+
+/// Move and resize an embedded surface.
+///
+/// Units matter here and they are not the obvious ones: the protocol carries **device independent
+/// pixels** (what the page calls CSS pixels), because that is what CEF and Chromium lay out in — a
+/// rect of 900×640 on a 175 % monitor becomes a 1575×1120 window. Passing physical pixels instead
+/// makes Chromium scale them a second time: the page then sees a 1575 px viewport and a window taller
+/// than the screen, which the window manager clamps. That was a real bug, measured, not a guess.
+///
+/// `SetWindowPos` with `SWP_NOZORDER` keeps the surface below any Qt popup the shell draws over it.
+bool ResizeEmbeddedSurface(HostState* state, int x, int y, int width, int height) {
+    if (state->window == nullptr) {
+        return false;
+    }
+    HWND parent = static_cast<HWND>(state->window);
+    HWND child = FindSurfaceChild(parent);
+    if (child == nullptr) {
+        Log("[engine-host] set_bounds: no Chromium child under the parent window yet\n");
+        return false;
+    }
+    const UINT dpi = GetDpiForWindow(parent);
+    const double scale = (dpi > 0 ? static_cast<double>(dpi) : 96.0) / 96.0;
+    const int physical_x = static_cast<int>(std::lround(x * scale));
+    const int physical_y = static_cast<int>(std::lround(y * scale));
+    const int physical_width = static_cast<int>(std::lround(width * scale));
+    const int physical_height = static_cast<int>(std::lround(height * scale));
+    if (SetWindowPos(child, nullptr, physical_x, physical_y, physical_width, physical_height,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER) == FALSE) {
+        Log("[engine-host] set_bounds: SetWindowPos failed error=%lu\n", GetLastError());
+        return false;
+    }
+    if (state->browser) {
+        state->browser->GetHost()->NotifyScreenInfoChanged();
+        state->browser->GetHost()->WasResized();
+    }
+    return true;
+}
+
+/// Apply the pending rectangle once the surface's child window exists. The pump loop calls this, so a
+/// `set_bounds` that arrives before Chromium created its window is remembered instead of lost.
+bool ApplyPendingEmbeddedBounds(HostState* state) {
+    if (!state->bounds_pending) {
+        return true;
+    }
+    if (state->window_owned || state->window == nullptr) {
+        return false;
+    }
+    if (!ResizeEmbeddedSurface(state, state->bounds_x, state->bounds_y, state->bounds_width,
+                               state->bounds_height)) {
+        return false;
+    }
+    state->bounds_pending = false;
+    return true;
+}
+#endif
 
 /// Escape hatch: the surface may have been created for a stopped browser.
 void DrainAndCloseBrowser(HostState* state) {
@@ -158,11 +277,17 @@ void PumpWindowsMessages() {
     }
 }
 
-/// Destroy the native window that hosted a surface.
+/// Destroy the native window that hosted a surface — but only if this process created it.
+///
+/// An embedded surface lives in the shell's window; destroying that from here would kill the UI. We
+/// only forget the handle and let the shell's own widget teardown do the real work.
 void DestroyHostWindow(HostState* state) {
     if (state->window != nullptr) {
-        DestroyWindow(static_cast<HWND>(state->window));
+        if (state->window_owned) {
+            DestroyWindow(static_cast<HWND>(state->window));
+        }
         state->window = nullptr;
+        state->window_owned = false;
     }
 }
 #else
@@ -873,6 +998,15 @@ int RunEngineHostServer(const HostConfig& config) {
     StdioLink& link = StdioLink::Instance();
     link.Start();
     Log("[engine-host] protocol server ready on stdio\n");
+#ifdef _WIN32
+    {
+        // Embedding lives or dies on units. Log what this process believes about DPI so a size
+        // mismatch in the shell is diagnosable from the log instead of by guesswork.
+        DPI_AWARENESS_CONTEXT context = GetThreadDpiAwarenessContext();
+        const int awareness = static_cast<int>(GetAwarenessFromDpiAwarenessContext(context));
+        Log("[engine-host] dpi_awareness=%d system_dpi=%u\n", awareness, GetDpiForSystem());
+    }
+#endif
 
     HostState state;
     bool shutdown_requested = false;
@@ -880,6 +1014,9 @@ int RunEngineHostServer(const HostConfig& config) {
     while (!shutdown_requested && link.active()) {
         PumpWindowsMessages();
         CefDoMessageLoopWork();
+#ifdef _WIN32
+        ApplyPendingEmbeddedBounds(&state);
+#endif
 
         Command command;
         while (link.TryPop(&command)) {
@@ -907,7 +1044,21 @@ int RunEngineHostServer(const HostConfig& config) {
                     surface_config.height = command.height;
                 }
                 surface_config.hidden = config.hidden;
+#ifdef _WIN32
+                // Embedding is a window-handle feature: without a parent the host owns the window.
+                surface_config.parent_window =
+                    command.parent_window != 0
+                        ? reinterpret_cast<void*>(static_cast<uintptr_t>(command.parent_window))
+                        : nullptr;
+#endif
                 state.surface_id = g_next_surface_id++;
+                // A fresh surface starts at the origin of its parent, filling the rectangle the shell
+                // asked for; Chromium creates its window from these units (device independent px).
+                state.bounds_x = 0;
+                state.bounds_y = 0;
+                state.bounds_width = surface_config.width;
+                state.bounds_height = surface_config.height;
+                state.bounds_pending = surface_config.parent_window != nullptr;
                 if (!CreateSurface(surface_config, &state, command.url.empty() ? "about:blank"
                                                                               : command.url)) {
                     link.ReplyError(command.id, "internal", "could not create the surface");
@@ -947,6 +1098,37 @@ int RunEngineHostServer(const HostConfig& config) {
                     state.browser->GetMainFrame()->GetSource(visitor);
                 }
                 // The reply is sent by the capture object when the payload arrives.
+            } else if (command.op == "set_bounds") {
+                if (!state.browser) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+#ifdef _WIN32
+                if (state.window_owned) {
+                    link.ReplyError(command.id, "not_supported",
+                                    "this surface is not embedded in a parent window");
+                    continue;
+                }
+                state.bounds_x = command.bounds_x;
+                state.bounds_y = command.bounds_y;
+                state.bounds_width = command.bounds_width;
+                state.bounds_height = command.bounds_height;
+                state.bounds_pending = true;
+                // Applied now if Chromium's child window already exists, otherwise by the pump loop.
+                const bool applied = ApplyPendingEmbeddedBounds(&state);
+                CefRefPtr<CefDictionaryValue> placed = CefDictionaryValue::Create();
+                placed->SetBool("applied", applied);
+                link.Reply(command.id, placed);
+#else
+                link.ReplyError(command.id, "not_supported", "embedding needs a window system");
+#endif
+            } else if (command.op == "focus") {
+                if (!state.browser) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                state.browser->GetHost()->SetFocus(command.focused);
+                link.Reply(command.id);
             } else if (command.op == "destroy_surface") {
                 DrainAndCloseBrowser(&state);
                 DestroyHostWindow(&state);
@@ -972,7 +1154,7 @@ int RunEngineHostServer(const HostConfig& config) {
             } else {
                 link.ReplyError(command.id, "not_supported",
                                 "this milestone implements hello, ping, create_surface, navigate, "
-                                "eval, destroy_surface and shutdown");
+                                "eval, set_bounds, focus, destroy_surface and shutdown");
             }
         }
 

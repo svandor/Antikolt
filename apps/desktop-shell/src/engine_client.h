@@ -45,9 +45,21 @@ public:
     /// Send `hello` and wait for `welcome` asynchronously.
     void handshake();
 
+    /// Create a browser surface. `width`/`height` are **physical** pixels.
+    ///
+    /// `parentWindow` is a native window handle (a Qt `winId()`): when non-zero the surface is
+    /// embedded into that window instead of getting a window of its own, which is how the live card
+    /// appears inside the shell while the engine keeps its own process (ADR-004).
     void createSurface(const QString& partition, int width, int height, int deviceScalePercent,
-                       ReplyHandler handler);
+                       quintptr parentWindow, ReplyHandler handler);
     void navigate(qint64 surface, const QString& url, ReplyHandler handler = {});
+    /// Place an embedded surface; all values are physical pixels relative to the parent's client area.
+    void setBounds(qint64 surface, int x, int y, int width, int height,
+                   ReplyHandler handler = {});
+    /// Give the surface keyboard focus (or take it away).
+    void focus(qint64 surface, bool focused, ReplyHandler handler = {});
+    /// Evaluate JavaScript in the page's main world. The reply carries the value as a string.
+    void evaluate(qint64 surface, const QString& script, ReplyHandler handler);
     void snapshot(qint64 surface, ReplyHandler handler);
     void destroySurface(qint64 surface, ReplyHandler handler = {});
     void shutdown();

@@ -6,7 +6,8 @@
 use antikolt_ipc::{
     decode_frame, encode_frame, Capability, ColorScheme, EngineEvent, EngineInfo, Envelope,
     ErrorCode, FrameError, ImageFormat, Message, NavigateOpts, PermissionKind, PopupDisposition,
-    ReplyOutcome, SurfaceConfig, SurfaceId, Viewport, World, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    Rect, ReplyOutcome, SurfaceConfig, SurfaceId, Viewport, World, MAX_FRAME_BYTES,
+    PROTOCOL_VERSION,
 };
 
 fn one_of_each() -> Vec<Message> {
@@ -32,7 +33,26 @@ fn one_of_each() -> Vec<Message> {
                 viewport: Viewport::new(1440, 900, 125),
                 proxy: None,
                 is_primary: true,
+                parent_window: 0,
             },
+        },
+        Message::CreateSurface {
+            config: SurfaceConfig {
+                partition: "persist:home".into(),
+                viewport: Viewport::new(1200, 760, 150),
+                proxy: Some("socks5://127.0.0.1:9050".into()),
+                is_primary: true,
+                // 0x00000000001204C8: a child window owned by the shell process.
+                parent_window: 0x0012_04C8,
+            },
+        },
+        Message::SetBounds {
+            surface,
+            bounds: Rect::new(12, -4, 800, 600),
+        },
+        Message::Focus {
+            surface,
+            focused: true,
         },
         Message::DestroySurface { surface },
         Message::Navigate {
@@ -312,6 +332,65 @@ fn error_code_display_matches_the_wire_format() {
             "Display and serde disagree for {code:?}"
         );
     }
+}
+
+#[test]
+fn parent_window_is_additive_and_optional() {
+    // A create_surface frame from before embedding existed must still parse: the field is additive,
+    // so the protocol version does not move and an older shell keeps working.
+    let legacy = serde_json::json!({
+        "version": 1, "id": 1,
+        "message": {
+            "op": "create_surface",
+            "config": {
+                "partition": "persist:home",
+                "viewport": {"width": 800, "height": 600, "device_scale_percent": 100},
+                "proxy": null,
+                "is_primary": true
+            }
+        }
+    });
+    let envelope: Envelope = serde_json::from_value(legacy).expect("legacy create_surface");
+    match envelope.message {
+        Message::CreateSurface { config } => {
+            assert_eq!(
+                config.parent_window, 0,
+                "absent parent_window means top-level"
+            );
+        }
+        other => panic!("expected create_surface, got {other:?}"),
+    }
+
+    // And the reverse direction: a peer that does not know the field must not choke on it. Our side
+    // proves this by round-tripping an embedded config through JSON and back.
+    let embedded = Message::CreateSurface {
+        config: SurfaceConfig {
+            partition: "persist:home".into(),
+            viewport: Viewport::new(800, 600, 100),
+            proxy: None,
+            is_primary: true,
+            parent_window: 0x0000_1234_ABCD_0000,
+        },
+    };
+    let json = serde_json::to_value(&embedded).expect("serialise");
+    assert_eq!(
+        json["config"]["parent_window"], 0x0000_1234_ABCD_0000u64,
+        "the handle must survive JSON exactly, not as a rounded double"
+    );
+    let back: Message = serde_json::from_value(json).expect("deserialise");
+    assert_eq!(back, embedded);
+}
+
+#[test]
+fn set_bounds_carries_physical_pixels_and_signed_origins() {
+    let message = Message::SetBounds {
+        surface: SurfaceId(7),
+        bounds: Rect::new(-8, 24, 1024, 768),
+    };
+    let json = serde_json::to_value(&message).expect("serialise");
+    assert_eq!(json["bounds"]["x"], -8);
+    assert_eq!(json["bounds"]["y"], 24);
+    assert_eq!(json["bounds"]["width"], 1024);
 }
 
 #[test]

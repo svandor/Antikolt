@@ -18,13 +18,24 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QTextStream>
 #include <QTimer>
+#include <QVBoxLayout>
+#include <QWidget>
+
+#include <cstdlib>
+#include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "engine_client.h"
+#include "live_card.h"
 #include "main_window.h"
 
 namespace {
@@ -63,7 +74,7 @@ bool runEngineCheck(const QString& enginePath) {
                          handshake_ok = true;
 
                          client.createSurface(
-                             QStringLiteral("persist:selftest"), 800, 600, 100,
+                             QStringLiteral("persist:selftest"), 800, 600, 100, 0,
                              [&](const QJsonObject& result, const QString& error) {
                                  if (!error.isEmpty()) {
                                      out << "create_surface=FAILED " << error << '\n';
@@ -97,6 +108,204 @@ bool runEngineCheck(const QString& enginePath) {
     out.flush();
 
     return handshake_ok && surface_ok && destroy_ok;
+}
+
+#ifdef _WIN32
+namespace {
+
+struct ChildProbe {
+    QStringList lines;
+    bool chromium = false;
+};
+
+BOOL CALLBACK CountChildWindows(HWND child, LPARAM param) {
+    auto* probe = reinterpret_cast<ChildProbe*>(param);
+    wchar_t class_name[64] = {};
+    const int length = GetClassNameW(child, class_name, 64);
+    const QString name =
+        length > 0 ? QString::fromWCharArray(class_name, length) : QStringLiteral("?");
+    RECT window_rect = {};
+    RECT client_rect = {};
+    GetWindowRect(child, &window_rect);
+    GetClientRect(child, &client_rect);
+    probe->lines.append(
+        QStringLiteral("%1 window=%2x%3 at %4,%5 client=%6x%7")
+            .arg(name)
+            .arg(window_rect.right - window_rect.left)
+            .arg(window_rect.bottom - window_rect.top)
+            .arg(window_rect.left)
+            .arg(window_rect.top)
+            .arg(client_rect.right - client_rect.left)
+            .arg(client_rect.bottom - client_rect.top));
+    if (name.contains(QStringLiteral("Chrome_WidgetWin")) ||
+        name.contains(QStringLiteral("Chrome_RenderWidgetHost"))) {
+        probe->chromium = true;
+    }
+    return TRUE;  // keep walking: CEF nests further windows inside its own
+}
+
+}  // namespace
+#endif
+
+/// Prove that the engine really embedded its browser window into a Qt widget: the child window must
+/// exist inside the card's native handle, and the page must see the card's physical size as its
+/// viewport. Both are checked against numbers the shell knows independently.
+int runEmbedCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    int failures = 0;
+
+    QWidget window;
+    window.setWindowTitle(QStringLiteral("Antikolt embed check"));
+    window.resize(900, 640);
+    // A deterministic position: an auto-placed window can land anywhere, including off-screen, which
+    // would make every coordinate below look like a bug in the engine.
+    window.move(120, 90);
+    auto* layout = new QVBoxLayout(&window);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* card = new LiveCard(&window);
+    layout->addWidget(card);
+    window.show();
+    QCoreApplication::processEvents();
+
+    EngineClient client;
+    const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                            QStringLiteral("/embed-selftest");
+    QDir().mkpath(profile);
+    if (!client.start(enginePath, profile, /*hidden=*/true)) {
+        out << "engine_start=FAILED\n";
+        return 1;
+    }
+    out << "engine_start=ok\n";
+
+    QEventLoop loop;
+    qint64 surface = 0;
+    bool attached = false;
+    bool loaded = false;
+    bool embed_ok = false;
+    bool viewport_ok = false;
+
+    QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "engine_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(card, &LiveCard::surfaceAttached, &loop, [&](qint64 id) {
+        surface = id;
+        attached = true;
+        out << "surface=" << id << '\n';
+        client.navigate(id, QStringLiteral("data:text/html,<title>embed</title>"
+                                           "<h1 style='font:48px sans-serif'>embedded</h1>"));
+        // Ask the engine directly whether it managed to place the surface: a size right next to a
+        // window parked off-screen would look like success until somebody looked at the screen.
+        // The origin is the card's client origin (0,0), which is what an embedded child should use;
+        // the diagnostic prints the card's physical screen origin so the two can be compared.
+        POINT card_origin = {0, 0};
+        ClientToScreen(reinterpret_cast<HWND>(card->winId()), &card_origin);
+        out << "card_screen_origin=" << card_origin.x << ',' << card_origin.y << '\n';
+        client.setBounds(id, 0, 0, card->width(), card->height(),
+                         [&](const QJsonObject& result, const QString& error) {
+                             out << "set_bounds=" << (error.isEmpty() ? "ok" : "FAILED")
+                                 << " applied="
+                                 << (result.value(QStringLiteral("applied")).toBool() ? 1 : 0)
+                                 << '\n';
+                         });
+    });
+    QObject::connect(&client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString&, int status) {
+                         if (id != surface || loaded) {
+                             return;
+                         }
+                         loaded = true;
+                         out << "load_status=" << status << '\n';
+                         // The widget's size may still settle after the page loads (a window manager
+                         // can clamp a window to the screen), so measure everything at one instant.
+                         QTimer::singleShot(500, &loop, [&] {
+#ifdef _WIN32
+                             ChildProbe probe;
+                             EnumChildWindows(reinterpret_cast<HWND>(card->winId()), CountChildWindows,
+                                              reinterpret_cast<LPARAM>(&probe));
+                             out << "child_windows=" << probe.lines.size() << '\n';
+                             for (const QString& line : probe.lines) {
+                                 out << "child=" << line << '\n';
+                             }
+                             out << "chromium_child=" << (probe.chromium ? "found" : "absent")
+                                 << '\n';
+                             embed_ok = probe.chromium;
+#endif
+                             out << "card_logical=" << card->width() << 'x' << card->height() << '\n';
+                             out << "card_physical=" << card->physicalSize().width() << 'x'
+                                 << card->physicalSize().height() << '\n';
+                             out << "dpr=" << card->devicePixelRatioF() << '\n';
+
+                             // The page's own viewport is the independent witness of the size. The
+                             // protocol is in device independent pixels, which is exactly what the
+                             // page reports, so the two numbers must be equal — not scaled.
+                             client.evaluate(
+                                 id,
+                                 QStringLiteral(
+                                     "JSON.stringify({w:innerWidth,h:innerHeight,"
+                                     "dpr:devicePixelRatio,screenW:screen.width,"
+                                     "screenH:screen.height,outerW:outerWidth,outerH:outerHeight})"),
+                                 [&](const QJsonObject& result, const QString& error) {
+                                     if (!error.isEmpty()) {
+                                         out << "eval=FAILED " << error << '\n';
+                                         loop.quit();
+                                         return;
+                                     }
+                                     const QString page =
+                                         result.value(QStringLiteral("value")).toString();
+                                     out << "page=" << page << '\n';
+                                     out << "expected_css=" << card->width() << 'x' << card->height()
+                                         << '\n';
+                                     // Chromium draws its own 1–2 px border inside the embedded
+                                     // child window, so the page viewport may differ from the card by
+                                     // a pixel. Anything more is a real size bug.
+                                     const auto value_of = [&page](const QString& key) {
+                                         const QRegularExpression match(
+                                             QStringLiteral("\"%1\":(\\d+)").arg(key));
+                                         const auto found = match.match(page);
+                                         return found.hasMatch() ? found.captured(1).toInt() : -1;
+                                     };
+                                     const int page_w = value_of(QStringLiteral("w"));
+                                     const int page_h = value_of(QStringLiteral("h"));
+                                     viewport_ok = std::abs(page_w - card->width()) <= 2 &&
+                                                   std::abs(page_h - card->height()) <= 2;
+                                     loop.quit();
+                                 });
+                         });
+                     });
+
+    client.handshake();
+    QObject::connect(&client, &EngineClient::engineReady, &loop, [&](const QJsonObject&) {
+        if (!card->attach(&client, QStringLiteral("persist:embed-selftest"))) {
+            out << "attach=FAILED\n";
+            loop.quit();
+        }
+    });
+
+    QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    if (!attached) {
+        ++failures;
+        out << "attach=FAILED\n";
+    }
+    if (!loaded) {
+        ++failures;
+        out << "load=FAILED\n";
+    }
+    out << "embed=" << (embed_ok ? "ok" : "FAILED") << '\n';
+    out << "viewport_match=" << (viewport_ok ? "ok" : "FAILED") << '\n';
+    if (!embed_ok || !viewport_ok) {
+        ++failures;
+    }
+
+    if (surface != 0) {
+        client.destroySurface(surface, [](const QJsonObject&, const QString&) {});
+    }
+    client.shutdown();
+    window.close();
+    out.flush();
+    return failures == 0 ? 0 : 1;
 }
 
 int runSelfTest(bool with_engine, const QString& enginePath) {
@@ -163,9 +372,18 @@ int main(int argc, char* argv[]) {
         QStringLiteral("engine"),
         QStringLiteral("Run the shell/engine handshake during --selftest against this engine host."),
         QStringLiteral("path"));
+    const QCommandLineOption embedtest(
+        QStringLiteral("embedtest"),
+        QStringLiteral("Prove the engine embedded its browser into a Qt widget, then exit."),
+        QStringLiteral("path"));
     parser.addOption(selftest);
     parser.addOption(engine);
+    parser.addOption(embedtest);
     parser.process(app);
+
+    if (parser.isSet(embedtest)) {
+        return runEmbedCheck(parser.value(embedtest));
+    }
 
     if (parser.isSet(selftest)) {
         return runSelfTest(parser.isSet(engine), parser.value(engine));

@@ -122,7 +122,8 @@ void EngineClient::handshake() {
 }
 
 void EngineClient::createSurface(const QString& partition, int width, int height,
-                                 int deviceScalePercent, ReplyHandler handler) {
+                                 int deviceScalePercent, quintptr parentWindow,
+                                 ReplyHandler handler) {
     QJsonObject viewport;
     viewport.insert(QStringLiteral("width"), width);
     viewport.insert(QStringLiteral("height"), height);
@@ -132,10 +133,44 @@ void EngineClient::createSurface(const QString& partition, int width, int height
     config.insert(QStringLiteral("partition"), partition);
     config.insert(QStringLiteral("viewport"), viewport);
     config.insert(QStringLiteral("is_primary"), true);
+    if (parentWindow != 0) {
+        // Kept as a JSON number on purpose: the protocol defines the handle as an integer, and the
+        // engine host rejects anything above 2^53 rather than guessing.
+        config.insert(QStringLiteral("parent_window"),
+                      static_cast<double>(static_cast<quint64>(parentWindow)));
+    }
 
     QJsonObject fields;
     fields.insert(QStringLiteral("config"), config);
     send(QStringLiteral("create_surface"), fields, std::move(handler));
+}
+
+void EngineClient::setBounds(qint64 surface, int x, int y, int width, int height,
+                             ReplyHandler handler) {
+    QJsonObject bounds;
+    bounds.insert(QStringLiteral("x"), x);
+    bounds.insert(QStringLiteral("y"), y);
+    bounds.insert(QStringLiteral("width"), width);
+    bounds.insert(QStringLiteral("height"), height);
+
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("bounds"), bounds);
+    send(QStringLiteral("set_bounds"), fields, std::move(handler));
+}
+
+void EngineClient::focus(qint64 surface, bool focused, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("focused"), focused);
+    send(QStringLiteral("focus"), fields, std::move(handler));
+}
+
+void EngineClient::evaluate(qint64 surface, const QString& script, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("script"), script);
+    send(QStringLiteral("eval"), fields, std::move(handler));
 }
 
 void EngineClient::navigate(qint64 surface, const QString& url, ReplyHandler handler) {

@@ -31,7 +31,7 @@ pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub use frame::{decode_frame, encode_frame, FrameError};
 pub use message::{
     Capability, ColorScheme, EngineEvent, EngineInfo, Envelope, ErrorCode, ImageFormat, Message,
-    NavigateOpts, PermissionKind, PopupDisposition, ReplyOutcome, SurfaceConfig, SurfaceId,
+    NavigateOpts, PermissionKind, PopupDisposition, Rect, ReplyOutcome, SurfaceConfig, SurfaceId,
     SurfaceMetrics, Viewport, World,
 };
 pub use transport::{EngineLink, LinkError, DEFAULT_TIMEOUT};

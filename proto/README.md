@@ -65,9 +65,11 @@ gracefully when a capability is missing, and must never assume one:
 |---|---|---|---|
 | `hello` | core → engine | `protocol`, `engine` | `welcome` |
 | `ping` | both | — | `reply` |
-| `create_surface` | core → engine | `config` (`partition`, `viewport`, `proxy`, `is_primary`) | `reply` (`{surface}`) |
+| `create_surface` | core → engine | `config` (`partition`, `viewport`, `proxy`, `is_primary`, `parent_window`) | `reply` (`{surface}`) |
 | `destroy_surface` | core → engine | `surface` | `reply` |
 | `navigate` | core → engine | `surface`, `url`, `opts` | `reply` |
+| `set_bounds` | core → engine | `surface`, `bounds` (`x`, `y`, `width`, `height`) | `reply` (`{applied}`) |
+| `focus` | core → engine | `surface`, `focused` (default `true`) | `reply` |
 | `eval` | core → engine | `surface`, `script`, `world` | `reply` (`{json}`) |
 | `scroll` | core → engine | `surface`, `x`, `y`, `animate` | `reply` |
 | `set_zoom` | core → engine | `surface`, `factor_percent` | `reply` |
@@ -87,6 +89,29 @@ never receives a secret).
 `session::CleanupPlan::storage_types()`: `session_storage`, `cache_storage`, `service_workers`,
 `code_cache`, `local_storage`, `indexed_db`, `cookies`.
 
+## Embedding the live card
+
+`config.parent_window` is a native window handle as an integer, or `0` for "the engine host owns a
+top-level window". The shell passes its card widget's `winId()`; the engine calls
+`CefWindowInfo::SetAsChild` on it, so Chromium creates its window *inside the shell's window tree* and
+pixels and input travel through the operating system instead of this protocol. That is what keeps the
+UI and the engine in separate processes without a frame channel.
+
+Rules that come with it:
+
+- **Units are device independent pixels** (the page's CSS pixels), for `viewport` and `bounds` alike. On
+  a 175 % monitor a 900×640 card is a 1575×1120 window, and that conversion belongs to the engine — it
+  is the only side that knows the monitor's scale factor. Sending physical pixels makes Chromium scale
+  a second time: measured, the page then saw a 1575 px viewport and the window grew past the screen,
+  where the window manager clamped it.
+- `set_bounds` may arrive **before** Chromium has created its window, because `create_surface` replies
+  as soon as the browser is requested. The engine remembers the rectangle and applies it as soon as the
+  child window exists; `applied: false` means "remembered, not yet placed", not "failed".
+- The parent window belongs to the shell. `destroy_surface` closes the browser and forgets the handle,
+  it never destroys the parent.
+- `parent_window` is additive and optional: an omitted key means `0`, so a peer from before embedding
+  keeps working without a protocol bump. That is the compatibility rule for this file as a whole.
+
 ## Events
 
 `load_started`, `load_finished` (`http_status`), `load_failed` (`reason`), `title_changed`,
@@ -104,8 +129,10 @@ live surface waits for this event.
 | Message | Engine host status |
 |---|---|
 | `hello` / `welcome`, `ping` | implemented |
-| `create_surface`, `navigate`, `destroy_surface`, `shutdown` | implemented |
-| everything else (`snapshot`, `capture`, `eval`, `scroll`, `set_zoom`, `set_media`, `metrics`, `clear_origin_data`) | answers `not_supported` until the freeze milestone |
+| `create_surface` (with `parent_window`), `navigate`, `destroy_surface`, `shutdown` | implemented |
+| `set_bounds`, `focus` | implemented (Windows windowed embedding) |
+| `snapshot`, `eval` | implemented through DevTools (MHTML + runtime state, `Runtime.evaluate`) |
+| everything else (`capture`, `scroll`, `set_zoom`, `set_media`, `metrics`, `clear_origin_data`) | answers `not_supported` until the freeze milestone |
 
 `crates/antikolt-probe` exercises the implemented set end to end; `docs/HU/16-FEJLESZTESI-NAPLO.md`
 records the verified output.

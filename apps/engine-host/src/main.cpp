@@ -47,6 +47,41 @@ std::string Utf8FromWide(const std::wstring& wide) {
 #endif
 }
 
+#ifdef _WIN32
+/// Declare this process per-monitor DPI aware, before any window exists.
+///
+/// Windows *virtualises* the coordinates of a DPI-unaware process: at 175 % scaling, every coordinate
+/// it sets or reads is quietly multiplied behind its back. The shell tells the engine the card's size
+/// in physical pixels and the engine must honour exactly that, so awareness is not cosmetic — without
+/// it, a 900×640 card asked the page for a 1575 px viewport and Chromium clamped the height to the
+/// screen. Per-monitor v2 is what modern Windows offers; v1 is the Windows 8.1 fallback.
+void EnablePerMonitorDpiAwareness() {
+    const HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 != nullptr) {
+        using SetContextFn = BOOL(WINAPI*)(HANDLE);
+        auto set_context =
+            reinterpret_cast<SetContextFn>(GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is -4; spelled as an integer so the build does
+        // not depend on how new the SDK's headers are.
+        if (set_context != nullptr &&
+            set_context(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4))) != FALSE) {
+            return;
+        }
+    }
+    const HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    if (shcore != nullptr) {
+        using SetAwarenessFn = HRESULT(WINAPI*)(int);
+        auto set_awareness =
+            reinterpret_cast<SetAwarenessFn>(GetProcAddress(shcore, "SetProcessDpiAwareness"));
+        constexpr int kProcessPerMonitorDpiAware = 2;
+        if (set_awareness != nullptr && SUCCEEDED(set_awareness(kProcessPerMonitorDpiAware))) {
+            return;
+        }
+    }
+    SetProcessDPIAware();
+}
+#endif
+
 std::string ExecutablePath() {
 #ifdef _WIN32
     wchar_t buffer[MAX_PATH * 4] = {};
@@ -96,6 +131,9 @@ bool parseSize(const char* text, int* width, int* height) {
 
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
+    // Before anything can create a window, and before CEF's helper processes inherit the setting.
+    EnablePerMonitorDpiAwareness();
+
     // No crash dialog, no "file not found" box: a failed run must exit with a code that CI can read,
     // not block on a modal window on somebody's desktop.
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);

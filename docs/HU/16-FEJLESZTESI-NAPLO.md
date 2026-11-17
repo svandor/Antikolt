@@ -3,6 +3,71 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (kilencedik szelet) — a kártya tényleg a saját ablakunkban él
+
+Eddig a motor a **saját** ablakában mutatta az oldalt, a shell meg egy placeholder-t rajzolt. Ez a
+szelet áttöri azt a falat: a motor a shell ablakába **ágyazva** rajzol, külön folyamatban maradva.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| Protokoll | `create_surface` `config.parent_window` (natív ablakkezelő, `0` = saját ablak); új `set_bounds` és `focus` üzenet; a mértékegység **DIP** (a lap CSS-pixele), nem fizikai pixel |
+| Rust szerződés | `SurfaceConfig.parent_window` (alapértelmezés `0`, tehát additív, verziót nem lépő változás), `Rect`, `Message::SetBounds`, `Message::Focus`; 2 új teszt (régi `create_surface` elfogadása, `set_bounds` előjeles origója) |
+| Motorház (C++) | `CefWindowInfo::SetAsChild(parent)`, DIP→fizikai váltás a monitor DPI-jével, `ApplyPendingEmbeddedBounds` a pump hurokban, a szülő ablakot **soha** nem bontja le |
+| Shell (Qt) | `LiveCard` natív widget: `winId()` a motornak, minden átméretezésnél `set_bounds`, fókusz átadás; a főablak ezt használja a placeholder helyett |
+| Önellenőrzés | `antikolt-shell --embedtest <motor>`: a beágyazott gyerekablak és a lap viewportja is ellenőrizve |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+card_screen_origin=150,151
+set_bounds=ok applied=1
+load_status=0
+child_windows=2
+child=Chrome_WidgetWin_1 window=1125x800 at 150,151 client=1125x800
+child=Chrome_RenderWidgetHostHWND window=1125x800 at 150,151 client=1125x800
+chromium_child=found
+card_logical=900x640
+card_physical=1125x800
+dpr=1.25
+page={"w":900,"h":640,"dpr":1.25,"screenW":4096,"screenH":1152,"outerW":900,"outerH":640}
+embed=ok
+viewport_match=ok        (exit code 0)
+```
+
+Vagyis a Chromium ablaka **pontosan a kártya helyén és méretében** van (1125×800 fizikai = 900×640
+DIP 125%-on), és a lap **900×640 CSS-pixelt** lát — nem többet. A kép tehát a kártyába kerül, nem egy
+külön ablakba.
+
+### Négy hiba, amit ez a szelet hozott (mind javítva, mind mérve)
+
+1. **A beágyazott téglalap mértékegysége DIP, nem fizikai pixel.** Fizikai pixelt küldve a Chromium
+   *másodszor* is felskálázta: 900×640-es kártyához 2756×1622-es ablak lett, a lap 1575 px viewportot
+   látott, a magasságot pedig a képernyő munkaterülete vághatta le. A határt a napló mondja ki: a
+   `SetAsChild` és a `set_bounds` **DIP-ben** értendő, a DIP→fizikai váltás a motor dolga (csak ő tudja
+   a monitor skáláját). *Ez a legfontosabb tanulság: a rossz mértékegység nem elszíneződést okoz, hanem
+   csendben rossz layoutot.*
+2. **A CEF gyerekablakának osztályneve `Chrome_WidgetWin_1`**, nem `_0`. A `_0`-ra szűrt keresés némán
+   `nullptr`-t adott, ezért a `set_bounds` soha nem találta a felületet — a méret helyes maradt, az
+   ablak viszont a képernyőn kívülre került. Most előtag-egyezés van (`Chrome_WidgetWin_`).
+3. **A `set_bounds` gyakran előbb érkezik, mint a Chromium ablaka.** A `create_surface` ugyanis már
+   akkor válaszol, amikor a böngésző még csak *kérés* szinten létezik. A téglalap ezért eltárolódik, és
+   a pump hurok helyezi el, amint a gyerekablak megvan (`applied: false` = „megjegyezve”, nem hiba).
+4. **A tesztablak a képernyőn kívülre került**, mert a pozícióját nem adtam meg: így a gyerekablak
+   `-2066,198` koordinátája hibának látszott, pedig a CEF helyesen dolgozott. A mérés most explicit
+   pozíciót ad (`window.move(120, 90)`), és a kártya fizikai képernyő-origóját (`ClientToScreen`) a
+   gyerekablak `GetWindowRect`-jával hasonlítja össze.
+
+### Ami még nyitott
+
+- A beágyazott felület **fókusza és billentyűzete** bekötve van (`focus` üzenet), de élesben, kattintásra
+  még nem ellenőriztem — ez a következő szelet első tétele.
+- A kártyaváltás (mentés → megsemmisítés → új felület) a shell `❄ Fagyasztás` gombján át működik, de a
+  „másik kártya megnyitása” még nem.
+- A GPU-t ebben a környezetben továbbra is ki kell kapcsolni (`ANTIKOLT_ENGINE_DISABLE_GPU=1`), különben
+  a GPU-folyamat elszáll; ez a méréseket is érinti.
+
 ## 2026-11-17 (nyolcadik szelet) — a ciklus bezárva: mentés → visszaállítás offline
 
 A böngésző legfontosabb ígérete most már **végig** bizonyított: egy oldal lemezre mentése és **offline
