@@ -99,6 +99,10 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   page's witness (`window.antikoltPinState`) and a fresh core client must both report the opposite of what
   the card had before, whichever direction that is — a click that changed nothing would pass a weaker
   test.
+- `--previewtest` — a card preview is served, not fetched (ADR-035): a PNG is written into the profile's
+  `previews` directory, the home page loads it as `antikolt://blob/probe.png`, and the page's own witness
+  must report `naturalWidth × naturalHeight`. A second request for `..%2Fhost.cpp` must be *refused* — a
+  card's data may not read another file through the browser.
 - `--timeouttest` — every page request is answered exactly once: a deliberately unanswered method
   (`test.hang`, reachable only with `ANTIKOLT_BRIDGE_TEST=1`) must be *rejected* by the shell's watchdog in
   about five seconds. A promise nobody settles would leak into every later interaction.

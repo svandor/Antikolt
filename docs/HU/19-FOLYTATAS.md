@@ -83,6 +83,14 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 
 ## 4. Előnézetek
 
+> **Állapot: a kiszolgálás kész és mérve** (30. szelet, ADR-035). A motor az `antikolt` sémát regisztrálja,
+> és a `blob/<név>` kérést a `<user data>/previews/<név>` fájlból válaszolja meg, a nevet a könyvtáron
+> belül feloldva (`..`/elválasztó → elutasítás). `--previewtest`: `preview_load=loaded:4x3`,
+> `preview_traversal=refused`, `preview_delivery=ok`.
+> **Ami hátra van:** az **előállítás** — a kártya háttérben megnyitása (I1), `capture`, mentés a profil
+> `previews/` mappájába, additív `preview_ref` mező a kártya-rekordon, ütemező (egy kártya egyszerre,
+> ~8 s, napi ≤100), és a preview-fájlok takarítása.
+
 **Miért:** F2 (rács-előnézet) — a `capture` primitív kész, a feldolgozó nincs.
 
 **Hogyan:** `antikolt://blob/<név>` scheme handler a motorban

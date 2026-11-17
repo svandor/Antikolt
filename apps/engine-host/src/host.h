@@ -22,6 +22,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_request_handler.h"
+#include "include/cef_scheme.h"
 #include "include/wrapper/cef_message_router.h"
 
 #ifdef _WIN32
@@ -115,6 +116,11 @@ public:
 
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
     CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
+
+    /// Register the `antikolt` scheme: previews are served from the profile by this host, not fetched.
+    void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
+    /// Install the preview handler once CEF is up (before any browser exists).
+    void OnContextInitialized() override;
 
     void OnBeforeCommandLineProcessing(const CefString& process_type,
                                        CefRefPtr<CefCommandLine> command_line) override;

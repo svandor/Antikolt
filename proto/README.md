@@ -129,6 +129,22 @@ Rules:
 - only surfaces the shell enabled can call at all, and the main world is the only world that has the
   bridge (secrets do not live there, I5).
 
+## Card previews (`antikolt://blob/…`)
+
+A card may carry a preview image, and the grid refers to it as `antikolt://blob/<name>` (ADR-035). That
+URL never reaches the network: the engine registers the `antikolt` scheme (standard, secure, CORS- and
+fetch-enabled) and answers `blob/<name>` from `<user data>/previews/<name>` through
+`CefStreamResourceHandler`. The shell is what fills that directory — a preview is *produced*, not
+downloaded.
+
+Rules:
+
+- the name is resolved **inside** the directory: an empty name, a `..` or a path separator is refused, and
+  a name that does not exist answers 404 — card data must never read another file through the browser;
+- the content type follows the extension (`png`, `jpg`/`jpeg`, `webp`), anything else is
+  `application/octet-stream`;
+- the scheme is installed before the first browser exists, so a preview request from the first load works.
+
 ## Embedding the live card
 
 `config.parent_window` is a native window handle as an integer, or `0` for "the engine host owns a

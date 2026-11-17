@@ -1379,6 +1379,107 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove a card preview can be delivered: the engine serves `antikolt://blob/…` from the profile.
+///
+/// The preview file is written where the engine looks for it (the shell hands this profile to the engine),
+/// then the home page loads it as an image and the test reads the page's own witness (`naturalWidth` /
+/// `naturalHeight`). A second image asks for a name that escapes the previews directory: it must be
+/// *refused*, because card data must never be able to read another file through the browser.
+int runPreviewCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                            QStringLiteral("/engine");
+    const QString previews = profile + QStringLiteral("/previews");
+    QDir().mkpath(previews);
+    QImage probe(4, 3, QImage::Format_RGB32);
+    probe.fill(QColor(47, 111, 235));
+    const QString preview_path = previews + QStringLiteral("/probe.png");
+    if (!probe.save(preview_path, "PNG")) {
+        out << "preview_write=FAILED\n";
+        return 1;
+    }
+    out << "preview_file=probe.png 4x3 png\n";
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool asked = false;
+    QString preview;
+    QString traversal;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             QTimer::singleShot(800, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "window.__preview='pending';window.__traversal='pending';"
+                                         "(function(){var i=new Image();"
+                                         "i.onload=function(){window.__preview='loaded:'+"
+                                         "i.naturalWidth+'x'+i.naturalHeight;};"
+                                         "i.onerror=function(){window.__preview='error';};"
+                                         "i.src='antikolt://blob/probe.png';})();"
+                                         "(function(){var j=new Image();"
+                                         "j.onload=function(){window.__traversal='loaded';};"
+                                         "j.onerror=function(){window.__traversal='refused';};"
+                                         "j.src='antikolt://blob/..%2Fhost.cpp';})();"
+                                         " 'asked'"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         asked = error.isEmpty() &&
+                                                 reply.value(QStringLiteral("value")).toString() ==
+                                                     QStringLiteral("asked");
+                                         out << "asked=" << (asked ? "ok" : "FAILED") << '\n';
+                                         QTimer::singleShot(2000, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id,
+                                                 QStringLiteral(
+                                                     "JSON.stringify({preview: window.__preview,"
+                                                     " traversal: window.__traversal})"),
+                                                 [&](const QJsonObject& value, const QString& failure) {
+                                                     if (failure.isEmpty()) {
+                                                         const QJsonObject state =
+                                                             QJsonDocument::fromJson(
+                                                                 value.value(QStringLiteral("value"))
+                                                                     .toString()
+                                                                     .toUtf8())
+                                                                 .object();
+                                                         preview = state.value(QStringLiteral("preview"))
+                                                                       .toString();
+                                                         traversal =
+                                                             state.value(QStringLiteral("traversal"))
+                                                                 .toString();
+                                                     } else {
+                                                         preview = failure;
+                                                     }
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "preview_load=" << preview << '\n';
+    out << "preview_traversal=" << traversal << '\n';
+    const bool ok = asked && preview == QStringLiteral("loaded:4x3") &&
+                    traversal == QStringLiteral("refused");
+    out << "preview_delivery=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove a page request is answered even when the shell forgets it: the watchdog, not hope.
 ///
 /// The method `test.hang` is deliberately unanswered and only exists when `ANTIKOLT_BRIDGE_TEST` is set,
@@ -2201,6 +2302,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("timeouttest"),
         QStringLiteral("Prove an unanswered page request is answered by the watchdog, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption previewtest(
+        QStringLiteral("previewtest"),
+        QStringLiteral("Prove a card preview is served to the page from the profile, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -2219,11 +2324,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(pintest);
     parser.addOption(notetest);
     parser.addOption(timeouttest);
+    parser.addOption(previewtest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(previewtest)) {
+        return runPreviewCheck(parser.value(previewtest));
     }
 
     if (parser.isSet(timeouttest)) {

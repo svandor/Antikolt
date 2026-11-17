@@ -17,6 +17,7 @@
 #include "include/cef_string_visitor.h"
 #include "include/cef_version.h"
 #include "include/wrapper/cef_helpers.h"
+#include "include/wrapper/cef_stream_resource_handler.h"
 #include "devtools.h"
 #include "protocol.h"
 
@@ -907,6 +908,105 @@ private:
 
 }  // namespace
 
+/// Where `antikolt://blob/…` serves from: `<user data>/previews`. Set before CEF starts, because the
+/// handler factory is installed in `OnContextInitialized` and a page may ask immediately.
+std::string g_previews_path;
+
+constexpr const char* kPreviewScheme = "antikolt";
+constexpr const char* kPreviewHost = "blob";
+
+/// Make the preview directory exist. A missing one is not an error; an empty scheme answer would be.
+void PreparePreviewDirectory(const HostConfig& config) {
+    g_previews_path = config.user_data_path + "\\previews";
+    std::error_code error;
+    std::filesystem::create_directories(g_previews_path, error);
+    if (error) {
+        Log("[engine-host] cannot create the preview directory %s: %s\n", g_previews_path.c_str(),
+            error.message().c_str());
+    }
+}
+
+/// The content type for a preview file, by extension.
+std::string PreviewMimeType(const std::string& name) {
+    const std::string::size_type dot = name.rfind('.');
+    const std::string extension = dot == std::string::npos ? std::string() : name.substr(dot);
+    if (extension == ".png") {
+        return "image/png";
+    }
+    if (extension == ".jpg" || extension == ".jpeg") {
+        return "image/jpeg";
+    }
+    if (extension == ".webp") {
+        return "image/webp";
+    }
+    return "application/octet-stream";
+}
+
+/// Serve one preview file from the profile.
+///
+/// A preview URL never reaches the network: the engine answers `antikolt://blob/<name>` from the profile's
+/// `previews` directory, so a preview is a local file with a stable name a page can refer to. The name is
+/// resolved *inside* that directory — an empty name, a `..` or a path separator is refused — because card
+/// data must never be able to read an arbitrary file through the browser.
+class PreviewHandlerFactory : public CefSchemeHandlerFactory {
+public:
+    // `DISALLOW_COPY_AND_ASSIGN` declares a private copy constructor, which suppresses the implicit
+    // default one — so it has to be asked for explicitly.
+    PreviewHandlerFactory() = default;
+
+    CefRefPtr<CefResourceHandler> Create(CefRefPtr<CefBrowser> browser,
+                                         CefRefPtr<CefFrame> frame,
+                                         const CefString& scheme_name,
+                                         CefRefPtr<CefRequest> request) override {
+        (void)browser;
+        (void)frame;
+        (void)scheme_name;
+        if (g_previews_path.empty() || !request) {
+            return nullptr;
+        }
+        const std::string url = request->GetURL().ToString();
+        const std::string name = url.substr(url.rfind('/') + 1);
+        if (name.empty() || name.find("..") != std::string::npos ||
+            name.find('\\') != std::string::npos) {
+            Log("[engine-host] refused a preview name: %s\n", name.c_str());
+            return nullptr;
+        }
+        CefRefPtr<CefStreamReader> stream =
+            CefStreamReader::CreateForFile(g_previews_path + "\\" + name);
+        if (!stream) {
+            Log("[engine-host] preview not found: %s\n", name.c_str());
+            return nullptr;
+        }
+        return new CefStreamResourceHandler(PreviewMimeType(name), stream);
+    }
+
+    IMPLEMENT_REFCOUNTING(PreviewHandlerFactory);
+    DISALLOW_COPY_AND_ASSIGN(PreviewHandlerFactory);
+};
+
+void EngineApp::OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) {
+    // Standard + secure so the scheme behaves like an origin of its own, CORS-enabled so a page may fetch
+    // it, and fetch-enabled so `Image`/`fetch` work instead of being treated as an opaque scheme.
+    const int options = CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+                        CEF_SCHEME_OPTION_CORS_ENABLED | CEF_SCHEME_OPTION_FETCH_ENABLED;
+    if (!registrar->AddCustomScheme(kPreviewScheme, options)) {
+        Log("[engine-host] cannot register the %s scheme\n", kPreviewScheme);
+    }
+}
+
+void EngineApp::OnContextInitialized() {
+    if (g_previews_path.empty()) {
+        return;
+    }
+    if (!CefRegisterSchemeHandlerFactory(kPreviewScheme, kPreviewHost,
+                                         new PreviewHandlerFactory())) {
+        Log("[engine-host] cannot install the preview scheme handler\n");
+        return;
+    }
+    Log("[engine-host] previews: %s://%s/ from %s\n", kPreviewScheme, kPreviewHost,
+        g_previews_path.c_str());
+}
+
 void EngineApp::OnBeforeCommandLineProcessing(const CefString& process_type,
                                               CefRefPtr<CefCommandLine> command_line) {
     if (!process_type.empty()) {
@@ -1263,6 +1363,7 @@ int RunCefSubprocess() {
 }
 
 int RunEngineHost(const HostConfig& config) {
+    PreparePreviewDirectory(config);
 #ifdef _WIN32
     CefMainArgs main_args(GetModuleHandleW(nullptr));
 #else
@@ -1329,6 +1430,7 @@ int RunEngineHost(const HostConfig& config) {
 }
 
 int RunEngineHostServer(const HostConfig& config) {
+    PreparePreviewDirectory(config);
 #ifdef _WIN32
     CefMainArgs main_args(GetModuleHandleW(nullptr));
 #else

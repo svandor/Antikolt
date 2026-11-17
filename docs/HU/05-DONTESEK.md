@@ -3,6 +3,26 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-035 — A kártya-előnézet a motorból jön, `antikolt://blob/` sémán, nem a hálóról (2026-11-17)
+
+**Kontextus.** A rácsnak előnézet kell, és a lap már hivatkozik rá (`antikolt://blob/<ref>`). Két rossz
+út: a lap a hálóról töltse (az oldal lassú lehet, a kép elavul, a kártya adatai kiszivároghatnak a
+távoli szerverhez), vagy a kép az adatbázisban utazzon (a kártyalista mérete és a protokoll költsége
+robban). A helyes válasz: az előnézet **helyi fájl**, amit a *motor* szolgál ki a profilból, a lap pedig
+egy stabil névvel hivatkozik rá.
+
+**Döntés.** A motor regisztrálja az `antikolt` sémát (`STANDARD | SECURE | CORS_ENABLED |
+FETCH_ENABLED`), és a `blob/<név>` kérést a `<user data>/previews/<név>` fájlból válaszolja meg
+(`CefStreamResourceHandler`, MIME a kiterjesztésből). A **nevet a könyvtáron belül oldja fel**: üres név,
+`..` vagy elválasztó → elutasítás; nem létező fájl → 404. A fájlt a **shell termeli** (a `capture` op
+kimenete), tehát az előnézet nem letöltés, hanem előállítás.
+
+**Következmény.** (+) a rács előnézete helyi, gyors és a lap felé is hivatkozható; (+) egy kártya adata
+nem tud tetszőleges fájlt kiolvasni a böngészőn át (a névfeloldás a könyvtárban marad); (+) a
+kártyalista marad kicsi (egy név, nem kép); (−) az előnézet **előállítása** még nincs kész: egy kártyát
+háttérben meg kell nyitni, `capture`-rel képet csinálni és a profilba írni (ugyanaz az I1-korlát, mint a
+takarításnál), és a kártya-rekordnak szüksége lesz egy additív `preview_ref` mezőre.
+
 ## ADR-034 — A lap kérdezhet: a híd kétirányú, és ez protokoll v2 (2026-11-17)
 
 **Kontextus.** Az ADR-032 egyirányú hidat rögzített, mert a lap nem tudott kérdezni: a shell tolt, a
@@ -194,6 +214,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-032 | A kártyalista shell-tolással jut a lapra, amíg a híd egyirányú (kétirányú híd = protokoll v2) | Elfogadva |
 | ADR-033 | A munkamenet-politikát a mag értékeli ki (`session_due`), a shell csak végrehajt és megjelenít | Elfogadva |
 | ADR-034 | A lap kérdezhet: perzisztens `cefQuery` + `bridge_reply` = protokoll v2 (az ADR-032 továbbra is érvényes az egyirányú hívásokra) | Elfogadva |
+| ADR-035 | A kártya-előnézetet a motor szolgálja ki a profilból (`antikolt://blob/`), a nevet a könyvtáron belül oldva fel | Elfogadva |
 
 ---
 

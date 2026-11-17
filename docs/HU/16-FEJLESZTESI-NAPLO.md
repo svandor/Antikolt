@@ -3,6 +3,38 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harmincadik szelet) — az előnézet-út: `antikolt://blob/` a motorból
+
+A lap már régóta hivatkozik `antikolt://blob/<ref>`-re, de senki nem szolgálta ki. Most a motor
+regisztrálja az `antikolt` sémát (`STANDARD | SECURE | CORS_ENABLED | FETCH_ENABLED`) és a
+`blob/<név>` kérést a `<user data>/previews/<név>` fájlból válaszolja meg; a nevet a **könyvtáron belül**
+oldja fel (üres név, `..`, elválasztó → elutasítás). A döntés az ADR-035-ben, a huzal-oldali leírás a
+`proto/README.md`-ben.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --previewtest <motor>
+preview_file=probe.png 4x3 png
+asked=ok
+preview_load=loaded:4x3        ← a lap saját tanúja: naturalWidth×naturalHeight
+preview_traversal=refused      ← `antikolt://blob/..%2Fhost.cpp` nem tölthető be
+preview_delivery=ok      (exit code 0)
+```
+
+Két hiba a fordítás közben, mindkettő javítva: (1) a `cef_stream_resource_handler.h` include-ja a
+`namespace antikolt` **belére** került, ezért a linker `antikolt::CefStreamResourceHandler`-t keresett
+(`LNK2019`) — az include a fájl elejére került; (2) a `DISALLOW_COPY_AND_ASSIGN` privát másoló
+konstruktort deklarál, ami elnyeli az implicit default konstruktort (`C2512`) — explicit
+`PreviewHandlerFactory() = default;` kellett.
+
+### Ami még nyitott
+
+- Az **előállítás**: a shell még nem generál előnézetet. Kell hozzá: a kártya háttérben megnyitása (I1!),
+  `capture`, mentés a profil `previews/` mappájába, és egy additív `preview_ref` mező a kártya-rekordon,
+  hogy a rács hivatkozhasson rá. Ütemező (egy kártya egyszerre, ~8 s, napi ≤100) szintén hátra van.
+- A preview-fájlok **takarítása** (a 24 órás politika nem érinti őket).
+
 ## 2026-11-17 (huszonkilencedik szelet) — minden kérésre pontosan egy válasz (watchdog)
 
 A protokoll v2 szerződése kimondta, hogy a lap minden kérdésére **pontosan egy** válasz jön — de eddig ezt
