@@ -614,6 +614,8 @@ int runGridCheck(const QString& enginePath) {
                               QStringLiteral("/core");
     QDir().mkpath(core_data);
     QStringList expected_titles;
+    /// The URL of the first card the core lists: the one the grid's first tile must open.
+    QString expected_url;
     if (!oracle.start(corePath, core_data)) {
         out << "core_start=FAILED\n";
         return 1;
@@ -634,8 +636,11 @@ int runGridCheck(const QString& enginePath) {
                     return;
                 }
                 for (const QJsonValue& value : data.value(QStringLiteral("cards")).toArray()) {
-                    expected_titles.append(
-                        value.toObject().value(QStringLiteral("title")).toString());
+                    const QJsonObject card = value.toObject();
+                    expected_titles.append(card.value(QStringLiteral("title")).toString());
+                    if (expected_url.isEmpty()) {
+                        expected_url = card.value(QStringLiteral("url")).toString();
+                    }
                 }
                 core_loop.quit();
             });
@@ -661,6 +666,7 @@ int runGridCheck(const QString& enginePath) {
     QEventLoop loop;
     bool loaded = false;
     bool pushed = false;
+    qint64 home_surface = 0;
     QJsonObject state;
 
     QObject::connect(client, &EngineClient::failed, &loop, [&](const QString& message) {
@@ -673,6 +679,7 @@ int runGridCheck(const QString& enginePath) {
                              return;
                          }
                          loaded = true;
+                         home_surface = surface;
                          out << "home_loaded=" << url << '\n';
                          // The push follows this event immediately; give the page its moment to
                          // re-render before asking what it shows.
@@ -712,7 +719,51 @@ int runGridCheck(const QString& enginePath) {
     }
     out << "grid_first=" << state.value(QStringLiteral("firstTitle")).toString() << '\n';
     out << "grid_matches_core=" << (same ? "ok" : "FAILED") << '\n';
-    if (!pushed || !same) {
+
+    // 3. The user path: clicking a card in the grid must make the shell open *that* card. Two facts
+    //    are measured and both are the page's own doing — the bridge call the page sends, and the new
+    //    surface the shell creates. What the remote server answers is deliberately not part of this:
+    //    the grid is on a machine without TLS, and the request is what is being proven.
+    QString clicked_url;
+    bool new_surface = false;
+    if (pushed && same && home_surface != 0) {
+        QEventLoop click_loop;
+        QObject::connect(client, &EngineClient::bridgeCall, &click_loop,
+                         [&](qint64, const QString& method, const QJsonObject& args) {
+                             if (method != QStringLiteral("open_card")) {
+                                 return;
+                             }
+                             clicked_url = args.value(QStringLiteral("url")).toString();
+                             out << "grid_click_url=" << clicked_url << '\n';
+                             if (new_surface) {
+                                 click_loop.quit();
+                             }
+                         });
+        QObject::connect(client, &EngineClient::surfaceCreated, &click_loop, [&](qint64 id) {
+            if (id == home_surface) {
+                return;
+            }
+            new_surface = true;
+            out << "card_surface=" << id << '\n';
+            if (!clicked_url.isEmpty()) {
+                click_loop.quit();
+            }
+        });
+        client->evaluate(
+            home_surface,
+            QStringLiteral("document.querySelector('#viewport antikolt-card').click(); 'clicked'"),
+            [&](const QJsonObject& reply, const QString& error) {
+                out << "card_click="
+                    << (error.isEmpty() ? reply.value(QStringLiteral("value")).toString()
+                                        : QStringLiteral("FAILED ") + error)
+                    << '\n';
+            });
+        QTimer::singleShot(30000, &click_loop, &QEventLoop::quit);
+        click_loop.exec();
+    }
+    const bool click_ok = new_surface && !expected_url.isEmpty() && clicked_url == expected_url;
+    out << "grid_click_open=" << (click_ok ? "ok" : "FAILED") << '\n';
+    if (!pushed || !same || !click_ok) {
         ++failures;
     }
     window.close();

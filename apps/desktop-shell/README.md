@@ -78,7 +78,8 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
 - `--gridtest` — the home grid shows the cards the **core** owns: the core is asked for its list first
   (the oracle), then the page reports what it displays through `window.antikoltGridState()`, and the two
   must agree. A push that never arrived, arrived empty or was overwritten by the page's sample cards
-  fails here.
+  fails here. Finally it clicks the grid's first tile and requires the shell to answer with a bridge
+  call carrying that card's URL and a new surface for it.
 - `--coretest` — the shell talks to the Rust core service: handshake, card list, card open (timestamp).
 
 Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).

@@ -451,8 +451,11 @@ class HomePage {
 
     document.addEventListener("keydown", (event) => this.onKeydown(event));
 
-    this.viewport.addEventListener("click", (event) => {
-      const card = event.target.closest(".card, antikolt-card");
+    // Delegated on the document on purpose: the pinned row lives outside `#viewport`, so a listener
+    // bound there never saw a click on a pinned card — the most prominent cards were inert. One
+    // listener for both places, and the `closest` check decides what was hit.
+    document.addEventListener("click", (event) => {
+      const card = event.target.closest?.(".card, antikolt-card");
       if (!card) return;
       const host = card.closest("antikolt-card");
       const id = host?.card?.id;
@@ -709,12 +712,27 @@ class HomePage {
 // composed here instead of being faked apart, so a click on a card really opens it.
 const mockBridge = createMockBridge();
 
+/**
+ * The mock bridge, plus the one thing that must be real when the shell is around: opening a card.
+ *
+ * The native bridge is looked up **at call time**, not at start-up. The engine injects
+ * `window.antikoltNative`, but that injection happens when the browser-side load handler runs, which
+ * is *after* the document's own scripts start — so a page that decided at start-up found nothing and
+ * silently kept the sample behaviour (measured: a click opened the sample card instead of asking the
+ * shell). A call-time check also keeps the page honest when it is opened in a plain browser.
+ */
 function withNativeOpen(mock) {
+  const nativeBridge = () =>
+    typeof window.antikoltNative !== "undefined" ? window.antikoltNative : null;
   return {
     ...mock,
     cards: {
       ...mock.cards,
       open: async (id, options) => {
+        const native = nativeBridge();
+        if (!native) {
+          return mock.cards.open(id, options);
+        }
         // The card's own URL and title travel with the call: the shell may not know this card yet,
         // and the page is the only place the list currently lives. `cardLookup` holds the list the
         // page is actually showing (the core's, once it arrived), not the mock's samples.
@@ -723,7 +741,7 @@ function withNativeOpen(mock) {
           (await mock.cards.list()).find((entry) => entry.id === id) ||
           {};
         try {
-          await window.antikoltNative.openCard({
+          await native.openCard({
             ...(options || {}),
             id,
             url: card.url,
@@ -736,14 +754,15 @@ function withNativeOpen(mock) {
     },
     system: {
       ...mock.system,
-      engine: () => Promise.resolve("CEF (beágyazott kártya)"),
+      engine: () =>
+        Promise.resolve(
+          nativeBridge() ? "CEF (beágyazott kártya)" : "mock bridge (statikus előnézet)",
+        ),
     },
   };
 }
 
-const bridge = window.antikolt ?? (window.antikoltNative
-  ? withNativeOpen(mockBridge)
-  : mockBridge);
+const bridge = window.antikolt ?? withNativeOpen(mockBridge);
 const page = new HomePage(bridge);
 page.start().catch((error) => {
   console.error("home page failed to start", error);

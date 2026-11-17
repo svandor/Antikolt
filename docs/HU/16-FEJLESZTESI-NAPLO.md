@@ -3,6 +3,63 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizenhetedik szelet) — a kártyára kattintás tényleg megnyitja a kártyát
+
+A tizenhatodik szelet nyitott kérdésként hagyta: a szintetikus kattintás lefut, de nem ér el a lap
+kezelőjéig. Két külön hiba volt, mindkettő mérve.
+
+### 1. A kitűzött sor kártyái halottak voltak
+
+A DOM-lánc (a motor `eval`-jével mérve):
+
+```
+chain: ["ANTIKOLT-CARD", "pinned", "pinned-section", "MAIN", "BODY", "HTML"]
+insideViewport: false
+```
+
+A kattintás-figyelő a `#viewport`-on volt delegálva, a **kitűzött (pinned) sor viszont azon kívül él**
+— vagyis a legszembetűnőbb kártyák egyáltalán nem reagáltak kattintásra. Javítás: a delegálás a
+`document`-en, a `closest(".card, antikolt-card")` dönti el, mit találtak el. Mindkét helyre egy
+figyelő.
+
+### 2. A lap a mintakártyát nyitotta, mert induláskor döntött a hídról
+
+A javított figyelő már lefutott, de a motor naplója ezt mutatta (a lap `console`-ja):
+
+```
+console level=2 file:///…/home/app.js:101 [mock] open card 01MOCK… https://mail.google.com/
+```
+
+Vagyis a kattintás a **minta** `cards.open`-jét hívta. Az ok: a lap a szkript indulásakor döntött arról,
+hogy van-e `window.antikoltNative` — a motor viszont a betöltés **után** fecskendezi be, tehát a lap
+mindig a minta-ághoz ragadt. Javítás: a híd **hívás-időben** dől el (`withNativeOpen` →
+`nativeBridge()`), és ha nincs natív híd (a fájlt sima böngészőben nyitották meg), a minta-viselkedésre
+esik vissza.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --gridtest <motor>
+core_cards=3
+grid_source=core
+grid_count=3
+grid_card=Antikolt projekt / Hacker News / Wikipedia — kezdőlap
+grid_matches_core=ok
+grid_click_url=https://github.com/antikolt/antikolt
+card_click=clicked
+card_surface=2
+grid_click_open=ok      (exit code 0)
+```
+
+A motor oldaláról ugyanez: `bridge_call surface=1 method=open_card`, kétszer (a kitűzött sor és a rács
+kártyájára is) — a próba mindkettőt külön mérte.
+
+### Ami még nyitott
+
+- A kattintás-fázis a `--gridtest`-ben most **elvárás**, nem megfigyelés: ha a híd vagy a delegálás
+  elromlik, a teszt bukik.
+- A kérés-irány (a lap kérdez: keresés, frissítés, új kártya) továbbra is protokoll v2 (ADR-032).
+
 ## 2026-11-17 (tizenhatodik szelet) — a rács a mag kártyáit mutatja (és a lap szkriptje eddig nem futott)
 
 A rács eddig a kezdőlap saját **mintakártyáit** mutatta. Ez a szelet bekötötte a mag kártyatárát — és
@@ -83,12 +140,11 @@ console-üzenete nélkül a hibák láthatatlanok**, ezért a motor mostantól n
 
 - **A kérés-irány** (a lap kérdez: keresés, frissítés, új kártya) a perzisztens `cefQuery`-vel jön, és
   a `bridge_result` üzenettel **protokoll v2** (ADR-032); addig a tolás marad.
-- **A kattintás útja nyitott kérdés.** A szintetikus kattintás (`antikolt-card.click()`) lefut, de nem
-  éri el a lap saját kattintás-kezelőjét: a közvetlen hídhívás (`window.antikoltNative.openCard(…)`)
-  viszont működik (a motor `bridge_call surface=1 method=open_card` sort ír). A `--gridtest`
-  kattintás-fázisát ezért **visszavontam** — egy bizonytalan teszt rosszabb a semminél —, és a hibát
-  itt rögzítem a következő szeletre (valószínű: a `#viewport` nem őse a kártyáknak, vagy a
-  kártya-elem saját kezelője nyeli el az eseményt).
+- **A kattintás útja** a tizenhetedik szeletben megoldódott (két külön hiba: a delegált figyelő a
+  `#viewport`-on volt, a kitűzött sor viszont azon kívül él; és a lap induláskor döntött a hídról,
+  mielőtt a motor befecskendezte). A `--gridtest` kattintás-fázisa ott tért vissza, immár mérve.
+- **A lap `cards.open`-je a mintakártyát nyitotta** — ugyanaz a start-up döntés; a részletek és a
+  javítás a tizenhetedik szeletben.
 - A rács **előnézetei** még nincsenek (a `capture` primitív kész, a 260×150-es WebP-pipeline nem).
 - A kártyák szerkesztése/címkézése/pin-jelölése a lapon még nincs: a mag tudja (`cards_upsert`), a híd
   nem vezet rá utat.
