@@ -9,6 +9,8 @@ qt_add_executable(antikolt-shell
   src/main.cpp
   src/main_window.cpp
   src/main_window.h
+  src/engine_client.cpp
+  src/engine_client.h
 )
 
 target_include_directories(antikolt-shell PRIVATE src)

@@ -3,11 +3,18 @@
 #include "main_window.h"
 
 #include <QActionGroup>
-#include <QFont>
+#include <QCoreApplication>
+#include <QDir>
+#include <QJsonArray>
+#include <QFileInfo>
 #include <QLabel>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QUrl>
 #include <QVBoxLayout>
+
+#include "engine_client.h"
 
 namespace {
 
@@ -32,9 +39,44 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     buildToolBar();
     buildPlaceholder();
 
-    statusBar()->showMessage(QStringLiteral("motor: nincs betöltve · kártyák: 0 · memória: —"));
+    status_ = new QLabel(this);
+    statusBar()->addWidget(status_);
 
+    engine_ = new EngineClient(this);
+    connect(engine_, &EngineClient::failed, this, [this](const QString& message) {
+        setStatus(QStringLiteral("motor hiba: %1").arg(message));
+    });
+    connect(engine_, &EngineClient::engineReady, this, [this](const QJsonObject& info) {
+        setStatus(QStringLiteral("motor: %1 %2 · képességek: %3")
+                      .arg(info.value(QStringLiteral("name")).toString(),
+                           info.value(QStringLiteral("version")).toString())
+                      .arg(info.value(QStringLiteral("capabilities")).toArray().size()));
+        loadHome();
+    });
+    connect(engine_, &EngineClient::surfaceCreated, this, [this](qint64 surface) {
+        surface_ = surface;
+        setStatus(QStringLiteral("kártya felület: %1").arg(surface));
+    });
+    connect(engine_, &EngineClient::loadFinished, this,
+            [this](qint64 surface, const QString& url, int httpStatus) {
+                setStatus(QStringLiteral("betöltve (#%1, %2): %3")
+                              .arg(surface)
+                              .arg(httpStatus)
+                              .arg(url));
+            });
+    connect(engine_, &EngineClient::surfaceClosed, this, [this](qint64) {
+        surface_ = 0;
+        setStatus(QStringLiteral("kártya lemezre mentve · memória felszabadítva"));
+    });
+
+    setStatus(QStringLiteral("motor: nincs elindítva · kártyák: 0"));
     applyTheme(QStringLiteral("grey"));
+}
+
+MainWindow::~MainWindow() {
+    if (engine_ != nullptr) {
+        engine_->shutdown();
+    }
 }
 
 QStringList MainWindow::themeNames() {
@@ -106,9 +148,103 @@ bool MainWindow::applyTheme(const QString& theme) {
     setPalette(windowPalette);
 
     currentTheme_ = theme;
-    statusBar()->showMessage(
-        QStringLiteral("téma: %1 · motor: nincs betöltve · kártyák: 0 · memória: —").arg(theme));
     return true;
+}
+
+QString MainWindow::engineExecutable() {
+    const QString fromEnvironment = qEnvironmentVariable("ANTIKOLT_ENGINE");
+    if (!fromEnvironment.isEmpty() && QFileInfo::exists(fromEnvironment)) {
+        return fromEnvironment;
+    }
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + QStringLiteral("/antikolt-engine-host.exe"),
+        appDir + QStringLiteral("/../engine-host/antikolt-engine-host.exe"),
+        appDir + QStringLiteral("/apps/engine-host/antikolt-engine-host.exe"),
+    };
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return QDir::cleanPath(candidate);
+        }
+    }
+    return {};
+}
+
+QString MainWindow::homePageUrl() {
+    const QString fromEnvironment = qEnvironmentVariable("ANTIKOLT_HOME");
+    if (!fromEnvironment.isEmpty()) {
+        return QUrl::fromLocalFile(fromEnvironment).toString();
+    }
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + QStringLiteral("/../home/index.html"),
+        appDir + QStringLiteral("/../../../home/index.html"),
+        QDir::currentPath() + QStringLiteral("/home/index.html"),
+    };
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return QUrl::fromLocalFile(QDir::cleanPath(candidate)).toString();
+        }
+    }
+    return QStringLiteral("about:blank");
+}
+
+void MainWindow::startEngine() {
+    const QString enginePath = engineExecutable();
+    if (enginePath.isEmpty()) {
+        setStatus(QStringLiteral("nem találom a motorházat (állítsd be az ANTIKOLT_ENGINE változót)"));
+        return;
+    }
+
+    const QString profile =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/engine");
+    QDir().mkpath(profile);
+
+    if (!engine_->start(enginePath, profile)) {
+        return;
+    }
+    setStatus(QStringLiteral("motor indítása: %1").arg(enginePath));
+    engine_->handshake();
+}
+
+void MainWindow::loadHome() {
+    if (!engine_->isRunning()) {
+        return;
+    }
+    if (surface_ != 0) {
+        engine_->navigate(surface_, homePageUrl());
+        return;
+    }
+    const int scalePercent = static_cast<int>(devicePixelRatioF() * 100.0);
+    engine_->createSurface(
+        QStringLiteral("persist:home"), 1280, 800, scalePercent,
+        [this](const QJsonObject& result, const QString& error) {
+            if (!error.isEmpty()) {
+                setStatus(QStringLiteral("felület hiba: %1").arg(error));
+                return;
+            }
+            surface_ = static_cast<qint64>(result.value(QStringLiteral("surface")).toDouble());
+            engine_->navigate(surface_, homePageUrl());
+        });
+}
+
+void MainWindow::freezeCard() {
+    if (!engine_->isRunning() || surface_ == 0) {
+        setStatus(QStringLiteral("nincs mit fagyasztani"));
+        return;
+    }
+    const qint64 surface = surface_;
+    engine_->snapshot(surface, [this, surface](const QJsonObject& result, const QString& error) {
+        if (!error.isEmpty()) {
+            setStatus(QStringLiteral("fagyasztás hiba: %1").arg(error));
+            return;
+        }
+        setStatus(QStringLiteral("pillanatkép: %1 bájt + állapot %2 bájt")
+                      .arg(result.value(QStringLiteral("bytes")).toInt())
+                      .arg(result.value(QStringLiteral("state_bytes")).toInt()));
+        engine_->destroySurface(surface);
+    });
 }
 
 void MainWindow::buildToolBar() {
@@ -116,10 +252,9 @@ void MainWindow::buildToolBar() {
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
 
-    toolbar->addAction(QStringLiteral("⌂ Kezdőlap"));
-    toolbar->addAction(QStringLiteral("←"));
-    toolbar->addAction(QStringLiteral("→"));
-    toolbar->addAction(QStringLiteral("⟳"));
+    toolbar->addAction(QStringLiteral("Motor indítása"), this, &MainWindow::startEngine);
+    toolbar->addAction(QStringLiteral("⌂ Kezdőlap"), this, &MainWindow::loadHome);
+    toolbar->addAction(QStringLiteral("❄ Fagyasztás"), this, &MainWindow::freezeCard);
 
     auto* spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -151,18 +286,24 @@ void MainWindow::buildPlaceholder() {
     placeholder_->setWordWrap(true);
     placeholder_->setText(QStringLiteral(
         "A kezdőlap itt jelenik meg.\n\n"
-        "Ez a felület a héj (Qt) váza: a kártyarács és az oldalak a motorházban (CEF) futnak, "
-        "külön folyamatban, hogy a motor bármikor leállítható legyen (ADR-004).\n\n"
-        "A statikus előnézet megnyitható a repóból: home/index.html"));
+        "A kártyarácsot a motorház tölti be; a felület és a motor a saját protokolljukon beszélnek.\n"
+        "Nyomd meg a „Motor indítása” gombot: a motorház megnyílik, betölti a kezdőlapot; a "
+        "„Fagyasztás” lemezre menti a kártyát és felszabadítja a memóriát."));
 
     auto* hint = new QLabel(root);
     hint->setObjectName(QStringLiteral("antikoltHint"));
     hint->setText(QStringLiteral(
-        "Következő lépés: a motorház prototípusa (CEF) és az F0 memória-mérés a három "
-        "referenciaoldalon."));
+        "Következő lépés: a motor ablaka a saját ablakunkba ágyazva (cross-process embedding)."));
 
     layout->addWidget(placeholder_, 1);
     layout->addWidget(hint, 0);
 
     setCentralWidget(root);
+}
+
+void MainWindow::setStatus(const QString& text) {
+    if (status_ != nullptr) {
+        status_->setText(text);
+    }
+    statusBar()->showMessage(text);
 }

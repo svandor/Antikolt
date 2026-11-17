@@ -5,20 +5,101 @@
 // `--selftest` exists so that CI (and the first F0 spike) can prove the UI stack initialises without
 // showing a window: it prints the Qt version, the platform plugin, the screen geometry and checks
 // that every documented theme produces a stylesheet. A build that cannot do this is not a build.
+//
+// With `--engine <path>` it goes one step further and proves the shell/engine seam: it starts the
+// engine host, performs the `hello`/`welcome` handshake, creates a surface and destroys it. That
+// exchange is the whole point of running the browser engine in a second process.
 
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QDir>
+#include <QEventLoop>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QScreen>
+#include <QStandardPaths>
 #include <QSysInfo>
 #include <QTextStream>
+#include <QTimer>
 
+#include "engine_client.h"
 #include "main_window.h"
 
 namespace {
 
-int runSelfTest() {
+/// Drive the engine host once and report what it says. True when the whole exchange worked.
+bool runEngineCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    EngineClient client;
+
+    const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                            QStringLiteral("/engine-selftest");
+    QDir().mkpath(profile);
+
+    if (!client.start(enginePath, profile, /*hidden=*/true)) {
+        out << "engine_start=FAILED\n";
+        return false;
+    }
+    out << "engine_start=ok\n";
+
+    // The engine answers with `welcome` only after we greet it (proto/README.md).
+    client.handshake();
+
+    QEventLoop loop;
+    bool handshake_ok = false;
+    bool surface_ok = false;
+    bool destroy_ok = false;
+
+    QObject::connect(&client, &EngineClient::engineReady, &loop,
+                     [&](const QJsonObject& info) {
+                         out << "engine_name=" << info.value(QStringLiteral("name")).toString()
+                             << '\n';
+                         out << "engine_version="
+                             << info.value(QStringLiteral("version")).toString() << '\n';
+                         out << "engine_capabilities="
+                             << info.value(QStringLiteral("capabilities")).toArray().size() << '\n';
+                         handshake_ok = true;
+
+                         client.createSurface(
+                             QStringLiteral("persist:selftest"), 800, 600, 100,
+                             [&](const QJsonObject& result, const QString& error) {
+                                 if (!error.isEmpty()) {
+                                     out << "create_surface=FAILED " << error << '\n';
+                                     loop.quit();
+                                     return;
+                                 }
+                                 const qint64 surface =
+                                     static_cast<qint64>(result.value(QStringLiteral("surface"))
+                                                             .toDouble());
+                                 out << "surface=" << surface << '\n';
+                                 surface_ok = surface > 0;
+                                 client.destroySurface(
+                                     surface, [&](const QJsonObject&, const QString& failure) {
+                                         out << "destroy_surface="
+                                             << (failure.isEmpty() ? "ok" : "FAILED") << '\n';
+                                         destroy_ok = failure.isEmpty();
+                                         loop.quit();
+                                     });
+                             });
+                     });
+
+    QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "engine_error=" << message << '\n';
+        loop.quit();
+    });
+
+    // A silent engine must never hang the self test.
+    QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+    loop.exec();
+    client.shutdown();
+    out.flush();
+
+    return handshake_ok && surface_ok && destroy_ok;
+}
+
+int runSelfTest(bool with_engine, const QString& enginePath) {
     QTextStream out(stdout);
     out << "antikolt-shell " << ANTIKOLT_VERSION << '\n';
     out << "qt=" << qVersion() << '\n';
@@ -50,6 +131,11 @@ int runSelfTest() {
             ++failures;
         }
     }
+    out.flush();
+
+    if (with_engine && !runEngineCheck(enginePath)) {
+        ++failures;
+    }
 
     out << (failures == 0 ? "ok" : "FAILED") << '\n';
     out.flush();
@@ -73,11 +159,16 @@ int main(int argc, char* argv[]) {
     const QCommandLineOption selftest(
         QStringLiteral("selftest"),
         QStringLiteral("Initialise the UI stack, print diagnostics and exit."));
+    const QCommandLineOption engine(
+        QStringLiteral("engine"),
+        QStringLiteral("Run the shell/engine handshake during --selftest against this engine host."),
+        QStringLiteral("path"));
     parser.addOption(selftest);
+    parser.addOption(engine);
     parser.process(app);
 
     if (parser.isSet(selftest)) {
-        return runSelfTest();
+        return runSelfTest(parser.isSet(engine), parser.value(engine));
     }
 
     MainWindow window;
