@@ -670,12 +670,16 @@ int runLifecycleCheck(const QString& enginePath) {
                              home_surface = id;
                              out << "home_loaded=" << url << '\n';
                              // Click a card as a user would, then say nothing and wait.
+                             // Click an *unpinned* card as a user would: the first tile may be a pinned
+                             // one, and a pinned card is exactly what must not hibernate (phase 2).
                              QTimer::singleShot(500, &loop, [&, id] {
                                  client->evaluate(
                                      id,
                                      QStringLiteral(
-                                         "document.querySelector('#viewport antikolt-card').click();"
-                                         " 'clicked'"),
+                                         "(function(){var els=document.querySelectorAll('#viewport "
+                                         "antikolt-card');for(var i=0;i<els.length;i++){if(els[i].card"
+                                         "&&!els[i].card.pinned){els[i].click();return 'clicked';}}"
+                                         "return 'no-unpinned-card';})()"),
                                      [&](const QJsonObject& reply, const QString& error) {
                                          clicked = error.isEmpty() &&
                                                    reply.value(QStringLiteral("value")).toString() ==
@@ -708,9 +712,48 @@ int runLifecycleCheck(const QString& enginePath) {
 
     out << "hibernated=" << (closed ? "ok" : "FAILED") << '\n';
     out << "grid_returned=" << (back ? "ok" : "FAILED") << '\n';
+
+    // 2. The documented opt-out (docs/HU/02 §4.2): the same shell and the same shortened clock, but
+    //    this card is opened as *pinned*, so the clock has to leave it alone. If the flag is lost
+    //    anywhere along the way, the card is closed well before the wait here ends.
+    qint64 pinned_surface = 0;
+    bool pinned_opened = false;
+    bool pinned_closed = false;
+    if (closed && back && home_surface != 0) {
+        QEventLoop pinned_loop;
+        QObject::connect(client, &EngineClient::surfaceCreated, &pinned_loop, [&](qint64 id) {
+            if (id != home_surface && pinned_surface == 0) {
+                pinned_surface = id;
+                pinned_opened = true;
+                out << "pinned_surface=" << id << '\n';
+            }
+        });
+        QObject::connect(client, &EngineClient::surfaceClosed, &pinned_loop, [&](qint64 id) {
+            if (id == pinned_surface) {
+                pinned_closed = true;
+                out << "pinned_closed=" << id << '\n';
+                pinned_loop.quit();
+            }
+        });
+        client->evaluate(
+            home_surface,
+            QStringLiteral("window.antikoltNative.openCard({id:'probe', url:'about:blank', "
+                           "title:'pinned probe', pinned:true}); 'sent'"),
+            [&](const QJsonObject& reply, const QString& error) {
+                out << "pinned_open="
+                    << (error.isEmpty() ? reply.value(QStringLiteral("value")).toString()
+                                        : QStringLiteral("FAILED ") + error)
+                    << '\n';
+            });
+        // More than four clock periods: a broken opt-out closes the card long before this fires.
+        QTimer::singleShot(6500, &pinned_loop, &QEventLoop::quit);
+        pinned_loop.exec();
+    }
+    out << "pinned_honoured=" << ((pinned_opened && !pinned_closed) ? "ok" : "FAILED") << '\n';
+
     window.close();
     out.flush();
-    return closed && back ? 0 : 1;
+    return closed && back && pinned_opened && !pinned_closed ? 0 : 1;
 }
 
 /// Prove the grid shows the cards the core owns, not the page's built-in samples.

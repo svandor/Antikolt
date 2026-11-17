@@ -26,11 +26,12 @@ Amit **kötelező** tiszteletben tartani (a szeletek ettől függnek):
 
 ## 1. Kitűzött kártya kivétele a hibernálásból
 
-> **Állapot: az 1–5. lépés kész és zöld** (`50ded02`) — a `pinned` jelző végigmegy a hídon
-> (`app.js` → `open_card` args → `MainWindow::live_card_pinned_`), az `onIdleTimeout` kihagyja a
-> hibernálást, a `surfaceDetached` nullázza. Ami **hiányzik: a kitűzött ág mérése** — a 6. lépés
-> (a `--lifecycletest` második fázisa) az, ami ezt lezárja. A meglévő öntesztek a jelzővel együtt is
-> zöldek (`hibernated=ok`, `grid_returned=ok`, `grid_matches_core=ok`, `grid_click_open=ok`).
+> **Állapot: kész és mérve** (`50ded02` + a 21. szelet) — a `pinned` jelző végigmegy a hídon
+> (`app.js` → `open_card` args → `pending_pinned_` → `live_card_pinned_` a felület csatolásakor), az
+> `onIdleTimeout` kihagyja a hibernálást, a `surfaceDetached` nullázza. A `--lifecycletest` **mindkét
+> ágat** méri: `hibernated=ok` (nem kitűzött) és `pinned_honoured=ok` (kitűzött, 4 óraütés után is él).
+> A közben talált hiba (a rács `detach`-ja kitörölte a jelzőt) és a mag vetett kártyáinak kitűzött
+> mivolta a 21. szelet bejegyzésében van.
 
 **Miért:** a dokumentált opt-out (`02-ARCHITEKTURA.md` §4.2) — a felhasználó kérheti, hogy egy kártya
 maradjon életben. A hibernálás ezt a szelet előtt nem kérdezte.

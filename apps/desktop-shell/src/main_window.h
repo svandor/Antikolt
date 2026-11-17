@@ -119,6 +119,9 @@ private:
     /// hibernation (docs/HU/02 §4.2); the flag arrives with the page's open request, because the shell
     /// does not keep the card list.
     bool live_card_pinned_ = false;
+    /// The flag from the page's open request, held until the card's surface is attached: the grid's
+    /// own detach happens in between and would otherwise clear it.
+    bool pending_pinned_ = false;
     /// The card waiting to be shown once a surface exists.
     QString pending_url_;
     QString pending_title_;

@@ -117,7 +117,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             home_surface_ = surface;
         } else {
             home_surface_ = 0;
-            // A card just came to the front: the hibernation clock starts now.
+            // A card just came to the front: the hibernation clock starts now, and the pinned flag
+            // from the open request belongs to *this* card (the grid's detach came before it).
+            live_card_pinned_ = pending_pinned_;
+            pending_pinned_ = false;
             armIdleTimer();
         }
     });
@@ -475,7 +478,7 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                           .arg(surface));
             return;
         }
-        live_card_pinned_ = args.value(QStringLiteral("pinned")).toBool();
+        pending_pinned_ = args.value(QStringLiteral("pinned")).toBool();
         openCard(url, title);
         return;
     }

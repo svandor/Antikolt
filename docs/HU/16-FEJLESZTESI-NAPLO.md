@@ -3,6 +3,39 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonegyedik szelet) — a kitűzött kártya mérve marad életben
+
+A huszadik szelet a `pinned` jelzőt bekötötte, de mérés nélkül hagyta. A mérés (`--lifecycletest`
+2. fázisa) két dolgot hozott: egy **igazi hibát** a shellben, és egy **tényt a mag adatairól**.
+
+1. **Hiba:** a `live_card_pinned_` a hídhíváskor állt be, de a kártyacsere közben a **rács** saját
+   `detach`-ja kitörölte — a jelző elveszett, a kitűzött kártya is hibernálódott (`pinned_closed=4`,
+   `pinned_honoured=FAILED`). Javítás: a jelző `pending_pinned_`-ben vár, és a **kártya felületének
+   csatolásakor** kerül át (`surfaceAttached`, nem-kezdőlap ág).
+2. **Tény:** a mag vetett kártyái között az első („Antikolt projekt”) **kitűzött** — ezért a teszt
+   1. fázisa, amely az első rács-kártyára kattintott, a jelző bekapcsolása után elbukott
+   (`hibernated=FAILED`). A teszt most **nem kitűzött** kártyát keres a rácsban, a 2. fázis pedig
+   kifejezetten kitűzöttet nyit.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --lifecycletest <motor>
+card_surface=2
+card_closed=2                                       ← a nem kitűzött kártya hibernálódik
+grid_back=file:///D:/Szerver/Antikolt/home/index.html
+hibernated=ok
+grid_returned=ok
+pinned_open=sent
+pinned_surface=4
+pinned_honoured=ok                                  ← a kitűzött kártya 4 óraütés után is él
+exit code 0
+```
+
+A `--gridtest` változatlanul zöld (`grid_matches_core=ok`, `grid_click_open=ok`). A tanulság ugyanaz,
+mint a korábbi szeleteknél: **a jelző végigvitele nem bizonyíték** — csak az, hogy a két ág mérve
+másképp viselkedik.
+
 ## 2026-11-17 (huszadik szelet) — egy parancs minden ellenőrzésre
 
 A hat önteszt eddig hat külön, fejből tudott parancs volt — és egy munkamenet, amely egyet elfelejt,
