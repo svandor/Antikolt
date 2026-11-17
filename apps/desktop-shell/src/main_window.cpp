@@ -15,6 +15,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include "core_client.h"
 #include "engine_client.h"
 #include "live_card.h"
 
@@ -102,6 +103,9 @@ MainWindow::~MainWindow() {
     // be closed *before* Qt destroys the widget that owns it, and the engine has to be gone before the
     // process exits. Getting this wrong crashed with an access violation after every successful run.
     closeLiveCard();
+    if (core_ != nullptr) {
+        core_->shutdown();
+    }
     if (engine_ != nullptr) {
         engine_->shutdown();
     }
@@ -233,6 +237,25 @@ QString MainWindow::homePageUrl() {
     return QStringLiteral("about:blank");
 }
 
+QString MainWindow::coreExecutable() {
+    const QString fromEnvironment = qEnvironmentVariable("ANTIKOLT_CORE");
+    if (!fromEnvironment.isEmpty() && QFileInfo::exists(fromEnvironment)) {
+        return fromEnvironment;
+    }
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + QStringLiteral("/antikolt-core-service.exe"),
+        appDir + QStringLiteral("/../../../target/debug/antikolt-core-service.exe"),
+        appDir + QStringLiteral("/../../../target/release/antikolt-core-service.exe"),
+    };
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return QDir::cleanPath(candidate);
+        }
+    }
+    return {};
+}
+
 void MainWindow::startEngine() {
     const QString enginePath = engineExecutable();
     if (enginePath.isEmpty()) {
@@ -249,6 +272,32 @@ void MainWindow::startEngine() {
     }
     setStatus(QStringLiteral("motor indítása: %1").arg(enginePath));
     engine_->handshake();
+
+    // The core owns the data. A missing core must not stop the browser from working: it only means the
+    // grid cannot show real cards yet, and the user deserves to be told that instead of seeing nothing.
+    if (core_ == nullptr) {
+        core_ = new CoreClient(this);
+        connect(core_, &CoreClient::failed, this, [this](const QString& message) {
+            setStatus(QStringLiteral("mag hiba: %1").arg(message));
+        });
+        connect(core_, &CoreClient::ready, this, [this](const QJsonObject& info) {
+            setStatus(QStringLiteral("mag: %1 %2")
+                          .arg(info.value(QStringLiteral("name")).toString(),
+                               info.value(QStringLiteral("version")).toString()));
+        });
+    }
+    if (!core_->isRunning()) {
+        const QString corePath = coreExecutable();
+        const QString coreData =
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+            QStringLiteral("/core");
+        QDir().mkpath(coreData);
+        if (corePath.isEmpty()) {
+            setStatus(QStringLiteral("a mag nem található (ANTIKOLT_CORE) — a rács egyelőre mintaadatot mutat"));
+        } else if (core_->start(corePath, coreData)) {
+            core_->handshake();
+        }
+    }
 }
 
 void MainWindow::ensureSurface() {

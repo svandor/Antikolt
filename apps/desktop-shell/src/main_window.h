@@ -15,6 +15,7 @@
 
 class QLabel;
 class EngineClient;
+class CoreClient;
 class LiveCard;
 
 /// One theme's colour tokens, mirroring docs/HU/08-DIZAJN.md §1.
@@ -53,6 +54,9 @@ public:
     /// directory, so a developer build works without configuration.
     static QString engineExecutable();
 
+    /// Where the core service lives. Honours ANTIKOLT_CORE, then the Cargo build layout.
+    static QString coreExecutable();
+
     /// The home page to load in the engine (the editable card grid).
     static QString homePageUrl();
 
@@ -81,6 +85,8 @@ private:
     QLabel* status_ = nullptr;
     QString currentTheme_;
     EngineClient* engine_ = nullptr;
+    /// The core owns the data; the shell only asks it.
+    CoreClient* core_ = nullptr;
     qint64 surface_ = 0;
     /// The card waiting to be shown once a surface exists.
     QString pending_url_;
