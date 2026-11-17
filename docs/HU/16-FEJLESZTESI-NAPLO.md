@@ -3,6 +3,28 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizennyolcadik szelet) — a shell naplója látszik
+
+A tizennegyedik szelet nyitott tétele volt: „a motor `stderr`-je a shell alatt nem látszik (a `qInfo`
+út nem ér el a konzolig)". Ez a szelet bekötötte: a shell `qInstallMessageHandler`-rel a **stderr-re**
+írja a Qt-üzeneteket, és a motor `stderr`-jét a `qInfo`-n keresztül továbbítja — így a motor naplója
+ugyanabban a terminálban olvasható, ahol a shell fut.
+
+Mérve, egy `--gridtest` futás alatt a shell kimenetén (nem külön próbával):
+
+```
+[shell] info: [engine] [engine-host] op=eval id=9 surface=1
+[shell] info: [engine] [engine-host] bridge_call surface=1 method=open_card
+[shell] info: [engine] [engine-host] op=snapshot id=10 surface=1
+[shell] info: [engine] [engine-host] state: 411 bytes written
+[shell] info: [engine] [engine-host] snapshot written: 17065 bytes MHTML, 411 bytes state
+[shell] info: [engine] [engine-host] op=create_surface id=12 surface=0
+```
+
+Ez a láthatóság nem kényelmi kérdés: a tizenhatodik szelet két hibáját (elutasított modul-szkript,
+`ShadowRoot.dataset`) **csak** azért lehetett megtalálni, mert a lap `console`-ja a motor naplójába
+került — és addig az a napló a shell alatt elveszett.
+
 ## 2026-11-17 (tizenhetedik szelet) — a kártyára kattintás tényleg megnyitja a kártyát
 
 A tizenhatodik szelet nyitott kérdésként hagyta: a szintetikus kattintás lefut, de nem ér el a lap

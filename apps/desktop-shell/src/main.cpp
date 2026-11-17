@@ -45,6 +45,40 @@
 
 namespace {
 
+/// Qt's own messages — and the engine's forwarded stderr, which arrives through `qInfo` — go to
+/// stderr instead of the platform debug output.
+///
+/// A console build must be readable from the terminal, and a swallowed engine log is exactly how a
+/// page-side failure stayed invisible for two slices: the engine said `console level=4 … TypeError`
+/// and the shell threw it away. Everything the engine reports is now visible where the shell runs.
+void ForwardQtMessages(QtMsgType type, const QMessageLogContext& context, const QString& message) {
+    (void)context;
+    const char* level = "info";
+    switch (type) {
+        case QtDebugMsg:
+            level = "debug";
+            break;
+        case QtInfoMsg:
+            level = "info";
+            break;
+        case QtWarningMsg:
+            level = "warning";
+            break;
+        case QtCriticalMsg:
+            level = "critical";
+            break;
+        case QtFatalMsg:
+            level = "fatal";
+            break;
+    }
+    const QByteArray text = message.toUtf8();
+    std::fprintf(stderr, "[shell] %s: %s\n", level, text.constData());
+    std::fflush(stderr);
+    if (type == QtFatalMsg) {
+        std::abort();
+    }
+}
+
 /// Drive the engine host once and report what it says. True when the whole exchange worked.
 bool runEngineCheck(const QString& enginePath) {
     QTextStream out(stdout);
@@ -1003,6 +1037,8 @@ int runSelfTest(bool with_engine, const QString& enginePath) {
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
+    // Before anything can log: see ForwardQtMessages.
+    qInstallMessageHandler(ForwardQtMessages);
     QApplication::setApplicationName(QStringLiteral("Antikolt"));
     QApplication::setApplicationVersion(QStringLiteral(ANTIKOLT_VERSION));
     QApplication::setOrganizationName(QStringLiteral("Antikolt Project"));
