@@ -40,6 +40,11 @@ quint32 decodeLength(const char* bytes) {
 EngineClient::EngineClient(QObject* parent) : QObject(parent) {}
 
 EngineClient::~EngineClient() {
+    // The window that owns us is already partly destroyed, so no callback and no signal may fire any
+    // more: a queued reply calling back into a dead MainWindow was an access violation on exit.
+    destroying_ = true;
+    pending_.clear();
+    blockSignals(true);
     if (process_ != nullptr) {
         process_->kill();
         process_->waitForFinished(3000);
@@ -173,6 +178,12 @@ void EngineClient::evaluate(qint64 surface, const QString& script, ReplyHandler 
     send(QStringLiteral("eval"), fields, std::move(handler));
 }
 
+void EngineClient::installBridge(qint64 surface, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    send(QStringLiteral("install_bridge"), fields, std::move(handler));
+}
+
 void EngineClient::navigate(qint64 surface, const QString& url, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
@@ -272,6 +283,9 @@ void EngineClient::handleEvent(const QJsonObject& event) {
         emit surfaceCreated(surface);
     } else if (type == QStringLiteral("surface_closed")) {
         emit surfaceClosed(surface);
+    } else if (type == QStringLiteral("bridge_call")) {
+        emit bridgeCall(surface, event.value(QStringLiteral("method")).toString(),
+                        event.value(QStringLiteral("args")).toObject());
     }
 }
 
@@ -284,6 +298,10 @@ void EngineClient::onProcessFinished(int exitCode) {
 }
 
 void EngineClient::failPending(const QString& message) {
+    if (destroying_) {
+        pending_.clear();
+        return;
+    }
     const auto callbacks = pending_;
     pending_.clear();
     for (const ReplyHandler& callback : callbacks) {

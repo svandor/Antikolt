@@ -140,6 +140,13 @@ fn one_of_each() -> Vec<Message> {
             },
         },
         Message::Event {
+            event: EngineEvent::BridgeCall {
+                surface,
+                method: "open_card".into(),
+                args: serde_json::json!({"id": "c_01hq", "url": "https://example.com/"}),
+            },
+        },
+        Message::Event {
             event: EngineEvent::SurfaceCreated { surface },
         },
         Message::Event {

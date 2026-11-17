@@ -303,6 +303,17 @@ pub enum EngineEvent {
         url: String,
         suggested_name: String,
     },
+    /// The page called the shell through the injected JS bridge (`window.cefQuery`).
+    ///
+    /// This is how the editable home page asks for a card to be opened: the page talks to the engine,
+    /// the engine reports the call, and the core decides what happens. `args` is opaque to the
+    /// protocol on purpose — the meaning belongs to the core and the page.
+    BridgeCall {
+        surface: SurfaceId,
+        method: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
     /// A surface was created. CEF creates the browser asynchronously, so the reply to
     /// `create_surface` may arrive before the browser actually exists.
     SurfaceCreated {

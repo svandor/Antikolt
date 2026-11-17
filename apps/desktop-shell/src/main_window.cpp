@@ -4,6 +4,7 @@
 
 #include <QActionGroup>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -69,25 +70,56 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // The card owns the surface lifecycle locally; the window mirrors it for the status bar.
     connect(card_, &LiveCard::surfaceAttached, this, [this](qint64 surface) {
         surface_ = surface;
-        setStatus(QStringLiteral("kártya felület: %1 (%2×%3 fizikai pixel)")
+        // A pending card wins over the home page: this is the click-through path from the grid.
+        const QString target = pending_url_.isEmpty() ? homePageUrl() : pending_url_;
+        const bool opening_home = pending_url_.isEmpty();
+        const QString title = pending_title_;
+        pending_url_.clear();
+        pending_title_.clear();
+
+        setStatus(QStringLiteral("kártya felület: %1 · %2")
                       .arg(surface)
-                      .arg(card_->physicalSize().width())
-                      .arg(card_->physicalSize().height()));
-        engine_->navigate(surface, homePageUrl());
+                      .arg(title.isEmpty() ? target : title));
+        engine_->navigate(surface, target);
+        if (opening_home) {
+            // The grid is the only page allowed to talk to the shell. Installing it here (before the
+            // load finishes) is enough: the engine re-injects it whenever the page reloads.
+            engine_->installBridge(surface);
+        }
     });
     connect(card_, &LiveCard::surfaceDetached, this, [this](qint64 surface) {
         surface_ = 0;
         setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
     });
+    connect(engine_, &EngineClient::bridgeCall, this, &MainWindow::handleBridgeCall);
 
     setStatus(QStringLiteral("motor: nincs elindítva · kártyák: 0"));
     applyTheme(QStringLiteral("grey"));
 }
 
 MainWindow::~MainWindow() {
+    // Teardown order is not cosmetic: the browser lives in a child window of this window, so it has to
+    // be closed *before* Qt destroys the widget that owns it, and the engine has to be gone before the
+    // process exits. Getting this wrong crashed with an access violation after every successful run.
+    closeLiveCard();
     if (engine_ != nullptr) {
         engine_->shutdown();
     }
+}
+
+void MainWindow::closeLiveCard() {
+    if (engine_ == nullptr || card_ == nullptr) {
+        return;
+    }
+    const qint64 live = card_->surface();
+    if (live <= 0) {
+        return;
+    }
+    // Ask for the close and let `shutdown()` be the barrier: it waits for the engine process to exit,
+    // and the engine cannot exit before it has closed the browser. Pumping Qt events here instead
+    // re-enters widget destruction and crashed the process on the way out.
+    engine_->destroySurface(live, nullptr);
+    card_->detach();
 }
 
 QStringList MainWindow::themeNames() {
@@ -224,12 +256,77 @@ void MainWindow::ensureSurface() {
         return;
     }
     if (card_->hasSurface()) {
-        engine_->navigate(card_->surface(), homePageUrl());
+        engine_->navigate(card_->surface(), pending_url_.isEmpty() ? homePageUrl() : pending_url_);
         return;
     }
-    if (!card_->attach(engine_, QStringLiteral("persist:home"))) {
+    // One partition per card: two cards never share cookies or storage by accident (ADR-009).
+    const QString partition =
+        pending_url_.isEmpty()
+            ? QStringLiteral("persist:home")
+            : QStringLiteral("persist:card_%1")
+                  .arg(QString::fromLatin1(
+                      QCryptographicHash::hash(pending_url_.toUtf8(), QCryptographicHash::Sha1)
+                          .toHex()
+                          .left(12)));
+    if (!card_->attach(engine_, partition)) {
         setStatus(QStringLiteral("a kártya nem tudott felületet kérni a motortól"));
     }
+}
+
+void MainWindow::openCard(const QString& url, const QString& title) {
+    if (url.isEmpty()) {
+        setStatus(QStringLiteral("a kártyának nincs címe"));
+        return;
+    }
+    if (!engine_->isRunning()) {
+        setStatus(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot"));
+        return;
+    }
+    pending_url_ = url;
+    pending_title_ = title;
+
+    if (!card_->hasSurface()) {
+        ensureSurface();
+        return;
+    }
+
+    // Hibernation before switching is not optional: the live surface must be on disk before it is
+    // destroyed (invariant I2), otherwise the card the user just left is gone for good.
+    const qint64 previous = card_->surface();
+    engine_->snapshot(previous, [this, previous, title](const QJsonObject& result,
+                                                        const QString& error) {
+        if (error.isEmpty()) {
+            setStatus(QStringLiteral("előző kártya mentve (%1 bájt) · váltás: %2")
+                          .arg(result.value(QStringLiteral("bytes")).toInt())
+                          .arg(title.isEmpty() ? pending_url_ : title));
+        } else {
+            setStatus(QStringLiteral("az előző kártya mentése nem sikerült: %1").arg(error));
+        }
+        card_->detach();
+        engine_->destroySurface(previous, [this](const QJsonObject&, const QString&) {
+            ensureSurface();
+        });
+    });
+}
+
+void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args) {
+    if (method == QStringLiteral("open_card")) {
+        const QString url = args.value(QStringLiteral("url")).toString();
+        const QString title = args.value(QStringLiteral("title")).toString();
+        if (url.isEmpty()) {
+            setStatus(QStringLiteral("a kezdőlap cím nélküli kártyát kért megnyitni (#%1)")
+                          .arg(surface));
+            return;
+        }
+        openCard(url, title);
+        return;
+    }
+    if (method == QStringLiteral("freeze_card")) {
+        freezeCard();
+        return;
+    }
+    // An unknown method is a version mismatch, not a crash: say so and keep the surface alive.
+    setStatus(QStringLiteral("ismeretlen híd-hívás: %1").arg(method));
 }
 
 void MainWindow::loadHome() {
@@ -237,6 +334,9 @@ void MainWindow::loadHome() {
         setStatus(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot"));
         return;
     }
+    // Going home means leaving whatever card is open, so no pending URL may survive this.
+    pending_url_.clear();
+    pending_title_.clear();
     ensureSurface();
 }
 

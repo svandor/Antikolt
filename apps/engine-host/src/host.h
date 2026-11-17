@@ -20,6 +20,8 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_request_handler.h"
+#include "include/wrapper/cef_message_router.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -83,36 +85,63 @@ struct HostState {
     int bounds_width = 0;
     int bounds_height = 0;
     bool bounds_pending = false;
+    /// The shell installed the JS bridge on this surface. Off by default: a page may only reach the
+    /// shell when the shell decided it should.
+    std::atomic<bool> bridge_enabled{false};
     int64_t surface_id = 0;
 };
 
 /// The CEF application object. Handles the subprocess entry point and command-line switches.
-class EngineApp : public CefApp, public CefBrowserProcessHandler {
+///
+/// It carries both halves of the message router: the render process creates the JS side (`cefQuery`)
+/// and the browser process serves it. Without the render half the injected bridge is a function that
+/// does not exist, which on a page looks exactly like a broken home page.
+class EngineApp : public CefApp,
+                  public CefBrowserProcessHandler,
+                  public CefRenderProcessHandler {
 public:
     EngineApp() = default;
 
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
 
     void OnBeforeCommandLineProcessing(const CefString& process_type,
                                        CefRefPtr<CefCommandLine> command_line) override;
 
+    // ---- render process side --------------------------------------------------------------
+    void OnWebKitInitialized() override;
+    void OnContextCreated(CefRefPtr<CefBrowser> browser,
+                          CefRefPtr<CefFrame> frame,
+                          CefRefPtr<CefV8Context> context) override;
+    void OnContextReleased(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           CefRefPtr<CefV8Context> context) override;
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefProcessId source_process,
+                                  CefRefPtr<CefProcessMessage> message) override;
+
 private:
+    CefRefPtr<CefMessageRouterRendererSide> router_renderer_;
+
     IMPLEMENT_REFCOUNTING(EngineApp);
     DISALLOW_COPY_AND_ASSIGN(EngineApp);
 };
 
-/// One browser surface's client: lifespan, load and title callbacks.
+/// One browser surface's client: lifespan, load, title callbacks and the JS bridge.
 class EngineClient : public CefClient,
                      public CefLifeSpanHandler,
                      public CefLoadHandler,
-                     public CefDisplayHandler {
+                     public CefDisplayHandler,
+                     public CefRequestHandler,
+                     public CefMessageRouterBrowserSide::Handler {
 public:
-    EngineClient(HostState* state, bool quit_on_first_load)
-        : state_(state), quit_on_first_load_(quit_on_first_load) {}
+    EngineClient(HostState* state, bool quit_on_first_load);
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
@@ -125,10 +154,33 @@ public:
                      const CefString& errorText,
                      const CefString& failedUrl) override;
     void OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) override;
+    void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                   TerminationStatus status,
+                                   int error_code,
+                                   const CefString& error_string) override;
+
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefProcessId source_process,
+                                  CefRefPtr<CefProcessMessage> message) override;
+
+    // ---- JS bridge ------------------------------------------------------------------------
+    /// Serve one `cefQuery` from the page. Only surfaces the shell explicitly enabled can talk to us,
+    /// otherwise any page that guessed the function name would get a capability it never asked for.
+    bool OnQuery(CefRefPtr<CefBrowser> browser,
+                 CefRefPtr<CefFrame> frame,
+                 int64_t query_id,
+                 const CefString& request,
+                 bool persistent,
+                 CefRefPtr<Callback> callback) override;
+    void OnQueryCanceled(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefFrame> frame,
+                         int64_t query_id) override;
 
 private:
     HostState* state_;
     bool quit_on_first_load_;
+    CefRefPtr<CefMessageRouterBrowserSide> router_;
 
     IMPLEMENT_REFCOUNTING(EngineClient);
     DISALLOW_COPY_AND_ASSIGN(EngineClient);

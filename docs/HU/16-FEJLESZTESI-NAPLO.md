@@ -3,6 +3,54 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizedik szelet) — a kezdőlap rákattintásra kártyát nyit
+
+A termék köre most már **végig** működik: a kezdőlap (a rács) a hídon keresztül kér egy kártyát, a
+shell hibernálja a rácsot, és megnyitja a kért oldalt élő kártyaként.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| Motor (C++) | CEF `CefMessageRouter` mindkét oldala (render + browser); `install_bridge` parancs; a híd-szkript a motorban él; `bridge_call` esemény; a híd minden fő keret betöltése után újratelepül; engedély nélküli felület minden kérést elutasít |
+| Rust szerződés | `EngineEvent::BridgeCall { surface, method, args }` (az `args` szándékosan átlátszatlan) + roundtrip teszt |
+| Shell | `EngineClient::installBridge`/`bridgeCall`; `MainWindow::openCard`: pillanatkép → megsemmisítés → **új** felület új partícióval → navigálás; a kezdőlap kapja meg egyedül a hidat |
+| Kezdőlap | `withNativeOpen(...)`: ha van `window.antikoltNative`, a kártyanyitás valódi, a lista egyelőre a mockból jön |
+| Önellenőrzés | `antikolt-shell --opentest <motor>`: a híd jelenléte, a hívás és az új felület is ellenőrizve |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+load_finished surface=1 status=200 url=file:///D:/Szerver/Antikolt/home/index.html
+bridge=object
+open_card=sent
+load_finished surface=2 status=200 url=data:text/html,<title>card2</title><h1>card two</h1>
+first_surface=1 second_surface=2 live=2
+home_loaded=ok  bridge=ok  open_card=ok  card_opened=ok      (exit code 0)
+```
+
+Vagyis: a rács **1-es** felülete hibernálva lett (pillanatkép a lemezre), és a kért kártya **2-es**
+felületként, **új partícióval** nyílt meg — nem ugyanabban a felületben navigálva.
+
+### Két hiba, amit ez a szelet hozott (mind javítva)
+
+1. **A `CefMessageRouter` csak akkor létezik, ha a render folyamat is megkapja** (`CefRenderProcessHandler`
+   `OnWebKitInitialized` + `OnContextCreated`). Enélkül a `window.cefQuery` nem függvény, a híd pedig
+   pont úgy néz ki, mint egy elromlott kezdőlap.
+2. **Leállításkor összeomlott a shell (0xC0000005).** Az ok: a `MainWindow` destruktora után a motor
+   kliense még kiváltott egy várakozó válasz-callbacket, ami egy már félig lebontott ablakba írt. Most a
+   kliens a destruktorában `destroying_` jelzőt állít, törli a várakozó hívásokat és blokkolja a
+   szignálokat — a leállás sorrendje pedig: felület bezárása → `shutdown()` (ez a sorompó) → Qt bontás.
+
+### Ami még nyitott
+
+- A híd szándékosan **egyirányú**: a lap nem vár választ a shelltől (a `cefQuery` azonnal nyugtáz).
+  A perzisztens lekérdezés (pl. „sikerült-e megnyitni?”) a fagyasztási szeletre marad.
+- A kártyalista még a kezdőlap mockja; a core SQLite kártyatáblája és a `cards.list` híd még nincs
+  bekötve — ez a következő szelet fő tétele.
+- A kártyaváltás minden esetben **ment** a lemezre (helyes, de lassabb, mint egy memóriabeli váltás);
+  a „gyors váltás” optimalizálás később jön.
+
 ## 2026-11-17 (kilencedik szelet) — a kártya tényleg a saját ablakunkban él
 
 Eddig a motor a **saját** ablakában mutatta az oldalt, a shell meg egy placeholder-t rajzolt. Ez a

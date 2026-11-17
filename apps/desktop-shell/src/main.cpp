@@ -366,6 +366,117 @@ int runEmbedCheck(const QString& enginePath) {
     return failures == 0 ? 0 : 1;
 }
 
+/// Prove the whole product loop: the home page calls the injected bridge, the shell hibernates the
+/// grid and opens the card the page asked for. This is the path a user takes by clicking a card.
+int runOpenCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    int failures = 0;
+
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(120, 90);
+    window.startEngine();
+
+    EngineClient* client = window.engine();
+    const QString card_url =
+        QStringLiteral("data:text/html,<title>card2</title><h1>card two</h1>");
+
+    QEventLoop loop;
+    qint64 first_surface = 0;
+    qint64 second_surface = 0;
+    bool home_loaded = false;
+    bool bridge_present = false;
+    bool bridge_called = false;
+    bool card_loaded = false;
+
+    QObject::connect(client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "engine_error=" << message << '\n';
+        loop.quit();
+    });
+
+    QObject::connect(client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 surface, const QString& url, int status) {
+                         out << "load_finished surface=" << surface << " status=" << status
+                             << " url=" << url << '\n';
+                         if (!home_loaded) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             home_loaded = true;
+                             first_surface = surface;
+                             // The shell installs the bridge right after navigation; give the renderer
+                             // a moment to run the injected script before calling into it.
+                             QTimer::singleShot(700, &loop, [&, surface] {
+                                 client->evaluate(
+                                     surface, QStringLiteral("typeof window.antikoltNative"),
+                                     [&, surface](const QJsonObject& result,
+                                                  const QString& error) {
+                                         if (!error.isEmpty()) {
+                                             out << "bridge_probe=FAILED " << error << '\n';
+                                             loop.quit();
+                                             return;
+                                         }
+                                         const QString type =
+                                             result.value(QStringLiteral("value")).toString();
+                                         out << "bridge=" << type << '\n';
+                                         bridge_present = type == QStringLiteral("object");
+
+                                         // Exactly the call the grid makes when a card is clicked.
+                                         const QString script =
+                                             QStringLiteral(
+                                                 "window.antikoltNative.openCard({url:'%1',"
+                                                 "title:'card two'}); 'sent'")
+                                                 .arg(card_url);
+                                         client->evaluate(
+                                             surface, script,
+                                             [&](const QJsonObject& called, const QString& failure) {
+                                                 bridge_called = failure.isEmpty() &&
+                                                                 called.value(QStringLiteral(
+                                                                                  "value"))
+                                                                         .toString() ==
+                                                                     QStringLiteral("sent");
+                                                 out << "open_card="
+                                                     << (bridge_called ? "sent" : "FAILED")
+                                                     << (failure.isEmpty()
+                                                             ? QString()
+                                                             : QStringLiteral(" ") + failure)
+                                                     << '\n';
+                                             });
+                                     });
+                             });
+                             return;
+                         }
+                         if (bridge_present && !card_loaded && surface != first_surface &&
+                             url == card_url) {
+                             card_loaded = true;
+                             second_surface = surface;
+                             loop.quit();
+                         }
+                     });
+
+    QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    // The grid must be hibernated, not merely replaced: a new surface with a new id is the proof.
+    const qint64 live = window.liveCard()->surface();
+    out << "first_surface=" << first_surface << " second_surface=" << second_surface
+        << " live=" << live << '\n';
+    out << "home_loaded=" << (home_loaded ? "ok" : "FAILED") << '\n';
+    out << "bridge=" << (bridge_present ? "ok" : "FAILED") << '\n';
+    out << "open_card=" << (bridge_called ? "ok" : "FAILED") << '\n';
+    out << "card_opened=" << (card_loaded && second_surface != first_surface ? "ok" : "FAILED")
+        << '\n';
+    if (!home_loaded || !bridge_present || !bridge_called ||
+        !(card_loaded && second_surface != first_surface)) {
+        ++failures;
+    }
+
+    out.flush();
+    return failures == 0 ? 0 : 1;
+}
+
 int runSelfTest(bool with_engine, const QString& enginePath) {
     QTextStream out(stdout);
     out << "antikolt-shell " << ANTIKOLT_VERSION << '\n';
@@ -434,10 +545,19 @@ int main(int argc, char* argv[]) {
         QStringLiteral("embedtest"),
         QStringLiteral("Prove the engine embedded its browser into a Qt widget, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption opentest(
+        QStringLiteral("opentest"),
+        QStringLiteral("Prove the home page bridge opens a card as the live surface, then exit."),
+        QStringLiteral("path"));
     parser.addOption(selftest);
     parser.addOption(engine);
     parser.addOption(embedtest);
+    parser.addOption(opentest);
     parser.process(app);
+
+    if (parser.isSet(opentest)) {
+        return runOpenCheck(parser.value(opentest));
+    }
 
     if (parser.isSet(embedtest)) {
         return runEmbedCheck(parser.value(embedtest));

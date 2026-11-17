@@ -66,11 +66,15 @@ public slots:
     void startEngine();
     void loadHome();
     void freezeCard();
+    /// Show one card: hibernate whatever is live, then open this URL as the live card.
+    void openCard(const QString& url, const QString& title);
 
 private:
     void buildToolBar();
     void buildCardArea();
     void ensureSurface();
+    void closeLiveCard();
+    void handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args);
     void setStatus(const QString& text);
 
     LiveCard* card_ = nullptr;
@@ -78,4 +82,7 @@ private:
     QString currentTheme_;
     EngineClient* engine_ = nullptr;
     qint64 surface_ = 0;
+    /// The card waiting to be shown once a surface exists.
+    QString pending_url_;
+    QString pending_title_;
 };

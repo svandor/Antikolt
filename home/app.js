@@ -613,7 +613,44 @@ class HomePage {
   }
 }
 
-const bridge = window.antikolt ?? createMockBridge();
+// The bridge: a full `window.antikolt` when the shell injects one, otherwise the mock. The native
+// bridge shipped today (`window.antikoltNative`) covers the one action that must be real — opening a
+// card — while the mock still supplies the card list until the core's card API lands. The two are
+// composed here instead of being faked apart, so a click on a card really opens it.
+const mockBridge = createMockBridge();
+
+function withNativeOpen(mock) {
+  return {
+    ...mock,
+    cards: {
+      ...mock.cards,
+      open: async (id, options) => {
+        // The card's own URL and title travel with the call: the shell may not know this card yet,
+        // and the page is the only place the list currently lives.
+        const cards = await mock.cards.list();
+        const card = cards.find((entry) => entry.id === id) || {};
+        try {
+          await window.antikoltNative.openCard({
+            ...(options || {}),
+            id,
+            url: card.url,
+            title: card.title,
+          });
+        } catch (error) {
+          console.warn("openCard failed", error);
+        }
+      },
+    },
+    system: {
+      ...mock.system,
+      engine: () => Promise.resolve("CEF (beágyazott kártya)"),
+    },
+  };
+}
+
+const bridge = window.antikolt ?? (window.antikoltNative
+  ? withNativeOpen(mockBridge)
+  : mockBridge);
 const page = new HomePage(bridge);
 page.start().catch((error) => {
   console.error("home page failed to start", error);

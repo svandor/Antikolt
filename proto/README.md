@@ -70,6 +70,7 @@ gracefully when a capability is missing, and must never assume one:
 | `navigate` | core → engine | `surface`, `url`, `opts` | `reply` |
 | `set_bounds` | core → engine | `surface`, `bounds` (`x`, `y`, `width`, `height`) | `reply` (`{applied}`) |
 | `focus` | core → engine | `surface`, `focused` (default `true`) | `reply` |
+| `install_bridge` | core → engine | `surface` | `reply` |
 | `eval` | core → engine | `surface`, `script`, `world` | `reply` (`{json}`) |
 | `scroll` | core → engine | `surface`, `x`, `y`, `animate` | `reply` |
 | `set_zoom` | core → engine | `surface`, `factor_percent` | `reply` |
@@ -111,6 +112,28 @@ Rules that come with it:
   it never destroys the parent.
 - `parent_window` is additive and optional: an omitted key means `0`, so a peer from before embedding
   keeps working without a protocol bump. That is the compatibility rule for this file as a whole.
+
+## The JS bridge (home page → shell)
+
+`install_bridge` turns on a narrow channel from the page to the shell for **one surface**:
+the engine evaluates a small script that defines `window.antikoltNative` on top of CEF's
+`window.cefQuery`. Calls arrive as `bridge_call` events with an opaque `args` object:
+
+```
+{"type":"bridge_call","surface":1,"method":"open_card","args":{"url":"https://…","title":"…"}}
+```
+
+Rules:
+
+- The script lives in the engine, not in the shell: the shell cannot inject arbitrary JavaScript, and
+  the page only ever gets the two methods the engine defines (`openCard`, `freezeCard`).
+- A surface that the shell did not enable answers `Failure` to every query, so a random web page
+  cannot reach the shell through the same door as the home page.
+- The bridge is re-installed after every main-frame load, because a navigation creates a new JS
+  context.
+- Calls are answered immediately; the shell acts asynchronously (for example
+  `open_card` hibernates the current surface and opens the new one). Waiting for the shell's answer
+  (persistent queries) is left for the freeze milestone.
 
 ## Events
 

@@ -60,6 +60,11 @@ public:
     void focus(qint64 surface, bool focused, ReplyHandler handler = {});
     /// Evaluate JavaScript in the page's main world. The reply carries the value as a string.
     void evaluate(qint64 surface, const QString& script, ReplyHandler handler);
+    /// Install the engine-side JS bridge (`window.antikoltNative`) on a surface.
+    ///
+    /// Only surfaces the shell enables this way may call back: the engine refuses everything else, so
+    /// a random web page cannot reach the shell through the same channel as the home page.
+    void installBridge(qint64 surface, ReplyHandler handler = {});
     void snapshot(qint64 surface, ReplyHandler handler);
     void destroySurface(qint64 surface, ReplyHandler handler = {});
     void shutdown();
@@ -70,6 +75,8 @@ signals:
     void loadFailed(qint64 surface, const QString& url, const QString& reason);
     void surfaceCreated(qint64 surface);
     void surfaceClosed(qint64 surface);
+    /// The home page asked for something through the bridge (`open_card`, `freeze_card`, …).
+    void bridgeCall(qint64 surface, const QString& method, const QJsonObject& args);
     void failed(const QString& message);
 
 private slots:
@@ -88,4 +95,6 @@ private:
     qint64 next_id_ = 1;
     QHash<qint64, ReplyHandler> pending_;
     QJsonObject engine_info_;
+    /// Set in the destructor: queued replies must never reach a partly destroyed owner.
+    bool destroying_ = false;
 };

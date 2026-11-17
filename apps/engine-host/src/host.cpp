@@ -810,6 +810,79 @@ void EngineApp::OnBeforeCommandLineProcessing(const CefString& process_type,
     }
 }
 
+/// The router configuration both halves must agree on: these are the names the page sees.
+CefMessageRouterConfig MessageRouterConfig() {
+    CefMessageRouterConfig config;
+    config.js_query_function = "cefQuery";
+    config.js_cancel_function = "cefQueryCancel";
+    return config;
+}
+
+void EngineApp::OnWebKitInitialized() {
+    // Render process: this is what turns `cefQuery` into a function on the page's window.
+    router_renderer_ = CefMessageRouterRendererSide::Create(MessageRouterConfig());
+}
+
+void EngineApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
+                                 CefRefPtr<CefFrame> frame,
+                                 CefRefPtr<CefV8Context> context) {
+    if (router_renderer_) {
+        router_renderer_->OnContextCreated(browser, frame, context);
+    }
+}
+
+void EngineApp::OnContextReleased(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefRefPtr<CefV8Context> context) {
+    if (router_renderer_) {
+        router_renderer_->OnContextReleased(browser, frame, context);
+    }
+}
+
+bool EngineApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                         CefRefPtr<CefFrame> frame,
+                                         CefProcessId source_process,
+                                         CefRefPtr<CefProcessMessage> message) {
+    return router_renderer_ &&
+           router_renderer_->OnProcessMessageReceived(browser, frame, source_process, message);
+}
+
+EngineClient::EngineClient(HostState* state, bool quit_on_first_load)
+    : state_(state), quit_on_first_load_(quit_on_first_load) {
+    router_ = CefMessageRouterBrowserSide::Create(MessageRouterConfig());
+    router_->AddHandler(this, /*first=*/false);
+}
+
+/// The script the shell installs on the home page. It is deliberately small and lives in the engine,
+/// not in the shell: the shell must never be able to inject arbitrary JavaScript into a page, and the
+/// page must never see a capability it was not handed.
+constexpr const char* kBridgeScript = R"JS(
+(function () {
+  if (window.antikoltNative) { return 'already'; }
+  var call = function (method, args) {
+    return new Promise(function (resolve, reject) {
+      if (typeof window.cefQuery !== 'function') {
+        reject(new Error('the Antikolt bridge is not available'));
+        return;
+      }
+      window.cefQuery({
+        request: JSON.stringify({ method: method, args: args || {} }),
+        onSuccess: function (response) { resolve(response); },
+        onFailure: function (code, message) { reject(new Error(message)); },
+        persistent: false
+      });
+    });
+  };
+  window.antikoltNative = {
+    version: '1',
+    openCard: function (card) { return call('open_card', card); },
+    freezeCard: function () { return call('freeze_card', {}); }
+  };
+  window.dispatchEvent(new Event('antikolt-bridge-ready'));
+  return 'installed';
+})();
+)JS";
+
 void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     state_->browser = browser;
@@ -823,6 +896,8 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
 
 void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
+    router_->OnBeforeClose(browser);
+    state_->bridge_enabled = false;
     state_->browser = nullptr;
     if (g_server_mode) {
         // The next command may create another surface, so "created" must go back to false.
@@ -850,6 +925,11 @@ void EngineClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
     state_->http_status = httpStatusCode;
     state_->final_url = frame->GetURL().ToString();
     state_->load_finished = true;
+
+    // A reload or navigation is a new JS context, so the bridge has to be installed again.
+    if (state_->bridge_enabled.load()) {
+        frame->ExecuteJavaScript(kBridgeScript, "", 0);
+    }
 
     if (g_server_mode) {
         CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
@@ -895,6 +975,74 @@ void EngineClient::OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString&
         payload->SetString("title", state_->title);
         StdioLink::Instance().Event("title_changed", payload);
     }
+}
+
+void EngineClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                             TerminationStatus status,
+                                             int error_code,
+                                             const CefString& error_string) {
+    CEF_REQUIRE_UI_THREAD();
+    router_->OnRenderProcessTerminated(browser);
+    Log("[engine-host] renderer terminated status=%d code=%d reason=%s\n",
+        static_cast<int>(status), error_code, error_string.ToString().c_str());
+}
+
+bool EngineClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                            CefRefPtr<CefFrame> frame,
+                                            CefProcessId source_process,
+                                            CefRefPtr<CefProcessMessage> message) {
+    CEF_REQUIRE_UI_THREAD();
+    return router_->OnProcessMessageReceived(browser, frame, source_process, message);
+}
+
+bool EngineClient::OnQuery(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           int64_t query_id,
+                           const CefString& request,
+                           bool persistent,
+                           CefRefPtr<Callback> callback) {
+    (void)browser;
+    (void)frame;
+    (void)query_id;
+    (void)persistent;
+    // A page that the shell never enabled gets nothing, not even an error it can learn from.
+    if (!state_->bridge_enabled.load()) {
+        callback->Failure(/*error_code=*/-1, "the Antikolt bridge is not installed here");
+        return true;
+    }
+
+    CefRefPtr<CefValue> parsed = CefParseJSON(request, JSON_PARSER_RFC);
+    if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+        callback->Failure(-2, "the bridge expects a JSON object");
+        return true;
+    }
+    CefRefPtr<CefDictionaryValue> call = parsed->GetDictionary();
+    const std::string method = call->GetString("method").ToString();
+    if (method.empty()) {
+        callback->Failure(-3, "the bridge call has no method");
+        return true;
+    }
+
+    CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+    payload->SetInt("surface", static_cast<int>(state_->surface_id));
+    payload->SetString("method", method);
+    if (CefRefPtr<CefValue> args = call->GetValue("args")) {
+        payload->SetValue("args", args);
+    }
+    // The shell answers asynchronously; the page gets a success now and acts on the resulting
+    // surface events. Persistent queries (a two-way chat) can wait for the freeze milestone.
+    StdioLink::Instance().Event("bridge_call", payload);
+    callback->Success("{}");
+    return true;
+}
+
+void EngineClient::OnQueryCanceled(CefRefPtr<CefBrowser> browser,
+                                   CefRefPtr<CefFrame> frame,
+                                   int64_t query_id) {
+    (void)browser;
+    (void)frame;
+    (void)query_id;
+    // Nothing is held open yet: every query is answered in OnQuery, so there is nothing to cancel.
 }
 
 #ifdef _WIN32
@@ -1156,6 +1304,14 @@ int RunEngineHostServer(const HostConfig& config) {
                 }
                 state.browser->GetHost()->SetFocus(command.focused);
                 link.Reply(command.id);
+            } else if (command.op == "install_bridge") {
+                if (!state.browser || !state.browser->GetMainFrame()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                state.bridge_enabled = true;
+                state.browser->GetMainFrame()->ExecuteJavaScript(kBridgeScript, "", 0);
+                link.Reply(command.id);
             } else if (command.op == "destroy_surface") {
                 DrainAndCloseBrowser(&state);
                 DestroyHostWindow(&state);
@@ -1181,7 +1337,8 @@ int RunEngineHostServer(const HostConfig& config) {
             } else {
                 link.ReplyError(command.id, "not_supported",
                                 "this milestone implements hello, ping, create_surface, navigate, "
-                                "eval, set_bounds, focus, destroy_surface and shutdown");
+                                "eval, set_bounds, focus, install_bridge, destroy_surface and "
+                                "shutdown");
             }
         }
 
