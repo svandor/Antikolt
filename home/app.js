@@ -245,10 +245,12 @@ class AntikoltCard extends HTMLElement {
     const themeHost = document.documentElement.getAttribute("data-theme") ?? "grey";
 
     // Rebuild only when something visible changed; the grid re-creates elements aggressively, so
-    // this stays cheap.
+    // this stays cheap. The signature lives on the *host*: a `ShadowRoot` is a `DocumentFragment`,
+    // not an `HTMLElement`, so it has no `dataset` — reading it threw on every single card, which
+    // left the grid full of empty elements and only looked like "a page that renders nothing".
     const signature = `${card.id}|${card.title}|${card.size}|${card.status}|${card.pinned}|${themeHost}`;
-    if (root.dataset.signature === signature) return;
-    root.dataset.signature = signature;
+    if (this.dataset.signature === signature) return;
+    this.dataset.signature = signature;
 
     const style = document.createElement("style");
     style.textContent = cardStyles();

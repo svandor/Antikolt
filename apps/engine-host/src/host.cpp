@@ -1093,6 +1093,8 @@ bool EngineClient::OnQuery(CefRefPtr<CefBrowser> browser,
     }
     // The shell answers asynchronously; the page gets a success now and acts on the resulting
     // surface events. Persistent queries (a two-way chat) can wait for the freeze milestone.
+    Log("[engine-host] bridge_call surface=%lld method=%s\n",
+        static_cast<long long>(state_->surface_id), method.c_str());
     StdioLink::Instance().Event("bridge_call", payload);
     callback->Success("{}");
     return true;

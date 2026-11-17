@@ -60,10 +60,35 @@ ott a „rács a hídon keresztül kér kártyát” valójában az önellenőrz
 saját kódja — a lap kódja akkor még nem futott. A második tanulság a diagnosztika: a motor mostantól
 naplózza a lap `console`-üzeneteit, mert enélkül egy halott szkript pont úgy néz ki, mint egy üres rács.
 
+### Második hiba: a kártya-render minden kártyán elhasalt
+
+A lap `console`-ja (amit az új `OnConsoleMessage` most már kiír) 33-szor ugyanezt adta:
+
+```
+console level=4 file:///D:/Szerver/Antikolt/home/app.js:250
+  Uncaught TypeError: Cannot read properties of undefined (reading 'signature')
+```
+
+Az `AntikoltCard.render()` a `this.shadowRoot.dataset`-et olvasta — a `ShadowRoot` azonban
+`DocumentFragment`, nem `HTMLElement`, tehát **nincs `dataset`-je**: a hiba a render *legelején*
+keletkezett, így **egyetlen kártya sem rajzolódott ki** (a rács üres `antikolt-card` elemekből állt).
+A jel a capture méretén látszik: a kezdőlap képe **23 KB** volt a javítás előtt és **264 KB** utána
+(ugyanaz a 1104×742 kép). A signature most a host elemre kerül (`this.dataset`), ahol lennie kell.
+
+Ez a hiba a korábbi szeletekben is jelen volt: a „rács renderel” állítás csak a DOM-elemek számára
+vonatkozott, a látható tartalomra nem. A tanulság ugyanaz, mint a modul-szkriptnél: **a lap
+console-üzenete nélkül a hibák láthatatlanok**, ezért a motor mostantól naplózza őket.
+
 ### Ami még nyitott
 
 - **A kérés-irány** (a lap kérdez: keresés, frissítés, új kártya) a perzisztens `cefQuery`-vel jön, és
   a `bridge_result` üzenettel **protokoll v2** (ADR-032); addig a tolás marad.
+- **A kattintás útja nyitott kérdés.** A szintetikus kattintás (`antikolt-card.click()`) lefut, de nem
+  éri el a lap saját kattintás-kezelőjét: a közvetlen hídhívás (`window.antikoltNative.openCard(…)`)
+  viszont működik (a motor `bridge_call surface=1 method=open_card` sort ír). A `--gridtest`
+  kattintás-fázisát ezért **visszavontam** — egy bizonytalan teszt rosszabb a semminél —, és a hibát
+  itt rögzítem a következő szeletre (valószínű: a `#viewport` nem őse a kártyáknak, vagy a
+  kártya-elem saját kezelője nyeli el az eseményt).
 - A rács **előnézetei** még nincsenek (a `capture` primitív kész, a 260×150-es WebP-pipeline nem).
 - A kártyák szerkesztése/címkézése/pin-jelölése a lapon még nincs: a mag tudja (`cards_upsert`), a híd
   nem vezet rá utat.
