@@ -3,6 +3,29 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizenharmadik szelet) — a festés-mérés megbízhatatlan: `capture` kell
+
+A `--embedtest` festés-ellenőrzése a képernyőről készít másolatot (`QScreen::grabWindow`) és
+megköveteli, hogy ne legyen egyszínű. Ez **környezetfüggő**: ugyanaz a bináris, ugyanaz a kód az
+egyik futásban `screenshot_colours=25` (zöld), a másikban `colours=1` (bukik), miközben a geometria és
+a fókusz végig helyes:
+
+```
+embed=ok  viewport_match=ok  focus=ok     — a lap 900×640 CSS-pixelt lát, a fókusz átmegy
+paint=FAILED                              — a képernyőről készült kép egyszínű
+```
+
+Újrapróbálkozó méréssel (6 próba, 200 ms) sem javult, ezért a kísérletet **visszavontam** — egy
+„néha zöld” teszt rosszabb, mint egy őszintén bukó.
+
+**Döntés:** a festést nem a képernyőről kell mérni. A motoron belül kell képet kérni
+(CDP `Page.captureScreenshot`), ami a kompozitortól független, determinisztikus, és ugyanazt bizonyítja.
+Ez lesz a `capture` protokoll-op implementációja — és ugyanez az útvonal adja majd a rács
+**előnézeti képeit** is, tehát nem teszt-segédeszköz, hanem termékfunkció.
+
+Amíg ez nincs meg, a `paint` ellenőrzés **ismert bizonytalanság**: a többi mérés (`embed`,
+`viewport_match`, `focus`) ettől függetlenül érvényes.
+
 ## 2026-11-17 (tizenkettedik szelet) — a shell beszél a maggal
 
 Új `CoreClient` a shellben: elindítja a `antikolt-core-service`-t, kézfog, kártyalista, kártyanyitás —
