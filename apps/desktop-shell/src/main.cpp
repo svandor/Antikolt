@@ -23,6 +23,7 @@
 #include <QJsonObject>
 #include <QImage>
 #include <QPixmap>
+#include "previews.h"
 #include <functional>
 #include <QRegularExpression>
 #include <QScreen>
@@ -2355,6 +2356,64 @@ int runPinCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the preview directory is cleaned: an orphan is deleted, a referenced file and a stranger survive.
+///
+/// No engine and no core: the janitor is a decision about a directory, so the check is a directory.
+int runPreviewCleanCheck() {
+    QTextStream out(stdout);
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                        QStringLiteral("/preview-janitor-selftest");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+
+    QImage probe(2, 2, QImage::Format_RGB32);
+    probe.fill(QColor(220, 40, 40));
+    const bool wrote = probe.save(dir + QStringLiteral("/keep.png"), "PNG") &&
+                       probe.save(dir + QStringLiteral("/orphan.png"), "PNG");
+    {
+        // The second orphan only needs a preview *extension*: the janitor decides by name and never opens the
+        // file, so a WEBP encoder is not required (and is not always installed with Qt).
+        QFile orphan(dir + QStringLiteral("/orphan.webp"));
+        orphan.open(QIODevice::WriteOnly);
+        orphan.write("pretend webp");
+    }
+    {
+        QFile notes(dir + QStringLiteral("/notes.txt"));
+        notes.open(QIODevice::WriteOnly);
+        notes.write("not a preview");
+    }
+    if (!wrote) {
+        out << "preview_files=FAILED\n";
+        return 1;
+    }
+
+    const QStringList removed = antikolt::removeOrphanPreviews(
+        dir, QSet<QString>{QStringLiteral("keep.png")});
+    out << "preview_removed=" << removed.join(QLatin1Char(',')) << '\n';
+    out << "preview_kept=" << (QFileInfo::exists(dir + QStringLiteral("/keep.png")) ? "ok" : "FAILED")
+        << '\n';
+    out << "preview_orphan_gone="
+        << (!QFileInfo::exists(dir + QStringLiteral("/orphan.png")) &&
+                    !QFileInfo::exists(dir + QStringLiteral("/orphan.webp"))
+                ? "ok"
+                : "FAILED")
+        << '\n';
+    // A file that is not a preview is not ours to delete, and a missing directory is not an error.
+    out << "preview_stranger_kept="
+        << (QFileInfo::exists(dir + QStringLiteral("/notes.txt")) ? "ok" : "FAILED") << '\n';
+    out << "preview_missing_dir="
+        << (antikolt::removeOrphanPreviews(dir + QStringLiteral("/nope"), {}).isEmpty() ? "ok"
+                                                                                       : "FAILED")
+        << '\n';
+    const bool ok = removed == QStringList{QStringLiteral("orphan.png"), QStringLiteral("orphan.webp")} &&
+                    QFileInfo::exists(dir + QStringLiteral("/keep.png")) &&
+                    !QFileInfo::exists(dir + QStringLiteral("/orphan.png")) &&
+                    QFileInfo::exists(dir + QStringLiteral("/notes.txt"));
+    out << "preview_cleanup=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the session rules can be changed over the wire, and that the core refuses nonsense (ADR-039).
 ///
 /// Three steps: store a real policy, send an impossible one (the reply must *refuse* it), and read the rules
@@ -2961,6 +3020,8 @@ int main(int argc, char* argv[]) {
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption previewclean(QStringLiteral("previewclean"),
+                                     QStringLiteral("Prove the preview directory is cleaned, then exit."));
     const QCommandLineOption rulestest(
         QStringLiteral("rulestest"),
         QStringLiteral("Prove the session rules can be changed over the wire, then exit."),
@@ -2993,6 +3054,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(mediatest);
     parser.addOption(scrollzoomtest);
     parser.addOption(rulestest);
+    parser.addOption(previewclean);
     parser.addOption(coretest);
     parser.process(app);
 
@@ -3006,6 +3068,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(rulestest)) {
         return runRulesCheck(parser.value(rulestest));
+    }
+
+    if (parser.isSet(previewclean)) {
+        return runPreviewCleanCheck();
     }
 
     if (parser.isSet(mediatest)) {

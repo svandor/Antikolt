@@ -3,6 +3,31 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harminchatodik szelet) — az árva előnézetek törlődnek
+
+Az előnézet-kép a profilban él, és a kártya-rekord csak a nevét hordozza (ADR-035) — ha a kártya megszűnik, a
+kép örökre ott maradna. Most a takarítási kör részeként fut egy **járőr**: a mag kártyalistájából összegyűjtjük
+a hivatkozott neveket, és a `previews/` mappában minden más kép törlődik (`previews.h`, tiszta függvény).
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --previewclean
+preview_removed=orphan.png,orphan.webp   ← két árva, mindkét kiterjesztéssel
+preview_kept=ok                          ← a hivatkozott fájl marad
+preview_orphan_gone=ok
+preview_stranger_kept=ok                 ← a nem-előnézet fájlhoz nincs közünk
+preview_missing_dir=ok                   ← hiányzó mappa nem hiba
+preview_cleanup=ok      (exit code 0)
+```
+
+A döntés a fájlnév és a kiterjesztés alapján születik (a járőr soha nem nyitja meg a fájlt), ezért a teszt
+`orphan.webp`-je csak *tartalom nélküli* fájl: WEBP-kódoló nélkül is mérhető a viselkedés.
+
+### Ami még nyitott
+
+- Az előnézet **frissítése** (ma egyszer készül), a tartós napi ≤100 korlát, és a háttérben készített
+  előnézetek (I1) továbbra is hátra vannak.
 ## 2026-11-17 (harmincötödik szelet) — a munkamenet-szabályok állíthatók
 
 A politika eddig csak megjeleníthető volt. Most a panelen beállítható: lejárat órában (1–720), „app-zárnál

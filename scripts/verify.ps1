@@ -133,6 +133,13 @@ if (-not $shell -or -not $engine -or -not $core) {
     Add-Result 'sessionpanel' ($LASTEXITCODE -eq 0)
 }
 
+Write-Host '=== previewclean ===' -ForegroundColor Cyan
+if (-not $shell) {
+    Add-Result 'previewclean' $false 'missing antikolt-shell.exe'
+} else {
+    & $shell --previewclean
+    Add-Result 'previewclean' ($LASTEXITCODE -eq 0)
+}
 Write-Host '=== rulestest ===' -ForegroundColor Cyan
 if (-not $shell -or -not $core) {
     Add-Result 'rulestest' $false 'missing antikolt-shell.exe or antikolt-core-service.exe'

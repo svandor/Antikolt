@@ -100,6 +100,8 @@ public:
     void setZoomPercent(int percent);
     /// Send the panel's rules to the core (ADR-039). The core validates them; a refusal is shown, not hidden.
     void saveSessionRules();
+    /// Delete preview files whose card no longer exists (ADR-035). Runs with the cleanup round.
+    void cleanupPreviews();
     /// The panel's rule editors as the user sees them (self test witnesses).
     int sessionPanelTtlHours() const;
     bool sessionPanelLockWipe() const;

@@ -31,6 +31,7 @@
 
 #include "core_client.h"
 #include "engine_client.h"
+#include "previews.h"
 #include "live_card.h"
 
 namespace {
@@ -955,6 +956,32 @@ void MainWindow::producePreview(qint64 surface) {
     });
 }
 
+void MainWindow::cleanupPreviews() {
+    if (core_ == nullptr || !core_->isRunning() || engine_profile_.isEmpty()) {
+        return;
+    }
+    // The core owns the cards, so it decides which names are still referenced; the shell only decides which
+    // files are unreachable. A preview whose card is gone is a file nobody can ever see again.
+    core_->cardsList([this](const QJsonObject& listed, const QString& error) {
+        if (!error.isEmpty()) {
+            return;
+        }
+        QSet<QString> live_names;
+        for (const QJsonValue& value : listed.value(QStringLiteral("cards")).toArray()) {
+            const QString name = value.toObject().value(QStringLiteral("preview_ref")).toString();
+            if (!name.isEmpty()) {
+                live_names.insert(name);
+            }
+        }
+        const QStringList removed = antikolt::removeOrphanPreviews(
+            engine_profile_ + QStringLiteral("/previews"), live_names);
+        if (!removed.isEmpty()) {
+            qInfo("[shell] preview: %lld orphan file(s) removed", static_cast<long long>(removed.size()));
+            setStatus(QStringLiteral("%1 árva előnézet törölve").arg(removed.size()));
+        }
+    });
+}
+
 void MainWindow::refreshSessions() {
     if (sessions_table_ == nullptr) {
         return;
@@ -1066,6 +1093,8 @@ void MainWindow::cleanupSessions() {
         setStatus(QStringLiteral("a takarításhoz előbb indítsd el a magot"));
         return;
     }
+    // The orphaned previews are housekeeping, not policy: they are removed whether or not anything is due.
+    cleanupPreviews();
     core_->sessionDue(
         QDateTime::currentMSecsSinceEpoch(), false,
         [this](const QJsonObject& due, const QString& error) {
@@ -1123,6 +1152,7 @@ void MainWindow::cleanupSessions() {
             }
         });
 }
+
 
 void MainWindow::buildToolBar() {    auto* toolbar = addToolBar(QStringLiteral("Fő"));
     toolbar->setMovable(false);

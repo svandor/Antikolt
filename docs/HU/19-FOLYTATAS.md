@@ -97,7 +97,8 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > `preview_traversal=refused`. `--previewgentest`: `preview_ref=preview-probe.png`,
 > `preview_page=loaded:1560x857`, `preview_generation=ok`.
 > **Ami hátra van:** az előnézet **frissítése** (ma egyszer készül), a **napi ≤100** tartós korlát (a
-> számláló ma futás-szintű), a preview-fájlok takarítása, és a háttérben készített előnézetek (I1).
+> számláló ma futás-szintű), és a háttérben készített előnézetek (I1). Az árva preview-fájlok takarítása
+> **kész** (`--previewclean`, 36. szelet).
 
 **Miért:** F2 (rács-előnézet) — a `capture` primitív kész, a feldolgozó nincs.
 

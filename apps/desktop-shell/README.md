@@ -103,7 +103,8 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   `previews` directory, the home page loads it as `antikolt://blob/probe.png`, and the page's own witness
   must report `naturalWidth × naturalHeight`. A second request for `..%2Fhost.cpp` must be *refused* — a
   card's data may not read another file through the browser.
-- `--rulestest` — the session rules can be changed over the wire (ADR-039): a 2 hour policy is stored and
+- `--previewclean` — the preview janitor: `previews/` is swept for files the core no longer references, while
+  the referenced image and a non-preview file survive, and a missing directory is not an error.- `--rulestest` — the session rules can be changed over the wire (ADR-039): a 2 hour policy is stored and
   read back, an impossible 1 second TTL is *refused* by the core, and the stored policy stays the first one.- `--scrollzoomtest` — scrolling and zoom reach the page (ADR-038): the card is a tall local page, `scroll`
   moves it (`scrollY=600`), and `set_zoom` multiplies the screen's own DPR (`dpr_at_150=1.875` on a 125 %
   display, back to `1.25` at 100 %), and the shell's own `setZoomPercent` path (the toolbar calls it) must
