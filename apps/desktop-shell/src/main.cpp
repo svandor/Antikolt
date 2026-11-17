@@ -1052,6 +1052,117 @@ int runOpenCheck(const QString& enginePath) {
 
 /// Prove the shell can talk to the core: handshake, read the card list, and record an open. The core
 /// owns the data, so this seam is where every later feature (sessions, policies) will hang.
+/// Prove the session panel shows what the core's ledger says, and that the policy is the core's.
+///
+/// A row is written straight into the store the window will use, then the window's panel is opened and
+/// read back through its own text: the test trusts neither the table's model nor the status line, it
+/// compares what the panel displays with the row it wrote. The window is grabbed as well, so a
+/// rendering regression that leaves the table blank shows up in the picture size.
+int runSessionPanelCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    const QString core_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                             QStringLiteral("/core");
+    QDir().mkpath(core_dir);
+
+    // 1. A row the panel must show, written through the same wire the shell uses.
+    CoreClient oracle;
+    if (!oracle.start(MainWindow::coreExecutable(), core_dir)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    out << "core_start=ok\n";
+    bool written = false;
+    {
+        QEventLoop loop;
+        QJsonObject session;
+        session.insert(QStringLiteral("container_id"), QStringLiteral("c-private"));
+        session.insert(QStringLiteral("origin"), QStringLiteral("https://example.org"));
+        session.insert(QStringLiteral("state"), QStringLiteral("expired"));
+        session.insert(QStringLiteral("policy"), QStringLiteral("sweep"));
+        session.insert(QStringLiteral("cookie_count"), 7);
+        session.insert(QStringLiteral("cookie_bytes"), 1024);
+        session.insert(QStringLiteral("storage_bytes"), 4096);
+        session.insert(QStringLiteral("service_worker_count"), 0);
+        session.insert(QStringLiteral("last_seen_ms"), 0);
+        session.insert(QStringLiteral("last_verified_ms"), 0);
+        session.insert(QStringLiteral("live_ram_bytes"), QJsonValue::Null);
+        session.insert(QStringLiteral("keep_alive"), false);
+        oracle.sessionUpsert(session, [&](const QJsonObject& saved, const QString& error) {
+            written = error.isEmpty() &&
+                      saved.value(QStringLiteral("session"))
+                              .toObject()
+                              .value(QStringLiteral("origin"))
+                              .toString() == QStringLiteral("https://example.org");
+            out << "session_written=" << (written ? "ok" : "FAILED") << '\n';
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    oracle.shutdown();
+    if (!written) {
+        return 1;
+    }
+
+    // 2. The window, its panel, and what the panel says.
+    MainWindow window;
+    window.show();
+    window.move(120, 90);
+    window.resize(1200, 780);
+    window.startEngine();
+
+    int rows = -1;
+    QString summary;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             // The grid is up, so the core is serving: open the panel and read it.
+                             QTimer::singleShot(800, &loop, [&] {
+                                 window.showSessions();
+                                 QTimer::singleShot(700, &loop, [&] {
+                                     rows = window.sessionPanelRowCount();
+                                     summary = window.sessionPanelSummary();
+                                     const QString dir =
+                                         QStandardPaths::writableLocation(
+                                             QStandardPaths::AppDataLocation) +
+                                         QStringLiteral("/panel-selftest");
+                                     QDir().mkpath(dir);
+                                     const QPixmap shot = window.grab();
+                                     out << "panel_grab="
+                                         << (shot.save(dir + QStringLiteral("/panel.png"))
+                                                 ? "ok"
+                                                 : "FAILED")
+                                         << '\n';
+                                     out << "panel_grab_size=" << shot.width() << 'x'
+                                         << shot.height() << '\n';
+                                     loop.quit();
+                                 });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "panel_rows=" << rows << '\n';
+    for (const QString& line : summary.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+        out << "panel_row=" << line << '\n';
+    }
+    // Both halves matter: the row is there, and the policy the core computed marks it due.
+    const bool ok = rows == 1 && summary.contains(QStringLiteral("https://example.org")) &&
+                    summary.contains(QStringLiteral("lejárt"));
+    out << "session_panel=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runCoreCheck(const QString& corePath) {
     QTextStream out(stdout);
     int failures = 0;
@@ -1293,6 +1404,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("lifecycletest"),
         QStringLiteral("Prove an idle card hibernates by itself, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption sessionpanel(
+        QStringLiteral("sessionpanel"),
+        QStringLiteral("Prove the session panel shows the core's ledger, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -1304,11 +1419,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(capturetest);
     parser.addOption(gridtest);
     parser.addOption(lifecycletest);
+    parser.addOption(sessionpanel);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(sessionpanel)) {
+        return runSessionPanelCheck(parser.value(sessionpanel));
     }
 
     if (parser.isSet(lifecycletest)) {

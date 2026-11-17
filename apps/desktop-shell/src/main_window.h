@@ -15,6 +15,8 @@
 
 class QLabel;
 class QTimer;
+class QDockWidget;
+class QTableWidget;
 class EngineClient;
 class CoreClient;
 class LiveCard;
@@ -67,6 +69,16 @@ public:
     /// The engine link, exposed for the same reason.
     EngineClient* engine() const { return engine_; }
 
+    /// Show the session ledger panel (`docs/HU/10-MUNKAMENET.md` §5) and fill it from the core.
+    ///
+    /// The rows are the core's answer, not the shell's bookkeeping: `session_list` for the ledger and
+    /// `session_due` for what the 24-hour policy would do right now (ADR-033).
+    void showSessions();
+    /// What the panel is showing, one line per row — the witness a self test reads.
+    QString sessionPanelSummary() const;
+    /// How many rows the panel holds (0 before the first refresh).
+    int sessionPanelRowCount() const;
+
 public slots:
     void startEngine();
     void loadHome();
@@ -87,6 +99,8 @@ private:
     /// worth more than a grid showing the page's own sample data. A missing core is not an error
     /// here: the page then keeps its samples, and the status bar says why.
     void pushCardsToGrid(qint64 surface);
+    /// Ask the core for the ledger and fill the panel with it.
+    void refreshSessions();
     /// (Re)start the hibernation clock for the live card.
     void armIdleTimer();
     /// Any sign of the user: restarts the hibernation clock.
@@ -125,4 +139,7 @@ private:
     /// The card waiting to be shown once a surface exists.
     QString pending_url_;
     QString pending_title_;
+    /// The session ledger panel and its table (created on first use).
+    QDockWidget* sessions_dock_ = nullptr;
+    QTableWidget* sessions_table_ = nullptr;
 };

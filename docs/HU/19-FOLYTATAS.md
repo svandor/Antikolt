@@ -54,12 +54,14 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 
 ## 2. 24 órás munkamenet-politika + ledger
 
-> **Állapot: a mag-oldali rész kész és mérve** (22. szelet, ADR-033). `sessions.json` +
-> `SessionStore` + négy huzal-op (`session_list`, `session_upsert`, `session_close`, `session_due`),
-> a döntés a magban (`plan_cleanup`), a terv a sorral együtt jön vissza. `--coretest`:
-> `session_ledger=ok` (írás → lista → due → close → üres). Egységtesztek: 7 zöld + 2 integrációs.
-> **Ami hátra van:** a `clear_origin_data` motor-op (a `wipe` végrehajtása), a `session_rules` op
-> (szabályok állítása a huzalon), és a **Munkamenetek panel** — a híd már kész hozzá.
+> **Állapot: a mag-oldali rész és a panel kész, mérve** (22–23. szelet, ADR-033). `sessions.json` +
+> `SessionStore` + négy huzal-op (`session_list`, `session_upsert`, `session_close`, `session_due`), a
+> döntés a magban (`plan_cleanup`), a terv a sorral együtt jön vissza. A shell jobb oldali
+> **Munkamenetek** panelje a ledger soraiból épül, a „lejárt” jelzést a mag `session_due`-ja adja.
+> `--coretest`: `session_ledger=ok`; `--sessionpanel`: `panel_rows=1`,
+> `panel_row=https://example.org | expired | sweep | 7 | lejárt`, `session_panel=ok`.
+> **Ami hátra van:** a `clear_origin_data` motor-op (a `wipe` végrehajtása, „takarítás most” gomb), a
+> `session_rules` op + szabály-szerkesztés a panelen, és a `LossEstimate` megjelenítése.
 
 **Miért:** M3 („saját napi böngésző”) fő tétele: `keep`/`sweep`/`wipe`, látható munkamenet-panellel.
 

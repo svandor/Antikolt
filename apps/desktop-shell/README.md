@@ -87,6 +87,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
 - `--coretest` — the shell talks to the Rust core service: handshake, card list, card open (timestamp),
   and the session ledger end to end (write a row, list it, let the core judge it due, close it, see it
   gone) — the policy is evaluated in the core, see ADR-033.
+- `--sessionpanel` — the session panel shows the core's ledger: a row is written into the service store,
+  the window opens its Munkamenetek dock, and the panel's own text must contain that origin and the
+  policy's verdict (`lejárt`). The window is also grabbed to a PNG, so a blank table shows up.
 
 Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).
 

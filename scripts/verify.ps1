@@ -104,6 +104,14 @@ if (-not $shell -or -not $core) {
     Add-Result 'coretest' ($LASTEXITCODE -eq 0)
 }
 
+Write-Host '=== sessionpanel ===' -ForegroundColor Cyan
+if (-not $shell -or -not $engine -or -not $core) {
+    Add-Result 'sessionpanel' $false 'missing shell, engine or core service'
+} else {
+    & $shell --sessionpanel $engine
+    Add-Result 'sessionpanel' ($LASTEXITCODE -eq 0)
+}
+
 if (-not $SkipRepo) {
     Write-Host '=== Repository checks ===' -ForegroundColor Cyan
     & (Join-Path $PSScriptRoot 'check-repo.ps1')

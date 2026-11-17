@@ -6,14 +6,20 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
+#include <QDockWidget>
 #include <QDir>
 #include <QEvent>
 #include <QFileInfo>
+#include <QHash>
+#include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QSet>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTableWidget>
 #include <QTimer>
 #include <QToolBar>
 #include <QUrl>
@@ -559,14 +565,117 @@ void MainWindow::freezeCard() {
     });
 }
 
-void MainWindow::buildToolBar() {
-    auto* toolbar = addToolBar(QStringLiteral("Fő"));
+void MainWindow::showSessions() {
+    if (sessions_dock_ == nullptr) {
+        sessions_dock_ = new QDockWidget(QStringLiteral("Munkamenetek"), this);
+        sessions_dock_->setObjectName(QStringLiteral("sessions"));
+        sessions_table_ = new QTableWidget(0, 5, sessions_dock_);
+        sessions_table_->setHorizontalHeaderLabels(
+            {QStringLiteral("Origin"), QStringLiteral("Állapot"), QStringLiteral("Politika"),
+             QStringLiteral("Sütik"), QStringLiteral("Lejárt")});
+        sessions_table_->verticalHeader()->setVisible(false);
+        sessions_table_->horizontalHeader()->setStretchLastSection(true);
+        sessions_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        sessions_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        sessions_dock_->setWidget(sessions_table_);
+        // A companion of what is on screen, not a modal interruption of it.
+        addDockWidget(Qt::RightDockWidgetArea, sessions_dock_);
+    }
+    sessions_dock_->show();
+    sessions_dock_->raise();
+    refreshSessions();
+}
+
+void MainWindow::refreshSessions() {
+    if (sessions_table_ == nullptr) {
+        return;
+    }
+    if (core_ == nullptr || !core_->isRunning()) {
+        sessions_table_->setRowCount(0);
+        setStatus(QStringLiteral("a munkamenet-naplóhoz előbb indítsd el a magot"));
+        return;
+    }
+    core_->sessionList([this](const QJsonObject& listed, const QString& error) {
+        if (!error.isEmpty()) {
+            setStatus(QStringLiteral("a munkamenet-napló nem érkezett meg: %1").arg(error));
+            return;
+        }
+        const QJsonArray rows = listed.value(QStringLiteral("sessions")).toArray();
+        // What the policy would do right now, asked from the core that owns the clock and the rules:
+        // the shell does not recompute the TTL (ADR-033).
+        core_->sessionDue(
+            QDateTime::currentMSecsSinceEpoch(), false,
+            [this, rows](const QJsonObject& due, const QString& due_error) {
+                QSet<QString> due_origins;
+                if (due_error.isEmpty()) {
+                    for (const QJsonValue& value :
+                         due.value(QStringLiteral("due")).toArray()) {
+                        const QJsonObject entry = value.toObject();
+                        due_origins.insert(entry.value(QStringLiteral("session"))
+                                               .toObject()
+                                               .value(QStringLiteral("origin"))
+                                               .toString());
+                    }
+                }
+                sessions_table_->setRowCount(rows.size());
+                int row = 0;
+                for (const QJsonValue& value : rows) {
+                    const QJsonObject entry = value.toObject();
+                    const QString origin = entry.value(QStringLiteral("origin")).toString();
+                    sessions_table_->setItem(row, 0, new QTableWidgetItem(origin));
+                    sessions_table_->setItem(
+                        row, 1,
+                        new QTableWidgetItem(entry.value(QStringLiteral("state")).toString()));
+                    sessions_table_->setItem(
+                        row, 2,
+                        new QTableWidgetItem(entry.value(QStringLiteral("policy")).toString()));
+                    sessions_table_->setItem(
+                        row, 3,
+                        new QTableWidgetItem(QString::number(
+                            entry.value(QStringLiteral("cookie_count")).toInt())));
+                    sessions_table_->setItem(
+                        row, 4,
+                        new QTableWidgetItem(due_origins.contains(origin)
+                                                 ? QStringLiteral("lejárt")
+                                                 : QStringLiteral("—")));
+                    ++row;
+                }
+                sessions_table_->resizeColumnsToContents();
+                setStatus(QStringLiteral("munkamenet-napló: %1 sor, ebből %2 lejárt")
+                              .arg(rows.size())
+                              .arg(due_origins.size()));
+            });
+    });
+}
+
+QString MainWindow::sessionPanelSummary() const {
+    if (sessions_table_ == nullptr) {
+        return QString();
+    }
+    QStringList lines;
+    for (int row = 0; row < sessions_table_->rowCount(); ++row) {
+        QStringList cells;
+        for (int column = 0; column < sessions_table_->columnCount(); ++column) {
+            const QTableWidgetItem* item = sessions_table_->item(row, column);
+            cells.append(item != nullptr ? item->text() : QStringLiteral("?"));
+        }
+        lines.append(cells.join(QStringLiteral(" | ")));
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+int MainWindow::sessionPanelRowCount() const {
+    return sessions_table_ == nullptr ? 0 : sessions_table_->rowCount();
+}
+
+void MainWindow::buildToolBar() {    auto* toolbar = addToolBar(QStringLiteral("Fő"));
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
 
     toolbar->addAction(QStringLiteral("Motor indítása"), this, &MainWindow::startEngine);
     toolbar->addAction(QStringLiteral("⌂ Kezdőlap"), this, &MainWindow::loadHome);
     toolbar->addAction(QStringLiteral("❄ Fagyasztás"), this, &MainWindow::freezeCard);
+    toolbar->addAction(QStringLiteral("🗂 Munkamenetek"), this, &MainWindow::showSessions);
 
     auto* spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);

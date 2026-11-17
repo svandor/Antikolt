@@ -3,6 +3,40 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonharmadik szelet) — a Munkamenetek panel
+
+A huszonkettedik szelet huzalja kész volt, de semmi nem mutatta meg. Ez a szelet a **látható** felét
+adta: a shell toolbarján a „🗂 Munkamenetek” gomb egy jobb oldali dokkot nyit, benne a ledger soraival
+(origin, állapot, politika, sütik, **lejárt**), és a sorok a mag válaszából jönnek — a lista
+`session_list`-ből, a „lejárt” jelzés a `session_due`-ból, a mag órájával és szabályaival (ADR-033). A
+panel a saját szövegét is kiadja (`sessionPanelSummary`), hogy tesztelhető legyen anélkül, hogy a
+modellre vagy a státuszsorra hagyatkoznánk.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --sessionpanel <motor>
+core_start=ok
+session_written=ok
+panel_grab=ok
+panel_grab_size=1500x975
+panel_rows=1
+panel_row=https://example.org | expired | sweep | 7 | lejárt
+session_panel=ok      (exit code 0)
+```
+
+A teszt előbb **beír egy sort** a szolgáltatás tárolójába (ugyanazon a huzalon, amit a shell használ),
+majd megnyitja az ablak paneljét és a **panel saját szövegét** olvassa vissza: a sornak és a
+politika-ítéletnek (`lejárt`) is ott kell lennie. Az ablak PNG-be is kimentve (`panel.png`), mert egy
+üres táblázat a modellben helyes, a képen nem.
+
+### Ami még nyitott
+
+- A **végrehajtás**: a `clear_origin_data` motor-op továbbra is `not_supported`, tehát a panel csak
+  megmutatja, mi lenne esedékes; a „takarítás most” gomb nem létezik.
+- A szabályok (`SessionRules`) szerkesztése a panelen (24 óra, `wipe_on_app_lock`) még nincs.
+- A `LossEstimate` (mit veszít a felhasználó egy wipe-pal) még nem jelenik meg a sorokban.
+
 ## 2026-11-17 (huszonkettedik szelet) — a munkamenet-ledger a magban (24 órás politika)
 
 A `keep`/`sweep`/`wipe` logika eddig csak egy könyvtár volt (`antikolt-core::session`, 13 teszt),
