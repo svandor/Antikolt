@@ -1027,6 +1027,18 @@ void EngineClient::OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString&
     }
 }
 
+bool EngineClient::OnConsoleMessage(CefRefPtr<CefBrowser> browser,
+                                    cef_log_severity_t level,
+                                    const CefString& message,
+                                    const CefString& source,
+                                    int line) {
+    // Every severity is logged, errors included: a page whose script died is otherwise
+    // indistinguishable from a page that renders nothing on purpose.
+    Log("[engine-host] console level=%d %s:%d %s\n", static_cast<int>(level),
+        source.ToString().c_str(), line, message.ToString().c_str());
+    return true;  // handled: CEF must not also pop its own console output
+}
+
 void EngineClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
                                              TerminationStatus status,
                                              int error_code,

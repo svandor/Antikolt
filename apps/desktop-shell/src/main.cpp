@@ -17,6 +17,7 @@
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QImage>
 #include <QPixmap>
@@ -587,6 +588,138 @@ int runCaptureCheck(const QString& enginePath) {
     return failures == 0 ? 0 : 1;
 }
 
+/// Prove the grid shows the cards the core owns, not the page's built-in samples.
+///
+/// The core is asked directly for its list first (the oracle), then the home page is loaded in the
+/// embedded card and asked what it is displaying. Neither a screenshot nor the shell's own
+/// bookkeeping is trusted: `window.antikoltGridState()` is the page's own witness, so a push that
+/// never arrived, arrived empty or was overwritten by the sample list all fail here.
+int runGridCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    int failures = 0;
+
+    const QString corePath = MainWindow::coreExecutable();
+    if (corePath.isEmpty()) {
+        out << "core_executable=FAILED (set ANTIKOLT_CORE)\n";
+        return 1;
+    }
+    out << "core_executable=" << corePath << '\n';
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", corePath.toUtf8());
+
+    // 1. The oracle: what the core says the grid should show. The same data directory the window
+    //    uses, so both read the very same store.
+    CoreClient oracle;
+    const QString core_data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                              QStringLiteral("/core");
+    QDir().mkpath(core_data);
+    QStringList expected_titles;
+    if (!oracle.start(corePath, core_data)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    out << "core_start=ok\n";
+    {
+        QEventLoop core_loop;
+        QObject::connect(&oracle, &CoreClient::failed, &core_loop, [&](const QString& message) {
+            out << "core_error=" << message << '\n';
+            core_loop.quit();
+        });
+        QObject::connect(&oracle, &CoreClient::ready, &core_loop, [&](const QJsonObject& info) {
+            out << "core_name=" << info.value(QStringLiteral("name")).toString() << '\n';
+            oracle.cardsList([&](const QJsonObject& data, const QString& error) {
+                if (!error.isEmpty()) {
+                    out << "cards_list=FAILED " << error << '\n';
+                    core_loop.quit();
+                    return;
+                }
+                for (const QJsonValue& value : data.value(QStringLiteral("cards")).toArray()) {
+                    expected_titles.append(
+                        value.toObject().value(QStringLiteral("title")).toString());
+                }
+                core_loop.quit();
+            });
+        });
+        oracle.handshake();
+        QTimer::singleShot(15000, &core_loop, &QEventLoop::quit);
+        core_loop.exec();
+    }
+    oracle.shutdown();
+    out << "core_cards=" << expected_titles.size() << '\n';
+    if (expected_titles.isEmpty()) {
+        out << "cards_list=FAILED (the core returned nothing)\n";
+        return 1;
+    }
+
+    // 2. The shell: engine plus its own core, home page in the live card, then read the grid.
+    MainWindow window;
+    window.show();
+    window.move(140, 100);
+    window.startEngine();
+
+    EngineClient* client = window.engine();
+    QEventLoop loop;
+    bool loaded = false;
+    bool pushed = false;
+    QJsonObject state;
+
+    QObject::connect(client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "engine_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 surface, const QString& url, int) {
+                         if (loaded || !url.startsWith(QStringLiteral("file:"))) {
+                             return;
+                         }
+                         loaded = true;
+                         out << "home_loaded=" << url << '\n';
+                         // The push follows this event immediately; give the page its moment to
+                         // re-render before asking what it shows.
+                         QTimer::singleShot(600, &loop, [&, surface] {
+                             client->evaluate(
+                                 surface,
+                                 QStringLiteral("JSON.stringify(window.antikoltGridState())"),
+                                 [&](const QJsonObject& reply, const QString& error) {
+                                     if (!error.isEmpty()) {
+                                         out << "grid_state=FAILED " << error << '\n';
+                                         loop.quit();
+                                         return;
+                                     }
+                                     const QString json =
+                                         reply.value(QStringLiteral("value")).toString();
+                                     state = QJsonDocument::fromJson(json.toUtf8()).object();
+                                     pushed = state.value(QStringLiteral("source")).toString() ==
+                                              QStringLiteral("core");
+                                     loop.quit();
+                                 });
+                         });
+                     });
+
+    QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    QStringList shown;
+    for (const QJsonValue& value : state.value(QStringLiteral("titles")).toArray()) {
+        shown.append(value.toString());
+    }
+    const bool same = !shown.isEmpty() && shown == expected_titles;
+
+    out << "grid_source=" << (pushed ? "core" : "FAILED") << '\n';
+    out << "grid_count=" << shown.size() << '\n';
+    for (const QString& title : shown) {
+        out << "grid_card=" << title << '\n';
+    }
+    out << "grid_first=" << state.value(QStringLiteral("firstTitle")).toString() << '\n';
+    out << "grid_matches_core=" << (same ? "ok" : "FAILED") << '\n';
+    if (!pushed || !same) {
+        ++failures;
+    }
+    window.close();
+    out.flush();
+    return failures == 0 ? 0 : 1;
+}
+
 /// Prove the whole product loop: the home page calls the injected bridge, the shell hibernates the
 /// grid and opens the card the page asked for. This is the path a user takes by clicking a card.
 int runOpenCheck(const QString& enginePath) {
@@ -848,6 +981,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("capturetest"),
         QStringLiteral("Prove the engine can capture its own pixels through DevTools, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption gridtest(
+        QStringLiteral("gridtest"),
+        QStringLiteral("Prove the home grid shows the core's cards, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -857,11 +994,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(embedtest);
     parser.addOption(opentest);
     parser.addOption(capturetest);
+    parser.addOption(gridtest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(gridtest)) {
+        return runGridCheck(parser.value(gridtest));
     }
 
     if (parser.isSet(capturetest)) {

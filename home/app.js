@@ -15,23 +15,28 @@ const GAP = 16;
 const CARD_MIN_WIDTH = 220;
 const OVERSCAN_ROWS = 2;
 
+// Container and workspace groupings belong to the page, not to the mock: the shell sends the core's
+// cards with a container id, and both data sources must render with the same colours and tabs.
+const PAGE_CONTAINERS = [
+  { id: "c-work", name: "Munka", color: "#2F6FEB" },
+  { id: "c-private", name: "Magán", color: "#2E9E5B" },
+  { id: "c-money", name: "Pénz", color: "#E3A008" },
+  { id: "c-dev", name: "Fejlesztés", color: "#8E44AD" },
+];
+
+const PAGE_WORKSPACES = [
+  { id: "w-home", name: "Otthon" },
+  { id: "w-work", name: "Munka" },
+  { id: "w-read", name: "Olvasnivaló" },
+];
+
 /** The bridge contract. Every method here must exist in the real shell's injection. */
 function createMockBridge() {
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
 
-  const containers = [
-    { id: "c-work", name: "Munka", color: "#2F6FEB" },
-    { id: "c-private", name: "Magán", color: "#2E9E5B" },
-    { id: "c-money", name: "Pénz", color: "#E3A008" },
-    { id: "c-dev", name: "Fejlesztés", color: "#8E44AD" },
-  ];
-
-  const workspaces = [
-    { id: "w-home", name: "Otthon" },
-    { id: "w-work", name: "Munka" },
-    { id: "w-read", name: "Olvasnivaló" },
-  ];
+  const containers = PAGE_CONTAINERS;
+  const workspaces = PAGE_WORKSPACES;
 
   const raw = [
     ["Google — munka", "https://mail.google.com/", "Munka", "signed_in", true, "l", 12],
@@ -151,6 +156,55 @@ const STATUS = {
   signed_out: { icon: "🔓", label: "kijelentkezve" },
   unknown: { icon: "·", label: "ismeretlen állapot" },
 };
+
+/**
+ * The core's card record (`crates/antikolt-core-service/src/store.rs`) as the grid shows it.
+ *
+ * The two shapes differ on purpose: the core stores facts (URL, container id, when it was opened),
+ * the page needs what it draws (domain, container colour, size class). One adapter, one place to
+ * change when either side moves.
+ */
+function pageCardFromCore(row, index) {
+  const containerId = String(row.container ?? "");
+  const container =
+    PAGE_CONTAINERS.find((entry) => entry.id === containerId) ??
+    PAGE_CONTAINERS.find((entry) => entry.name === containerId) ??
+    PAGE_CONTAINERS[1];
+  const statuses = ["signed_in", "expiring", "signed_out", "unknown"];
+  const pinned = Boolean(row.pinned);
+  return {
+    id: String(row.id ?? ""),
+    title: String(row.title ?? "") || String(row.url ?? "") || "cím nélküli kártya",
+    url: String(row.url ?? ""),
+    domain: safeDomain(String(row.url ?? "")),
+    notes: String(row.notes ?? ""),
+    tags: [],
+    status: statuses.includes(row.status) ? row.status : "unknown",
+    pinned,
+    archived: false,
+    size: pinned ? "l" : "m",
+    container,
+    previewRef: null,
+    luminance: 0,
+    lastOpenedAt: Number(row.last_opened_at_ms) || 0,
+    workspaceId: index > 12 ? "w-read" : "w-home",
+  };
+}
+
+/** The page's own search rule (title, URL, note, tag). */
+function matchesTerm(card, term) {
+  const query = String(term || "").toLowerCase();
+  if (!query) return true;
+  return [card.title, card.url, card.notes, ...(card.tags || [])]
+    .join(" ")
+    .toLowerCase()
+    .includes(query);
+}
+
+/// Where `cards.open` finds the URL and title it hands to the shell. The list the page shows is the
+/// truth — the shell may not know this card yet — so the newest full list is kept here instead of
+/// being re-read from the mock.
+const cardLookup = { rows: [] };
 
 /** `<antikolt-card>`: the one element a user-authored home page inserts. */
 class AntikoltCard extends HTMLElement {
@@ -306,6 +360,11 @@ class HomePage {
   constructor(bridge) {
     this.bridge = bridge;
     this.cards = [];
+    this.allCards = [];
+    /** Set when the shell pushes the core's list; `null` keeps the bridge's own (sample) cards. */
+    this.coreCards = null;
+    /** `sample` until the shell pushes the core's list, then `core` — the self test reads this. */
+    this.cardSource = "sample";
     this.filtered = [];
     this.workspaces = [];
     this.activeWorkspace = null;
@@ -331,12 +390,35 @@ class HomePage {
     this.activeWorkspace = this.workspaces[0]?.id ?? null;
     this.renderWorkspaces();
 
-    this.cards = await this.bridge.cards.list();
+    // A push from the shell may already have arrived (it is sent when the page finishes loading), so
+    // the pushed list wins over whatever the bridge would hand out.
+    this.allCards = this.coreCards
+      ? this.coreCards.map(pageCardFromCore)
+      : await this.bridge.cards.list();
+    this.cards = this.allCards.slice();
+    cardLookup.rows = this.allCards;
     this.applyFilter();
 
     this.bindEvents();
     this.restoreTheme();
     await this.refreshSystem();
+  }
+
+  /**
+   * Replace the card list with the one the core owns.
+   *
+   * Called from `window.antikoltAcceptCards` when the shell pushes the list it got from the core. If
+   * no push ever arrives (no core running), nothing here runs and the page keeps its sample cards —
+   * a grid with samples is better than an empty grid, and the shell's status bar says why.
+   */
+  acceptCards(rows) {
+    this.coreCards = Array.isArray(rows) ? rows : [];
+    this.allCards = this.coreCards.map(pageCardFromCore);
+    this.cards = this.allCards.slice();
+    cardLookup.rows = this.allCards;
+    this.cardSource = "core";
+    this.applyFilter();
+    this.refreshSystem().catch(() => {});
   }
 
   bindEvents() {
@@ -348,9 +430,15 @@ class HomePage {
       window.clearTimeout(timer);
       timer = window.setTimeout(async () => {
         this.searchTerm = this.searchEl.value.trim();
-        this.cards = this.searchTerm
-          ? await this.bridge.search(this.searchTerm)
-          : await this.bridge.cards.list();
+        if (this.coreCards) {
+          // The core's list is searched in the page: a round trip per keystroke is not worth it, and
+          // the set is small by design.
+          this.cards = this.allCards.filter((card) => matchesTerm(card, this.searchTerm));
+        } else {
+          this.cards = this.searchTerm
+            ? await this.bridge.search(this.searchTerm)
+            : await this.bridge.cards.list();
+        }
         this.applyFilter();
       }, 80);
     });
@@ -626,9 +714,12 @@ function withNativeOpen(mock) {
       ...mock.cards,
       open: async (id, options) => {
         // The card's own URL and title travel with the call: the shell may not know this card yet,
-        // and the page is the only place the list currently lives.
-        const cards = await mock.cards.list();
-        const card = cards.find((entry) => entry.id === id) || {};
+        // and the page is the only place the list currently lives. `cardLookup` holds the list the
+        // page is actually showing (the core's, once it arrived), not the mock's samples.
+        const card =
+          cardLookup.rows.find((entry) => entry.id === id) ||
+          (await mock.cards.list()).find((entry) => entry.id === id) ||
+          {};
         try {
           await window.antikoltNative.openCard({
             ...(options || {}),
@@ -654,4 +745,26 @@ const bridge = window.antikolt ?? (window.antikoltNative
 const page = new HomePage(bridge);
 page.start().catch((error) => {
   console.error("home page failed to start", error);
+});
+
+// The shell pushes the cards the core owns. The bridge is one-way today (the persistent `cefQuery`
+// that would let the page ask is a separate slice), so the shell calls this hook with the JSON it
+// received from the core. The payload is data, never code: the shell hands over a JSON string.
+window.antikoltAcceptCards = (payload) => {
+  const parsed = typeof payload === "string" ? JSON.parse(payload) : payload;
+  const rows = Array.isArray(parsed?.cards) ? parsed.cards : [];
+  page.acceptCards(rows);
+  return rows.length;
+};
+
+// What the grid actually shows: the page-side witness a self test reads instead of guessing from a
+// screenshot or from the shell's own bookkeeping.
+window.antikoltGridState = () => ({
+  source: page.cardSource,
+  count: page.cards.length,
+  filtered: page.filtered.length,
+  firstTitle: page.cards[0]?.title ?? "",
+  firstId: page.cards[0]?.id ?? "",
+  firstUrl: page.cards[0]?.url ?? "",
+  titles: page.cards.map((card) => card.title),
 });

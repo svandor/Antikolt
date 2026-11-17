@@ -79,6 +79,13 @@ private:
     void ensureSurface();
     void closeLiveCard();
     void handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args);
+    /// Push the core's card list into the home page (`window.antikoltAcceptCards`).
+    ///
+    /// The push is shell-initiated on purpose: the page cannot query the shell yet — the bridge is
+    /// one-way until the persistent `cefQuery` lands — and a grid showing the cards the core owns is
+    /// worth more than a grid showing the page's own sample data. A missing core is not an error
+    /// here: the page then keeps its samples, and the status bar says why.
+    void pushCardsToGrid(qint64 surface);
     void setStatus(const QString& text);
 
     LiveCard* card_ = nullptr;
@@ -88,6 +95,9 @@ private:
     /// The core owns the data; the shell only asks it.
     CoreClient* core_ = nullptr;
     qint64 surface_ = 0;
+    /// The surface that shows the home page, or 0 when a real card is in front. Only this surface
+    /// receives the card list.
+    qint64 home_surface_ = 0;
     /// The card waiting to be shown once a surface exists.
     QString pending_url_;
     QString pending_title_;

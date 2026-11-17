@@ -3,6 +3,28 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-032 — A kártyalista a shellből tolódik a lapra, amíg a híd egyirányú (2026-11-17)
+
+**Kontextus.** A rácsnak a mag kártyáit kell mutatnia. A lap viszont ma **nem tud kérdezni**: a híd
+(`window.antikoltNative`) egyirányú, a `cefQuery` válaszútja nincs bekötve. Egy valódi kérés-válasz
+körhöz a motor-oldalon perzisztens `CefMessageRouterBrowserSide::Callback` kell (a motornak tartania
+kell a hívást, amíg a mag válaszol), a huzal-protokollon pedig egy új üzenet (`bridge_result`) — ami a
+szerződés szerint **protokoll-verziót emel** (v1 → v2), és végig kell vinni a motoron, a shellen és a
+magon.
+
+**Döntés.** A kártyalista egyelőre **shell-kezdeményezett tolás**: a shell a kezdőlap betöltése után
+elkéri a magtól a `cards_list`-et, és a lapnak **adatként** adja át
+(`window.antikoltAcceptCards(JSON.parse("…"))`, a JSON a shellben escape-elt string-literal, nem
+beszúrt kód). A lap `pageCardFromCore` adapterrel alakítja a mag rekordjait a saját modelljévé, a
+keresés a lapon fut a betöltött listán, és `window.antikoltGridState()` a lap saját tanúja arról, mit
+mutat. Ha nincs mag, a lap a mintakártyáit mutatja, és a státuszsor kimondja, miért.
+
+**Következmény.** (+) a rács ma valódi adatot mutat, nulla protokoll-változással; (+) a lap-oldali
+tanú (`antikoltGridState`) miatt a mérés nem a shell könyvelésére vagy képernyőképre hagyatkozik;
+(−) a lap nem tud frissíteni/kérdezni (új kártya, átrendezés csak újratöltéskor látszik); a valódi
+kétirányú híd a protokoll v2-vel jön, és akkor ez a tolás visszaminősül eseménnyé („a lista
+megváltozott"). Részletek: `16-FEJLESZTESI-NAPLO.md`, tizenhatodik szelet.
+
 ## ADR-031 — A széf határa zártan viselkedik: nincs titkosítás, nincs titok (2026-11-17)
 
 **Kontextus.** A sorrend (ADR-027) szerint a széf a következő szelet. Az ADR-010 szerinti titkosítás
@@ -128,6 +150,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-029 | Minden DevTools-hívás egy `DevToolsCall` típuson; a válasz birtokolja a JSON-dokumentumot | Elfogadva |
 | ADR-030 | Festés-mérés a motor saját képével (`capture`); a képernyőkép csak diagnosztika | Elfogadva |
 | ADR-031 | Széf: a titkosítás varrata zártan viselkedik (nincs crate → nincs titok, nincs plaintext) | Elfogadva |
+| ADR-032 | A kártyalista shell-tolással jut a lapra, amíg a híd egyirányú (kétirányú híd = protokoll v2) | Elfogadva |
 
 ---
 

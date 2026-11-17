@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -20,6 +21,25 @@
 #include "live_card.h"
 
 namespace {
+
+/// A JSON document rendered as a JavaScript string literal.
+///
+/// The shell pushes data into the page with `evaluate`, and the only safe way to do that is to hand
+/// the page *data*: a string it parses itself, never text spliced into code. JSON's own escaping is
+/// valid JavaScript string escaping, so wrapping the document in double quotes — with the two
+/// characters that would end the literal escaped — is enough. U+2028/U+2029 are line terminators in
+/// JavaScript but not in JSON strings, so they are escaped explicitly.
+QString asJavaScriptStringLiteral(const QString& text) {
+    QString escaped = text;
+    escaped.replace(QLatin1String("\\"), QLatin1String("\\\\"));
+    escaped.replace(QLatin1String("\""), QLatin1String("\\\""));
+    escaped.replace(QLatin1String("\n"), QLatin1String("\\n"));
+    escaped.replace(QLatin1String("\r"), QLatin1String("\\r"));
+    escaped.replace(QLatin1String("\t"), QLatin1String("\\t"));
+    escaped.replace(QChar(0x2028), QStringLiteral("\\u2028"));
+    escaped.replace(QChar(0x2029), QStringLiteral("\\u2029"));
+    return escaped;
+}
 
 // Keep these in sync with docs/HU/08-DIZAJN.md §1. A mismatch is a review finding, not a taste
 // question: the documentation is the specification.
@@ -62,6 +82,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                               .arg(surface)
                               .arg(httpStatus)
                               .arg(url));
+                // The grid must show the cards the core owns, so the list is pushed once the page is
+                // there to receive it. Only the home surface gets it; a real card is not a grid.
+                if (surface == home_surface_) {
+                    pushCardsToGrid(surface);
+                }
             });
     connect(engine_, &EngineClient::loadFailed, this,
             [this](qint64 surface, const QString& url, const QString& reason) {
@@ -86,10 +111,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             // The grid is the only page allowed to talk to the shell. Installing it here (before the
             // load finishes) is enough: the engine re-injects it whenever the page reloads.
             engine_->installBridge(surface);
+            home_surface_ = surface;
+        } else {
+            home_surface_ = 0;
         }
     });
     connect(card_, &LiveCard::surfaceDetached, this, [this](qint64 surface) {
         surface_ = 0;
+        home_surface_ = 0;
         setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
     });
     connect(engine_, &EngineClient::bridgeCall, this, &MainWindow::handleBridgeCall);
@@ -376,6 +405,35 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
     }
     // An unknown method is a version mismatch, not a crash: say so and keep the surface alive.
     setStatus(QStringLiteral("ismeretlen híd-hívás: %1").arg(method));
+}
+
+void MainWindow::pushCardsToGrid(qint64 surface) {
+    if (surface == 0 || core_ == nullptr || !core_->isRunning()) {
+        return;  // no core: the page keeps its own sample cards and the status bar already said so
+    }
+    core_->cardsList([this, surface](const QJsonObject& reply, const QString& error) {
+        if (!error.isEmpty()) {
+            setStatus(QStringLiteral("a kártyalista nem érkezett meg: %1 — a rács a mintákat mutatja")
+                          .arg(error));
+            return;
+        }
+        const QJsonArray cards = reply.value(QStringLiteral("cards")).toArray();
+        QJsonObject payload;
+        payload.insert(QStringLiteral("cards"), cards);
+        const QJsonDocument document(payload);
+        const QString script =
+            QStringLiteral("window.antikoltAcceptCards(JSON.parse(\"%1\"))")
+                .arg(asJavaScriptStringLiteral(
+                    QString::fromUtf8(document.toJson(QJsonDocument::Compact))));
+        engine_->evaluate(surface, script, [this, count = cards.size()](const QJsonObject&,
+                                                                       const QString& eval_error) {
+            if (!eval_error.isEmpty()) {
+                setStatus(QStringLiteral("a kártyalista nem ment át a lapra: %1").arg(eval_error));
+                return;
+            }
+            setStatus(QStringLiteral("kártyalista a magtól: %1 kártya").arg(count));
+        });
+    });
 }
 
 void MainWindow::loadHome() {

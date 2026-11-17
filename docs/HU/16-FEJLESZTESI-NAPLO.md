@@ -3,6 +3,71 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizenhatodik szelet) — a rács a mag kártyáit mutatja (és a lap szkriptje eddig nem futott)
+
+A rács eddig a kezdőlap saját **mintakártyáit** mutatta. Ez a szelet bekötötte a mag kártyatárát — és
+közben kiderült, hogy a kezdőlap szkriptje **a motorban egyáltalán nem futott le**.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| Shell → lap tolás | a kezdőlap betöltése után a shell `cards_list`-et kér a magtól, és **adatként** adja át: `window.antikoltAcceptCards(JSON.parse("…"))`, a JSON escape-elt string-literal (ADR-032) |
+| Lap | `pageCardFromCore` adapter (mag-rekord → rács-modell), lap-oldali keresés a betöltött listán, `window.antikoltGridState()` — a lap saját tanúja arról, mit mutat |
+| Shell | `MainWindow::pushCardsToGrid` + `home_surface_` (csak a kezdőlap kap listát); a `cards.open` a lapon látható listából veszi az URL-t, nem a mockból |
+| Önellenőrzés | `antikolt-shell --gridtest <motor>`: a magtól kért lista az oracle, a lap a `antikoltGridState`-en keresztül vall |
+| Motor | `OnConsoleMessage` → `stderr`: a lap `console`-ja és a JS-hibák most látszanak (eddig a renderer console-jában maradtak) |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --gridtest <motor>
+core_executable=D:/Szerver/Antikolt/target/debug/antikolt-core-service.exe
+core_start=ok
+core_name=antikolt-core
+core_cards=3
+home_loaded=file:///D:/Szerver/Antikolt/home/index.html
+grid_source=core
+grid_count=3
+grid_card=Antikolt projekt
+grid_card=Hacker News
+grid_card=Wikipedia — kezdőlap
+grid_first=Antikolt projekt
+grid_matches_core=ok      (exit code 0)
+```
+
+A többi önellenőrzés változatlanul zöld: `--embedtest` `embed/paint/focus/viewport_match=ok`,
+`--opentest` `card_opened=ok`, `--capturetest` `capture=ok capture_size=ok`, `--coretest` `cards=3
+card_open=ok`.
+
+### A hiba, amit ez a szelet talált (és ami miatt a rács üres volt)
+
+A `home/index.html` a szkriptet **modulként** töltötte be (`<script type="module" src="app.js">`), a
+motor viszont `file://`-ról nyitja a lapot — a Chromium pedig **CORS miatt elutasítja a modul-szkriptet
+file: originról**. A lap szkriptje tehát a motorban soha nem futott le; a „minta-rács” csak akkor
+létezett, ha valaki kézzel nyitotta meg a fájlt egy böngészőben. Mérve, a javítás előtt és után
+(ugyanaz a próba, `window`-diagnosztika):
+
+```
+előtte:  {"accept":"undefined","state":"undefined","native":"object","cards":0}
+utána:   {"accept":"function","state":"function","native":"object","cards":16,
+          "grid":{"source":"sample","count":28,"firstTitle":"Google — munka",…}}
+```
+
+Javítás: klasszikus, `defer`-elt szkript (`<script src="app.js" defer>`); az `app.js` sosem használt
+ESM-szintaxist, tehát a viselkedés csak a betöltés útjában változik. **Korrekció a tizedik szelethez:**
+ott a „rács a hídon keresztül kér kártyát” valójában az önellenőrzés `eval`-hívása volt, nem a lap
+saját kódja — a lap kódja akkor még nem futott. A második tanulság a diagnosztika: a motor mostantól
+naplózza a lap `console`-üzeneteit, mert enélkül egy halott szkript pont úgy néz ki, mint egy üres rács.
+
+### Ami még nyitott
+
+- **A kérés-irány** (a lap kérdez: keresés, frissítés, új kártya) a perzisztens `cefQuery`-vel jön, és
+  a `bridge_result` üzenettel **protokoll v2** (ADR-032); addig a tolás marad.
+- A rács **előnézetei** még nincsenek (a `capture` primitív kész, a 260×150-es WebP-pipeline nem).
+- A kártyák szerkesztése/címkézése/pin-jelölése a lapon még nincs: a mag tudja (`cards_upsert`), a híd
+  nem vezet rá utat.
+
 ## 2026-11-17 (tizenötödik szelet) — a széf alakja kész, a titkosítás blokkolt
 
 Az ADR-027 sorrendje szerint a DevTools-réteg után a széf jön. Ez a szelet a széf **alakját** építette

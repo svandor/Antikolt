@@ -154,6 +154,16 @@ public:
                      const CefString& errorText,
                      const CefString& failedUrl) override;
     void OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) override;
+    /// Page-side console output and JavaScript errors go to stderr.
+    ///
+    /// Without this a broken page is indistinguishable from a page that has not loaded: the grid
+    /// rendered nothing for a whole slice because a module script was refused by CORS and the
+    /// failure only existed inside the renderer's console.
+    bool OnConsoleMessage(CefRefPtr<CefBrowser> browser,
+                          cef_log_severity_t level,
+                          const CefString& message,
+                          const CefString& source,
+                          int line) override;
     void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
                                    TerminationStatus status,
                                    int error_code,

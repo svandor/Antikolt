@@ -63,6 +63,7 @@ below it says `ok`:
 antikolt-shell.exe --embedtest  build/apps/engine-host/antikolt-engine-host.exe
 antikolt-shell.exe --opentest   build/apps/engine-host/antikolt-engine-host.exe
 antikolt-shell.exe --capturetest build/apps/engine-host/antikolt-engine-host.exe
+antikolt-shell.exe --gridtest   build/apps/engine-host/antikolt-engine-host.exe
 antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
 ```
 
@@ -74,6 +75,10 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   grid and opens the requested card as a new surface on a new partition.
 - `--capturetest` — `capture` returns a real picture of a three-band page through Chromium's compositor,
   at exactly the viewport × device scale, with distinct colours.
+- `--gridtest` — the home grid shows the cards the **core** owns: the core is asked for its list first
+  (the oracle), then the page reports what it displays through `window.antikoltGridState()`, and the two
+  must agree. A push that never arrived, arrived empty or was overwritten by the page's sample cards
+  fails here.
 - `--coretest` — the shell talks to the Rust core service: handshake, card list, card open (timestamp).
 
 Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).
