@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harminchetedik szelet) — az előnézet elavul, és akkor újra készül
+
+Az előnézet eddig **egyszer** készült: a kártya képe soha nem frissült. Most a kora dönt: ha a fájl nem
+létezik, vagy **7 napnál régebbi**, a következő megnyitás újra lefényképezi. A kor a fájl saját módosítási
+ideje (`previews.h: previewNeedsRefresh`) — egy előnézet egy fénykép, tehát a „mikor készült" pontosan az,
+amit a fájlrendszer már nyilvántart; egy második időbélyeg a kártya-rekordon csak újabb szinkronizálnivaló
+lenne. A jövőbeli módosítási idő (elállított óra) **frissnek** számít, különben minden megnyitás újra
+fényképezne.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --previewrefresh
+refresh_missing=true    ← nincs fájl: újra kell
+refresh_fresh=false     ← friss: nem kell
+refresh_stale=true      ← 30 nappal visszaállítva: újra kell
+refresh_aged=true       ← a visszaállítás sikerült (a mérés előfeltétele)
+refresh_future=true     ← jövőbeli időbélyeg: nem csinálunk belőle fényképezőgépet
+preview_refresh=ok      (exit code 0)
+```
+
+### Hiba a mérésből, javítva
+
+A teszt először a *visszaállítás után* kérdezte meg újra, hogy „friss-e", és a saját korábbi állításával
+vetette össze — más kérdésre más válasz. A „friss" mérése most a visszaállítás **előtt** történik
+(`fresh_ok`), és a jelző (`refresh_fresh`) is ezt tükrözi.
+
+### Ami még nyitott
+
+- A **tartós napi ≤100** korlát (a számláló továbbra is futás-szintű), és a háttérben készített előnézetek (I1).
+- A 7 napos küszöb **nem** hangolható a felületről (szándékos: egyelőre egy helyen van).
 ## 2026-11-17 (harminchatodik szelet) — az árva előnézetek törlődnek
 
 Az előnézet-kép a profilban él, és a kártya-rekord csak a nevét hordozza (ADR-035) — ha a kártya megszűnik, a

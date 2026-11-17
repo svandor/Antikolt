@@ -55,4 +55,22 @@ inline QStringList removeOrphanPreviews(const QString& previews_dir, const QSet<
     return removed;
 }
 
+/// Whether a preview must be regenerated: it is missing, or it is older than `max_age_ms`.
+///
+/// Age is the file's own modification time — a preview is a photograph of a page, so "when was this
+/// photographed" is exactly what the filesystem already records, and a second timestamp on the card record
+/// would be another thing to keep in sync. A modification time in the future (a clock that moved) is treated
+/// as fresh: re-capturing on every open would be worse than a slightly odd timestamp.
+inline bool previewNeedsRefresh(const QString& path, qint64 now_ms, qint64 max_age_ms) {
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isFile()) {
+        return true;
+    }
+    const qint64 modified_ms = info.lastModified().toMSecsSinceEpoch();
+    if (modified_ms <= 0 || now_ms <= modified_ms) {
+        return false;
+    }
+    return (now_ms - modified_ms) > max_age_ms;
+}
+
 }  // namespace antikolt

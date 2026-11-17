@@ -2356,6 +2356,53 @@ int runPinCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the refresh policy: a preview is regenerated when it is missing or older than the limit.
+///
+/// The policy is a decision about a file and a clock, so the check is a scratch directory and two clocks -
+/// no engine, no core, and no seven days of waiting.
+int runPreviewRefreshCheck() {
+    QTextStream out(stdout);
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                        QStringLiteral("/preview-refresh-selftest");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    const QString path = dir + QStringLiteral("/card.png");
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    const qint64 week_ms = 7LL * 24 * 60 * 60 * 1000;
+
+    out << "refresh_missing=" << (antikolt::previewNeedsRefresh(path, now_ms, week_ms) ? "true" : "false")
+        << '\n';
+
+    QImage probe(2, 2, QImage::Format_RGB32);
+    probe.fill(QColor(40, 180, 90));
+    const bool wrote = probe.save(path, "PNG");
+    // "Fresh" has to be measured *before* the file is back-dated; asking again afterwards would be asking a
+    // different question and the check would compare a stale answer with a fresh one.
+    const bool fresh_ok = !antikolt::previewNeedsRefresh(path, now_ms, week_ms);
+    out << "refresh_fresh=" << (fresh_ok ? "false" : "true") << '\n';
+
+    // Back-date the file by thirty days: the policy must want a new photograph.
+    QFile file(path);
+    const qint64 old_ms = now_ms - 30LL * 24 * 60 * 60 * 1000;
+    const bool aged = file.open(QIODevice::ReadWrite) && file.setFileTime(
+        QDateTime::fromMSecsSinceEpoch(old_ms), QFileDevice::FileModificationTime);
+    file.close();
+    const bool stale_wanted = antikolt::previewNeedsRefresh(path, now_ms, week_ms);
+
+    // A clock that moved backwards must not make the shell re-photograph on every open.
+    const bool future_ok = !antikolt::previewNeedsRefresh(path, old_ms - 1000, week_ms);
+
+    out << "refresh_stale=" << (stale_wanted ? "true" : "false") << '\n';
+    out << "refresh_aged=" << (aged ? "true" : "false") << '\n';
+    out << "refresh_future=" << (future_ok ? "true" : "false") << '\n';
+
+    const bool ok = antikolt::previewNeedsRefresh(dir + QStringLiteral("/nope.png"), now_ms, week_ms) &&
+                    wrote && fresh_ok && aged &&
+                    stale_wanted && future_ok;
+    out << "preview_refresh=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
 /// Prove the preview directory is cleaned: an orphan is deleted, a referenced file and a stranger survive.
 ///
 /// No engine and no core: the janitor is a decision about a directory, so the check is a directory.
@@ -3020,6 +3067,8 @@ int main(int argc, char* argv[]) {
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption previewrefresh(QStringLiteral("previewrefresh"),
+                                          QStringLiteral("Prove the preview refresh policy, then exit."));
     const QCommandLineOption previewclean(QStringLiteral("previewclean"),
                                      QStringLiteral("Prove the preview directory is cleaned, then exit."));
     const QCommandLineOption rulestest(
@@ -3055,6 +3104,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(scrollzoomtest);
     parser.addOption(rulestest);
     parser.addOption(previewclean);
+    parser.addOption(previewrefresh);
     parser.addOption(coretest);
     parser.process(app);
 
@@ -3072,6 +3122,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(previewclean)) {
         return runPreviewCleanCheck();
+    }
+
+    if (parser.isSet(previewrefresh)) {
+        return runPreviewRefreshCheck();
     }
 
     if (parser.isSet(mediatest)) {

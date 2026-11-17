@@ -58,6 +58,9 @@ constexpr int kPreviewCap = 40;
 /// capture; more would turn a broken engine into a screenshot loop.
 constexpr int kPreviewAttempts = 2;
 
+/// How old a preview may be before the next visit refreshes it (ADR-035 follow-up).
+constexpr qint64 kPreviewMaxAgeMs = 7LL * 24 * 60 * 60 * 1000;
+
 /// The origin of a URL (`scheme://host[:port]`), or "" when the scheme has no storable origin.
 ///
 /// The session ledger is keyed by origin, and a wipe must name the same string the browser uses: a
@@ -891,13 +894,22 @@ void MainWindow::producePreview(qint64 surface) {
                 break;
             }
         }
-        if (record.isEmpty() || !record.value(QStringLiteral("preview_ref")).toString().isEmpty()) {
-            qInfo("[shell] preview: no record or already has one (%s)",
-                  record.isEmpty() ? "no record" : "has preview_ref");
-            return;  // unknown card, or one that already has a picture
+        if (record.isEmpty()) {
+            qInfo("[shell] preview: no record for %s", qUtf8Printable(card_id));
+            return;  // unknown card: there is nothing to remember a picture on
         }
-        const QString name = card_id + QStringLiteral(".png");
+        // A card keeps its picture until the picture is *old*: a preview is a photograph of a page, and pages
+        // change. Age comes from the file's own modification time (previews.h), so there is no second
+        // timestamp to keep in sync; a missing file is always "needs refresh".
+        QString name = record.value(QStringLiteral("preview_ref")).toString();
+        if (name.isEmpty()) {
+            name = card_id + QStringLiteral(".png");
+        }
         const QString target = engine_profile_ + QStringLiteral("/previews/") + name;
+        if (!antikolt::previewNeedsRefresh(target, QDateTime::currentMSecsSinceEpoch(),
+                                           kPreviewMaxAgeMs)) {
+            return;  // fresh enough; the shell is not a screenshot loop
+        }
         // The record learns the name; the grid shows the picture the next time it loads, because the push
         // carries the record and the engine serves the file (ADR-035).
         const auto remember = [this, record, name](const QString&) {
@@ -914,10 +926,6 @@ void MainWindow::producePreview(qint64 surface) {
                 setStatus(QStringLiteral("előnézet kész: %1").arg(name));
             });
         };
-        if (QFileInfo::exists(target)) {
-            remember(name);
-            return;
-        }
         // A capture can stall behind a GPU hiccup (measured: `Page.captureScreenshot` sometimes answers only
         // after the GPU process has restarted twice), so one retry is cheaper than a lost preview. The
         // engine's own request timeout bounds each attempt; after the last one the preview is skipped and
