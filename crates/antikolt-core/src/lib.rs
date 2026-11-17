@@ -10,7 +10,8 @@
 //!
 //! Design notes live in `docs/HU/02-ARCHITEKTURA.md`; the decisions encoded here are recorded in
 //! `docs/HU/05-DONTESEK.md` (ADR-001 single live view, ADR-003 disk hibernation, ADR-009 session
-//! policy, ADR-019 session ledger, ADR-020 resource profiles, ADR-025 disk quota).
+//! policy, ADR-019 session ledger, ADR-020 resource profiles, ADR-025 disk quota, ADR-031 the vault's
+//! fail-closed crypto seam).
 
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]
@@ -22,6 +23,7 @@ pub mod migrations;
 pub mod profile;
 pub mod session;
 pub mod snapshot;
+pub mod vault;
 
 /// Crate version, surfaced in the About dialog and in diagnostics.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

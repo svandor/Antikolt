@@ -3,6 +3,29 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-031 — A széf határa zártan viselkedik: nincs titkosítás, nincs titok (2026-11-17)
+
+**Kontextus.** A sorrend (ADR-027) szerint a széf a következő szelet. Az ADR-010 szerinti titkosítás
+(rekordonként AES-256-GCM, AAD = origin + rekord-azonosító, DEK a rendszer kulcstárában vagy Argon2id-del)
+crate-eket igényel: `aes-gcm`, `argon2`, `zeroize`. Ebben a buildkörnyezetben **nincs crates.io elérés**
+(`curl: (35) schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`), az offline registry
+**14 crate**-et tartalmaz, egyetlen kriptográfiait sem; a `windows`/`winapi` crate sem elérhető, a crate
+pedig `#![deny(unsafe_code)]`, tehát a platform kulcstár (DPAPI) FFI-vel sem hívható.
+
+**Döntés.** A széf **alakja** most elkészül (zárás/nyitás, 5 perces idle auto-lock, `require_open` kapu,
+`SecretKind`, `VaultStatus`), a titkosítás pedig **explicit varrat** mögé kerül (`SecretBox` trait),
+amelynek a fában egyetlen implementációja van: `UnavailableSecrets`, ami **minden pecsételést és
+feloldást megtagad** (`vault_locked` / `not_supported`). A `VaultStatus` kimondja, hogy ebben a buildben
+`can_store: false`, és megadja az okot. **Nincs néma plaintext-fallback** — ez az ADR-010 egyetlen
+megszeghetetlen szabálya —, és nincs kézzel írt AES.
+
+**Következmény.** (+) a shell, a munkamenet-ledger és a passkey-folyamat már erre az alakra épülhet;
+(+) a valódi kriptográfia egyetlen implementáció cseréje lesz, az API nem változik; (+) a 10 új teszt a
+viselkedést rögzíti (4:59 nyitva, 5:00 zár, a visszafelé lépő óra nem hosszabbít, a varrat soha nem ad
+vissza nyílt szöveget); (−) a széf **nem tud titkot tárolni**, amíg a crate-ek nincsenek bevendorolva —
+ezt a felületnek ki kell mondania, nem elrejtenie. Részletek: `16-FEJLESZTESI-NAPLO.md`, tizenötödik
+szelet.
+
 ## ADR-029 — Minden DevTools-hívás egy típuson megy át (2026-11-17)
 
 **Kontextus.** A CEF DevTools-átvitele aszimmetrikus: `ExecuteDevToolsMethod` csak **elindít** egy
@@ -104,6 +127,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-028 | Lemezkvóta: állítható, alapértéke 50 GB, LRU-leszorítással | Elfogadva |
 | ADR-029 | Minden DevTools-hívás egy `DevToolsCall` típuson; a válasz birtokolja a JSON-dokumentumot | Elfogadva |
 | ADR-030 | Festés-mérés a motor saját képével (`capture`); a képernyőkép csak diagnosztika | Elfogadva |
+| ADR-031 | Széf: a titkosítás varrata zártan viselkedik (nincs crate → nincs titok, nincs plaintext) | Elfogadva |
 
 ---
 

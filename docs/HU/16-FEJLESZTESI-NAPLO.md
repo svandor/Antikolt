@@ -3,6 +3,57 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizenötödik szelet) — a széf alakja kész, a titkosítás blokkolt
+
+Az ADR-027 sorrendje szerint a DevTools-réteg után a széf jön. Ez a szelet a széf **alakját** építette
+meg — és mérve megállapította, hogy a **titkosítás** ebben a környezetben nem megépíthető. Nem lett
+helyette kézzel írt AES és nem lett néma plaintext-tárolás: a varrat zártan viselkedik (ADR-031).
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| `crates/antikolt-core/src/vault.rs` | `Vault` zálog: nyitás/zárás, 5 perces idle auto-lock (`tick` pontosan egyszer jelez), `touch`, `require_open` kapu, `open_for_ms`; `SecretKind` (`password`/`totp`/`passkey`, szigorú parse); `VaultStatus` (soha nem tartalmaz titkot); `VaultError` a huzal-kódokkal (`vault_locked`, `not_supported`, `internal`) |
+| Titkosítási varrat | `SecretBox` trait: `seal`/`open` a **rekord AAD-jével** (origin + azonosító, ADR-010) + `available()`. A fában egyetlen implementáció: `UnavailableSecrets`, ami mindent megtagad, és kimondja az okot |
+| Tesztek | 10 új egységteszt: 4:59 nyitva / 5:00 zár (határinkluzív), az aktivitás újraindítja az órát, a visszafelé lépő óra nem hosszabbít, a varrat soha nem ad vissza nyílt szöveget, a `status` nem tartalmaz titkot |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+cargo test --offline
+  antikolt-core (lib)       77 passed   (a 67-ből; +10 a széf)
+  antikolt-core-service      3 passed
+  antikolt-ipc              14 passed
+  protocol/integráció        2 + 1 passed
+```
+
+### A blokkoló, mérve (nem vélemény)
+
+```
+$ curl -sS -m 20 -o config.json https://index.crates.io/config.json
+curl: (35) schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS (0x8009030e)
+
+$ ls ~/.cargo/registry/src/index.crates.io-*/ | wc -l
+14        # serde, serde_json, thiserror és a függőségeik — kriptográfiai crate nincs köztük
+aes-gcm, argon2, sha2, zeroize, rand_core, getrandom, rusqlite, windows, winapi   → MISSING
+```
+
+A crate `#![deny(unsafe_code)]`, tehát a platform kulcstár (DPAPI) FFI-vel sem érhető el. AES-ot kézzel
+írni nem opció. Ezért a széf ma **nem tud titkot tárolni**, és ezt a `VaultStatus.can_store = false` +
+`unavailable_reason` ki is mondja, nem elrejti.
+
+### Ami még nyitott (pontos sorrend)
+
+1. **A crate-ek bevendorolása** (`cargo vendor` egy hálózattal rendelkező gépen): `aes-gcm`, `argon2`,
+   `zeroize` (+ a `rand_core`/`getrandom` lánc), majd `AesGcmSecrets: SecretBox` implementáció a
+   rekord-AAD-vel, és a DEK köré a rendszer kulcstár (DPAPI, `unsafe` engedélyezése egyetlen, izolált
+   modulban vagy a `windows` crate-tel).
+2. Utána a széf **tárolója**: `credential` tábla (a séma már megvan a `0001_init.sql`-ben), a
+   `pending_maintenance` mintájára atomikus írás.
+3. Utána a **passkey**: `WebAuthn.enable` / `addVirtualAuthenticator` / `getCredentials` /
+   `setCredential` — mind a most kész `DevToolsCall` típuson (ADR-029), a hitelesítő adatok a széfben.
+4. Utána a TOTP (RFC 6238) és az autofill (izolált world, `Page.createWorld`).
+
 ## 2026-11-17 (tizennegyedik szelet) — `capture`: a motor a saját képét adja
 
 A tizenharmadik szelet kimondta, hogy a festést nem a képernyőről kell mérni. Ez a szelet megépítette a
