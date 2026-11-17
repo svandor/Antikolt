@@ -1378,6 +1378,92 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the page can *ask*: protocol 2's request channel, end to end (ADR-034).
+///
+/// The page calls `window.antikoltNative.request('cards.search', {q})` — a persistent `cefQuery` the
+/// engine holds until the shell answers. The answer comes from the core's card list, so it is something
+/// the page cannot produce on its own. Two questions: one that must succeed, and one unknown method that
+/// must be *rejected* rather than left hanging — a request nobody answers is a hung page.
+int runBridgeCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool asked = false;
+    QString answer;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             QTimer::singleShot(700, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "window.antikoltNative.request('cards.search', {q:'wiki'})"
+                                         ".then(function(r){window.__answer=r;},"
+                                         "function(e){window.__answer={error:String(e.message)};});"
+                                         "window.antikoltNative.request('no_such_method', {})"
+                                         ".then(function(r){window.__unknown=r;},"
+                                         "function(e){window.__unknown={error:String(e.message)};});"
+                                         " 'asked'"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         asked = error.isEmpty() &&
+                                                 reply.value(QStringLiteral("value")).toString() ==
+                                                     QStringLiteral("asked");
+                                         out << "asked=" << (asked ? "ok" : "FAILED") << '\n';
+                                         // Both promises settle asynchronously; read the page's own
+                                         // variables afterwards.
+                                         QTimer::singleShot(1500, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id,
+                                                 QStringLiteral(
+                                                     "JSON.stringify({answer: window.__answer||null,"
+                                                     " unknown: window.__unknown||null})"),
+                                                 [&](const QJsonObject& value, const QString& failure) {
+                                                     answer = failure.isEmpty()
+                                                                  ? value.value(QStringLiteral("value"))
+                                                                        .toString()
+                                                                  : failure;
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    const QJsonObject result = QJsonDocument::fromJson(answer.toUtf8()).object();
+    const QJsonArray cards = result.value(QStringLiteral("answer")).toObject()
+                                 .value(QStringLiteral("cards")).toArray();
+    const QString unknown_error = result.value(QStringLiteral("unknown")).toObject()
+                                      .value(QStringLiteral("error")).toString();
+    QString first_title;
+    for (const QJsonValue& value : cards) {
+        first_title = value.toObject().value(QStringLiteral("title")).toString();
+        break;
+    }
+    const bool found = !cards.isEmpty() && first_title.toLower().contains(QStringLiteral("wiki"));
+    const bool rejected = unknown_error.contains(QStringLiteral("ismeretlen"));
+    out << "search_cards=" << cards.size() << '\n';
+    out << "search_first_title=" << first_title << '\n';
+    out << "unknown_method=" << (rejected ? "rejected" : "FAILED") << '\n';
+    const bool ok = asked && found && rejected;
+    out << "bridge_request=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the session panel shows what the core's ledger says, and that the policy is the core's.
 ///
 /// A row is written straight into the store the window will use, then the window's panel is opened and
@@ -1742,6 +1828,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("cleanuptest"),
         QStringLiteral("Prove a due session is wiped when its card opens, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption bridgetest(
+        QStringLiteral("bridgetest"),
+        QStringLiteral("Prove the page can ask the shell a question, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -1756,11 +1846,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(sessionpanel);
     parser.addOption(wipetest);
     parser.addOption(cleanuptest);
+    parser.addOption(bridgetest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(bridgetest)) {
+        return runBridgeCheck(parser.value(bridgetest));
     }
 
     if (parser.isSet(cleanuptest)) {

@@ -15,6 +15,12 @@ namespace {
 constexpr int kHeaderSize = 4;
 constexpr int kRequestTimeoutMs = 20000;
 
+/// The engine-link protocol this shell speaks (crates/antikolt-ipc `PROTOCOL_VERSION`).
+///
+/// Version 2 adds the page's request/reply channel (`bridge_reply`); the two processes ship together, so
+/// there is exactly one version in the tree and a mismatch is reported instead of half-working (ADR-034).
+constexpr int kProtocolVersion = 2;
+
 QByteArray frame(const QJsonObject& envelope) {
     const QByteArray payload = QJsonDocument(envelope).toJson(QJsonDocument::Compact);
     QByteArray out;
@@ -99,7 +105,7 @@ qint64 EngineClient::send(const QString& op, const QJsonObject& fields, ReplyHan
 
     const qint64 id = next_id_++;
     QJsonObject envelope;
-    envelope.insert(QStringLiteral("version"), 1);
+    envelope.insert(QStringLiteral("version"), kProtocolVersion);
     envelope.insert(QStringLiteral("id"), static_cast<double>(id));
     envelope.insert(QStringLiteral("message"), message);
 
@@ -121,7 +127,7 @@ qint64 EngineClient::send(const QString& op, const QJsonObject& fields, ReplyHan
 
 void EngineClient::handshake() {
     QJsonObject fields;
-    fields.insert(QStringLiteral("protocol"), 1);
+    fields.insert(QStringLiteral("protocol"), kProtocolVersion);
     fields.insert(QStringLiteral("engine"), QStringLiteral("antikolt-shell"));
     send(QStringLiteral("hello"), fields, nullptr);
 }
@@ -225,6 +231,19 @@ void EngineClient::destroySurface(qint64 surface, ReplyHandler handler) {
     send(QStringLiteral("destroy_surface"), fields, std::move(handler));
 }
 
+void EngineClient::bridgeReply(qint64 request, const QJsonObject& json, const QString& error) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("request"), static_cast<double>(request));
+    if (error.isEmpty()) {
+        // The engine forwards this string to the page verbatim; JSON keeps the answer typed.
+        fields.insert(QStringLiteral("json"), QString::fromUtf8(
+                                                   QJsonDocument(json).toJson(QJsonDocument::Compact)));
+    } else {
+        fields.insert(QStringLiteral("error"), error);
+    }
+    send(QStringLiteral("bridge_reply"), fields, nullptr);
+}
+
 void EngineClient::shutdown() {
     if (!isRunning()) {
         return;
@@ -307,7 +326,8 @@ void EngineClient::handleEvent(const QJsonObject& event) {
         emit surfaceClosed(surface);
     } else if (type == QStringLiteral("bridge_call")) {
         emit bridgeCall(surface, event.value(QStringLiteral("method")).toString(),
-                        event.value(QStringLiteral("args")).toObject());
+                        event.value(QStringLiteral("args")).toObject(),
+                        static_cast<qint64>(event.value(QStringLiteral("request")).toDouble()));
     }
 }
 

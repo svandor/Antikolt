@@ -1,9 +1,15 @@
-# A motorház–mag protokoll, v1
+# A motorház–mag protokoll, v2
 
 This is the written form of `crates/antikolt-ipc`. The Rust types are authoritative; this document
 explains the contract to the C++ side (and to a future engine adapter) without requiring them to read
 Rust. Changing anything here is a protocol change: bump `PROTOCOL_VERSION`, and record it in
 `docs/HU/02-ARCHITEKTURA.md` §3.
+
+**Version 2** adds the page's request channel: `Message::BridgeReply` and the `bridge_reply` op. A page
+call marked `request` is a *persistent* `cefQuery` — the engine holds it and forwards the question as a
+`bridge_call` event carrying a request number; the shell answers with `bridge_reply` and the page's
+promise settles with that payload (ADR-034). A v1 shell and a v2 engine refuse each other instead of
+half-working: the envelope version is checked on both sides.
 
 ## Transport
 
@@ -79,6 +85,7 @@ gracefully when a capability is missing, and must never assume one:
 | `snapshot` | core → engine | `surface` | `reply` (`{mhtml_bytes, integrity}`) |
 | `metrics` | core → engine | `surface` | `reply` (`{dom_nodes, js_heap_bytes, engine_working_set_bytes}`) |
 | `clear_origin_data` | core → engine | `surface`, `origin`, `storages[]` | `reply` (`{cleared: true, origin}`) |
+| `bridge_reply` | core → engine | `request`, `json` **or** `error` | `reply` (`{}`; the page's callback is what carries the answer) |
 | `shutdown` | core → engine | — | `reply`, then the process exits |
 | `reply` | engine → core | `to`, `outcome` (`kind`: `ok`/`err`) | — |
 | `event` | engine → core | `event` | — |
@@ -88,7 +95,36 @@ never receives a secret).
 
 `storages[]` for `clear_origin_data` are the identifiers produced by
 `session::CleanupPlan::storage_types()`: `session_storage`, `cache_storage`, `service_workers`,
-`code_cache`, `local_storage`, `indexed_db`, `cookies`.
+`code_cache`, `local_storage`, `indexed_db`, `cookies`. CDP spells IndexedDB `indexeddb`, so the engine
+maps that one and passes the rest through (`session_storage` and `code_cache` have no identifier of their
+own in `Storage.clearDataForOrigin`; the engine logs what it cannot express rather than pretending).
+
+## The page's side of the bridge (protocol 2)
+
+The engine injects `window.antikoltNative` on surfaces the shell enables with `install_bridge`:
+
+```js
+// One-way, answered immediately by the engine: the shell acts on the event.
+await window.antikoltNative.openCard({ id, url, title, pinned });
+await window.antikoltNative.freezeCard();
+
+// A question: the engine holds the `cefQuery` open until the shell answers `bridge_reply`.
+const answer = await window.antikoltNative.request('cards.search', { q: 'wiki' });
+const cards = answer.cards;
+
+// The same question through the typed helper:
+const { cards: matches } = await window.antikoltNative.cards.search('wiki');
+```
+
+Rules:
+
+- every question is answered **exactly once** — with `json` on success or `error` on failure; a page
+  that awaits is never left hanging, because the engine drops held callbacks when the page goes away;
+- an unknown method is a rejection (`ismeretlen híd-kérdés: …`), not silence;
+- the shell answers from the core, so the page reads the same data the grid does — a page never keeps a
+  second copy of the truth;
+- only surfaces the shell enabled can call at all, and the main world is the only world that has the
+  bridge (secrets do not live there, I5).
 
 ## Embedding the live card
 

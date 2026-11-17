@@ -22,8 +22,12 @@ pub mod frame;
 pub mod message;
 pub mod transport;
 
-/** Bumped only for breaking changes; the host and engine host negotiate in [`message::Message::Hello`].*/
-pub const PROTOCOL_VERSION: u16 = 1;
+/** Bumped only for breaking changes; the host and engine host negotiate in [`message::Message::Hello`].
+ *
+ * Version 2 adds [`message::Message::BridgeReply`]: the page can *ask* the shell a question
+ * (`window.antikoltNative.request`) and the engine holds the page's `cefQuery` open until the answer
+ * arrives. Version 1 clients never send it, so a 1↔2 pair is refused instead of half-working (ADR-034). */
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// Upper bound for a single control frame. Snapshots and pixels do **not** travel in frames.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;

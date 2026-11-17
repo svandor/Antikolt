@@ -455,6 +455,22 @@ pub enum Message {
     /// Ask the engine host to exit. It replies first, then shuts down.
     Shutdown,
 
+    // ---- the page's request/reply channel (protocol 2) ------------------------------------
+    /// The shell's answer to a request the engine is holding open for a page.
+    ///
+    /// A page call marked `request` is a *persistent* `cefQuery`: the engine keeps the callback and
+    /// asks the shell with a `bridge_call` event carrying a `request` number, then answers the page with
+    /// whatever this message names. `json` is the success payload, `error` the failure message, and
+    /// exactly one of them is meant to be present; the engine treats an empty reply as `{}`.
+    BridgeReply {
+        /// The number the engine gave the page's call, echoed back.
+        request: u64,
+        #[serde(default)]
+        json: Option<String>,
+        #[serde(default)]
+        error: Option<String>,
+    },
+
     // ---- replies and events ---------------------------------------------------------------
     Reply {
         to: u64,
@@ -475,10 +491,16 @@ fn default_true() -> bool {
 
 impl Message {
     /// Requests expect exactly one [`Message::Reply`] with `to == envelope id`.
+    ///
+    /// `BridgeReply` is not one of them: it answers a *page*, not a shell request, so nothing replies to
+    /// it in turn.
     pub fn expects_reply(&self) -> bool {
         !matches!(
             self,
-            Message::Reply { .. } | Message::Event { .. } | Message::Welcome { .. }
+            Message::Reply { .. }
+                | Message::Event { .. }
+                | Message::Welcome { .. }
+                | Message::BridgeReply { .. }
         )
     }
 }

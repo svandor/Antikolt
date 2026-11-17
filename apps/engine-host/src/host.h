@@ -15,6 +15,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <string>
 
 #include "include/cef_app.h"
@@ -88,6 +89,16 @@ struct HostState {
     /// The shell installed the JS bridge on this surface. Off by default: a page may only reach the
     /// shell when the shell decided it should.
     std::atomic<bool> bridge_enabled{false};
+    /// Page requests the shell has not answered yet (protocol 2, ADR-034): request number → the page's
+    /// callback.
+    ///
+    /// A page call marked `request` is a *persistent* `cefQuery`; the engine keeps the callback and asks
+    /// the shell with a `bridge_call` event, then answers the page from `bridge_reply`. A request the
+    /// shell never answers would leave the page's promise pending forever, so a surface that goes away
+    /// drops them (see `OnQueryCanceled`).
+    std::map<int64_t, CefRefPtr<CefMessageRouterBrowserSide::Callback>> pending_bridge;
+    /// The next request number for `pending_bridge`; 1-based, 0 means "one-way call".
+    int64_t next_bridge_request = 1;
     int64_t surface_id = 0;
 };
 

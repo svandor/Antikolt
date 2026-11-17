@@ -244,11 +244,42 @@ fn wrong_version_is_rejected() {
 
 #[test]
 fn garbage_payload_is_malformed_not_a_panic() {
-    let payload = b"{\"version\":1,\"id\":1,\"message\":{\"op\":\"not_a_real_op\"}}";
+    // The version has to be the current one: a stale version is a *version* error, and this test is
+    // about the op being unknown.
+    let payload = format!(
+        "{{\"version\":{PROTOCOL_VERSION},\"id\":1,\"message\":{{\"op\":\"not_a_real_op\"}}}}"
+    );
+    let payload = payload.as_bytes();
     let mut frame = (payload.len() as u32).to_le_bytes().to_vec();
     frame.extend_from_slice(payload);
     let err = decode_frame(&frame).unwrap_err();
     assert!(matches!(err, FrameError::Malformed { .. }));
+}
+
+#[test]
+fn bridge_reply_carries_either_json_or_an_error() {
+    // Protocol 2: the answer to a page's request. It is not a request itself, so nothing replies to it.
+    let ok = Message::BridgeReply {
+        request: 3,
+        json: Some("{\"cards\":[]}".into()),
+        error: None,
+    };
+    assert!(!ok.expects_reply());
+    let wire = serde_json::to_value(&ok).expect("serialise");
+    assert_eq!(wire["op"], "bridge_reply");
+    assert_eq!(wire["request"], 3);
+    let back: Message = serde_json::from_value(wire).expect("deserialise");
+    assert_eq!(back, ok);
+
+    // The failure direction carries the message and leaves `json` empty.
+    let failed = Message::BridgeReply {
+        request: 4,
+        json: None,
+        error: Some("no core".into()),
+    };
+    let wire = serde_json::to_value(&failed).expect("serialise");
+    assert_eq!(wire["error"], "no core");
+    assert!(wire["json"].is_null());
 }
 
 #[test]

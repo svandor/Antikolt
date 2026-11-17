@@ -77,8 +77,9 @@ bool ParseCommand(const std::string& payload, Command* out) {
     CefRefPtr<CefDictionaryValue> envelope = root->GetDictionary();
 
     const int version = static_cast<int>(GetNumber(envelope, "version"));
-    if (version != 1) {
-        std::fprintf(stderr, "[engine-host] unsupported protocol version %d\n", version);
+    if (version != kProtocolVersion) {
+        std::fprintf(stderr, "[engine-host] unsupported protocol version %d (this host speaks %d)\n",
+                     version, kProtocolVersion);
         return false;
     }
 
@@ -99,6 +100,10 @@ bool ParseCommand(const std::string& payload, Command* out) {
     out->protocol = static_cast<int>(GetNumber(message, "protocol"));
     // Data control: the origin and the storage identifiers travel at the top level (`clear_origin_data`).
     out->origin = GetString(message, "origin");
+    // The page's request/reply channel (`bridge_reply`, protocol 2).
+    out->bridge_request = static_cast<int64_t>(GetNumber(message, "request"));
+    out->json = GetString(message, "json");
+    out->error = GetString(message, "error");
     if (CefRefPtr<CefValue> storages = message->GetValue("storages")) {
         if (storages->GetType() == VTYPE_LIST) {
             CefRefPtr<CefListValue> list = storages->GetList();
@@ -233,7 +238,7 @@ bool StdioLink::TryPop(Command* out) {
 
 void StdioLink::WriteEnvelope(CefRefPtr<CefDictionaryValue> message) {
     CefRefPtr<CefDictionaryValue> envelope = CefDictionaryValue::Create();
-    envelope->SetInt("version", 1);
+    envelope->SetInt("version", kProtocolVersion);
     envelope->SetInt("id", static_cast<int>(g_next_envelope_id.fetch_add(1)));
     envelope->SetDictionary("message", message);
 

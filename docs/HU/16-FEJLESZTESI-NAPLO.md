@@ -3,6 +3,45 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonhatodik szelet) — a lap kérdezhet: a híd kétirányú (protokoll v2)
+
+Az ADR-032 egyirányú hídja elég volt a rács feltöltéséhez, de a lap nem tudott **választ** kapni a magtól.
+Ez a szelet átadta a kérés-irányt: a `window.antikoltNative.request(method, args)` **perzisztens
+`cefQuery`**, amit a motor a kezében tart, `bridge_call` eseményként továbbad egy kérés-számmal, a shell
+`bridge_reply`-vel válaszol, és a lap promise-a a válasszal zárul. Ez **protokoll v2** (ADR-034).
+
+| Terület | Tartalom |
+|---|---|
+| Szerződés | `crates/antikolt-ipc`: `Message::BridgeReply { request, json, error }`, `PROTOCOL_VERSION` 1 → 2, `expects_reply()` hamis rá; roundtrip-teszt |
+| Motor | `HostState::pending_bridge` (kérés-szám → callback), `OnQuery` kérés-ág (nincs azonnali `Success`), `bridge_reply` op, `OnQueryCanceled` eldobja a függő kéréseket; `kProtocolVersion = 2` a `protocol.h`-ban, a parser és a `welcome` is ezt használja |
+| Shell | `EngineClient::bridgeReply`, `bridgeCall` jelzés + `request` szám, `MainWindow::replyToPage`; `cards.search` a magtól, ismeretlen metódusra **elutasítás** |
+| Lap | `kBridgeScript`: `request()` + `cards.search()` helper, `version: '2'` |
+| Önellenőrzés | `--bridgetest`: a lap kérdez, a shell a magtól válaszol, a lap saját változója kapja meg |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --bridgetest <motor>
+asked=ok
+search_cards=1
+search_first_title=Wikipedia — kezdőlap
+unknown_method=rejected
+bridge_request=ok      (exit code 0)
+```
+
+Két hiba a mérésből, mindkettő javítva: (1) a motor `ParseCommand`-ja **elutasította a v2 borítékot**
+(`unsupported protocol version 2`), mert a verzióellenőrzés még `1`-et várt — a verzió most egy helyen
+(`protocol.h kProtocolVersion`) él, és a `welcome` ugyanazt küldi; (2) a `C4457` figyelmeztetés
+(`request` paraméter árnyékolása) `/WX` mellett hiba volt, ezért a változó `bridge_request_id`.
+
+### Ami még nyitott
+
+- A **rács saját keresése** továbbra is lokális (a lap a teljes listát kapja) — a csatorna azokra a
+  kérdésekre készült, amiket a lap egyedül nem tud megválaszolni; a következő szelet a `cards.upsert`
+  (pin/jegyzet/új kártya) ezen a csatornán.
+- A kérés-élettartam időkorlátja: ha a shell nem válaszol, a lap promise-a a lap élettartamáig vár; a
+  motor-oldali eldobás lap-eltűnéskor kész, a shell-oldali válaszkötelezettség még nem kényszerített.
+
 ## 2026-11-17 (huszonötödik szelet) — a politika **végre is** lefut: a panel takarít
 
 A huszonnegyedik szelet óta a motor tud törölni, de senki nem kérte. Most a panelen van

@@ -72,16 +72,14 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 
 ## 3. Kérés-irány a laptól (protokoll v2)
 
-**Miért:** a lap ma nem tud kérdezni (keresés, frissítés, új kártya) — ezért van a shell-tolás
-(ADR-032). A `cards.upsert` és a keresés e nélkül nem megy.
-
-**Hogyan:** a motor tartsa a `CefMessageRouterBrowserSide::Callback`-et (perzisztens `cefQuery`),
-jöjjön egy `bridge_result` üzenet, és **`PROTOCOL_VERSION` 1 → 2** (`crates/antikolt-ipc`,
-`apps/engine-host/src/protocol.cpp` `version` ellenőrzés, `EngineClient`) — az ADR-032 szerint a tolás
-ekkor visszaminősül eseménnyé („a lista megváltozott”).
-
-**Bizonyíték:** `--gridtest` keresés-fázisa (a lap `cards.search`-je a magtól kap találatot) + a
-protokoll roundtrip-tesztek v2-re állítva.
+> **Állapot: a csatorna kész és mérve** (26. szelet, ADR-034) — a lap `window.antikoltNative.request(...)`
+> hívása perzisztens `cefQuery`; a motor `pending_bridge`-ben tartja, `bridge_call` + kérés-számmal adja
+> tovább, a shell `bridge_reply`-vel válaszol. `PROTOCOL_VERSION` = 2, mindkét oldal ellenőrzi.
+> `--bridgetest`: `asked=ok`, `search_cards=1`, `search_first_title=Wikipedia — kezdőlap`,
+> `unknown_method=rejected`, `bridge_request=ok`.
+> **Ami hátra van:** a `cards.upsert` (pin, jegyzet, új kártya) ezen a csatornán — ez adja a lapnak azt,
+> amit egyedül nem tud; a rács saját keresése szándékosan lokális marad (a lap a teljes listát kapja), és
+> a shell-oldali válaszkötelezettség (időkorlát) még nincs kikényszerítve.
 
 ## 4. Előnézetek
 

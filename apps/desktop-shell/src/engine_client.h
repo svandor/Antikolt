@@ -80,6 +80,13 @@ public:
     void clearOriginData(qint64 surface, const QString& origin, const QStringList& storages,
                          ReplyHandler handler);
     void destroySurface(qint64 surface, ReplyHandler handler = {});
+    /// Answer a page request (`request > 0`) the engine is holding open.
+    ///
+    /// Protocol 2: the page's `window.antikoltNative.request(...)` is a persistent `cefQuery`; the engine
+    /// keeps the callback and forwards the question as a `bridge_call` event with a request number. The
+    /// answer travels back here — `json` on success, `error` on failure — and the page's promise settles
+    /// with it. A request the shell never answers would hang the page, so every path must reply.
+    void bridgeReply(qint64 request, const QJsonObject& json, const QString& error = {});
     void shutdown();
 
 signals:
@@ -89,7 +96,10 @@ signals:
     void surfaceCreated(qint64 surface);
     void surfaceClosed(qint64 surface);
     /// The home page asked for something through the bridge (`open_card`, `freeze_card`, …).
-    void bridgeCall(qint64 surface, const QString& method, const QJsonObject& args);
+    ///
+    /// `request` is 0 for a one-way call (the page does not wait) and the engine's request number for a
+    /// question — those must be answered with `bridgeReply`.
+    void bridgeCall(qint64 surface, const QString& method, const QJsonObject& args, qint64 request);
     void failed(const QString& message);
 
 private slots:

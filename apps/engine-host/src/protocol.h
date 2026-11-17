@@ -63,10 +63,22 @@ struct Command {
     int bounds_height = 0;
     /// Whether the surface should hold keyboard focus (`focus`).
     bool focused = true;
+    /// Answer to a held page request (`bridge_reply`, protocol 2): which request, and its payload —
+    /// `json` on success or `error` on failure (ADR-034).
+    int64_t bridge_request = 0;
+    std::string json;
+    std::string error;
 };
 
 /// Upper bound for one frame. Mirrors antikolt_ipc::MAX_FRAME_BYTES.
 constexpr uint32_t kMaxFrameBytes = 16u * 1024u * 1024u;
+
+/// The engine-link protocol this host speaks (crates/antikolt-ipc `PROTOCOL_VERSION`).
+///
+/// Version 2 adds `bridge_reply`: a page call marked `request` is answered by the shell instead of the
+/// engine, which is what lets the page ask instead of only announce (ADR-034). It is declared here so the
+/// parser, the `welcome` handshake and the envelope writer cannot drift apart.
+constexpr int kProtocolVersion = 2;
 
 /// A parsed envelope that is not a request we serve (e.g. a reply from the peer).
 std::string ParseEnvelopeVersion(const std::string& payload);

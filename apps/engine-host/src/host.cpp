@@ -984,27 +984,39 @@ EngineClient::EngineClient(HostState* state, bool quit_on_first_load)
 /// The script the shell installs on the home page. It is deliberately small and lives in the engine,
 /// not in the shell: the shell must never be able to inject arbitrary JavaScript into a page, and the
 /// page must never see a capability it was not handed.
-constexpr const char* kBridgeScript = R"JS(
-(function () {
+constexpr const char* kBridgeScript = R"JS((function () {
   if (window.antikoltNative) { return 'already'; }
-  var call = function (method, args) {
+  var call = function (method, args, wantsReply) {
     return new Promise(function (resolve, reject) {
       if (typeof window.cefQuery !== 'function') {
         reject(new Error('the Antikolt bridge is not available'));
         return;
       }
-      window.cefQuery({
-        request: JSON.stringify({ method: method, args: args || {} }),
-        onSuccess: function (response) { resolve(response); },
-        onFailure: function (code, message) { reject(new Error(message)); },
-        persistent: false
-      });
+      var query = {
+        request: JSON.stringify({ method: method, args: args || {}, request: !!wantsReply }),
+        onSuccess: function (response) {
+          // A one-way call answers '{}'; a request answers with the shell's JSON payload.
+          if (!wantsReply) { resolve(response); return; }
+          try { resolve(response ? JSON.parse(response) : {}); }
+          catch (error) { reject(new Error('the shell sent a malformed answer')); }
+        },
+        onFailure: function (code, message) { reject(new Error(message)); }
+      };
+      // A request is a *persistent* query: the engine holds the callback until the shell answers
+      // (protocol 2), which is what makes the page able to ask instead of only announce.
+      query.persistent = !!wantsReply;
+      window.cefQuery(query);
     });
   };
+  var request = function (method, args) { return call(method, args, true); };
   window.antikoltNative = {
-    version: '1',
-    openCard: function (card) { return call('open_card', card); },
-    freezeCard: function () { return call('freeze_card', {}); }
+    version: '2',
+    openCard: function (card) { return call('open_card', card, false); },
+    freezeCard: function () { return call('freeze_card', {}, false); },
+    request: request,
+    cards: {
+      search: function (query) { return request('cards.search', { q: query }); }
+    }
   };
   window.dispatchEvent(new Event('antikolt-bridge-ready'));
   return 'installed';
@@ -1169,8 +1181,23 @@ bool EngineClient::OnQuery(CefRefPtr<CefBrowser> browser,
     if (CefRefPtr<CefValue> args = call->GetValue("args")) {
         payload->SetValue("args", args);
     }
-    // The shell answers asynchronously; the page gets a success now and acts on the resulting
-    // surface events. Persistent queries (a two-way chat) can wait for the freeze milestone.
+    // Protocol 2 (ADR-034): a call marked `request` is a question, and the page is waiting for the
+    // answer. The callback is held here and answered from `bridge_reply`; the one-way calls keep the
+    // old behaviour (an immediate `{}`), so `open_card` and `freeze_card` do not change.
+    const bool wants_reply = call->GetBool("request");
+    payload->SetInt("request", 0);
+    if (wants_reply) {
+        // Not `request`: that name is the query string parameter of this method.
+        const int64_t bridge_request_id = state_->next_bridge_request++;
+        payload->SetInt("request", static_cast<int>(bridge_request_id));
+        state_->pending_bridge[bridge_request_id] = callback;
+        Log("[engine-host] bridge_call request=%lld surface=%lld method=%s\n",
+            static_cast<long long>(bridge_request_id),
+            static_cast<long long>(state_->surface_id), method.c_str());
+        StdioLink::Instance().Event("bridge_call", payload);
+        // Deliberately no Success() here: the shell's answer is what settles the page's promise.
+        return true;
+    }
     Log("[engine-host] bridge_call surface=%lld method=%s\n",
         static_cast<long long>(state_->surface_id), method.c_str());
     StdioLink::Instance().Event("bridge_call", payload);
@@ -1184,7 +1211,13 @@ void EngineClient::OnQueryCanceled(CefRefPtr<CefBrowser> browser,
     (void)browser;
     (void)frame;
     (void)query_id;
-    // Nothing is held open yet: every query is answered in OnQuery, so there is nothing to cancel.
+    // The page (or its frame) went away while a request was still on the shell's desk. The router has
+    // already cancelled the query, so the callbacks must not be answered any more — they are only
+    // dropped, which releases them.
+    if (!state_->pending_bridge.empty()) {
+        Log("[engine-host] dropping %zu unanswered bridge requests\n", state_->pending_bridge.size());
+        state_->pending_bridge.clear();
+    }
 }
 
 #ifdef _WIN32
@@ -1343,7 +1376,13 @@ int RunEngineHostServer(const HostConfig& config) {
                 // The handshake answer is a `welcome` message, not a reply (proto/README.md).
                 CefRefPtr<CefDictionaryValue> welcome = CefDictionaryValue::Create();
                 welcome->SetString("op", "welcome");
-                welcome->SetInt("protocol", 1);
+                welcome->SetInt("protocol", kProtocolVersion);
+                if (command.protocol != 0 && command.protocol != kProtocolVersion) {
+                    // The shell said which version it speaks; a different one is worth a line in the log,
+                    // because the bridge's request channel would then be one-sided.
+                    Log("[engine-host] protocol mismatch: shell=%d engine=%d\n", command.protocol,
+                        kProtocolVersion);
+                }
                 welcome->SetDictionary("engine", MakeEngineInfo());
                 link.SendMessage(welcome);
             } else if (command.op == "ping") {
@@ -1495,6 +1534,24 @@ int RunEngineHostServer(const HostConfig& config) {
                 }
                 state.bridge_enabled = true;
                 state.browser->GetMainFrame()->ExecuteJavaScript(kBridgeScript, "", 0);
+                link.Reply(command.id);
+            } else if (command.op == "bridge_reply") {
+                // Protocol 2: the shell's answer to a page request. An answer with no waiting page is
+                // not a protocol violation — the page may have gone away — so it is logged, not failed.
+                const auto pending = state.pending_bridge.find(command.bridge_request);
+                if (pending == state.pending_bridge.end()) {
+                    Log("[engine-host] bridge_reply for unknown request %lld\n",
+                        static_cast<long long>(command.bridge_request));
+                    link.Reply(command.id);
+                    continue;
+                }
+                CefRefPtr<CefMessageRouterBrowserSide::Callback> callback = pending->second;
+                state.pending_bridge.erase(pending);
+                if (!command.error.empty()) {
+                    callback->Failure(-5, command.error);
+                } else {
+                    callback->Success(command.json.empty() ? "{}" : command.json);
+                }
                 link.Reply(command.id);
             } else if (command.op == "destroy_surface") {
                 DrainAndCloseBrowser(&state);

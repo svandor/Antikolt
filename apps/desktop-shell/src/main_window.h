@@ -106,7 +106,10 @@ private:
     void buildCardArea();
     void ensureSurface();
     void closeLiveCard();
-    void handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args);
+    void handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args,
+                          qint64 request);
+    /// Answer a page request (`request > 0`). Every question gets exactly one answer, always.
+    void replyToPage(qint64 request, const QJsonObject& json, const QString& error = {});
     /// Push the core's card list into the home page (`window.antikoltAcceptCards`).
     ///
     /// The push is shell-initiated on purpose: the page cannot query the shell yet — the bridge is

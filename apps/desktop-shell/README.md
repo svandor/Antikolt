@@ -99,6 +99,10 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   surface, I1), then the card for that origin is opened and the engine clears it. The page's own witness
   (`window.__wrote`) must be true, its storage empty, and the ledger row gone. The ledger is read by a
   fresh client, because a client that was already running reports its own stale copy.
+- `--bridgetest` — the page can *ask* (protocol 2, ADR-034): the home page calls
+  `window.antikoltNative.request('cards.search', {q:'wiki'})`, the engine holds the persistent `cefQuery`,
+  the shell answers from the core, and the page's own variable receives the answer. An unknown method must
+  be rejected, not left hanging — a promise nobody settles is a hung page.
 
 Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).
 

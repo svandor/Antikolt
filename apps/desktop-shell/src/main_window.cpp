@@ -526,25 +526,75 @@ void MainWindow::openCard(const QString& url, const QString& title) {
     });
 }
 
-void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args) {
+void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args,
+                                  qint64 request) {
     if (method == QStringLiteral("open_card")) {
         const QString url = args.value(QStringLiteral("url")).toString();
         const QString title = args.value(QStringLiteral("title")).toString();
         if (url.isEmpty()) {
             setStatus(QStringLiteral("a kezdőlap cím nélküli kártyát kért megnyitni (#%1)")
                           .arg(surface));
+            replyToPage(request, {}, QStringLiteral("a kártyának nincs címe"));
             return;
         }
         pending_pinned_ = args.value(QStringLiteral("pinned")).toBool();
         openCard(url, title);
+        // An acknowledgement, not a result: the card loads asynchronously and the page follows it
+        // through the grid. Answered anyway, so a page that awaits never hangs.
+        replyToPage(request, QJsonObject{{QStringLiteral("opened"), true}});
         return;
     }
     if (method == QStringLiteral("freeze_card")) {
         freezeCard();
+        replyToPage(request, QJsonObject{{QStringLiteral("frozen"), true}});
+        return;
+    }
+    // ---- questions the page waits for (protocol 2, ADR-034) --------------------------------
+    if (request > 0) {
+        if (method == QStringLiteral("cards.search")) {
+            const QString query = args.value(QStringLiteral("q")).toString().trimmed().toLower();
+            if (core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("a mag nem fut"));
+                return;
+            }
+            core_->cardsList([this, request, query](const QJsonObject& reply,
+                                                    const QString& error) {
+                if (!error.isEmpty()) {
+                    replyToPage(request, {}, error);
+                    return;
+                }
+                QJsonArray matches;
+                for (const QJsonValue& value : reply.value(QStringLiteral("cards")).toArray()) {
+                    const QJsonObject card = value.toObject();
+                    if (query.isEmpty()) {
+                        matches.append(card);
+                        continue;
+                    }
+                    const QString haystack =
+                        (card.value(QStringLiteral("title")).toString() + QLatin1Char(' ') +
+                         card.value(QStringLiteral("url")).toString() + QLatin1Char(' ') +
+                         card.value(QStringLiteral("notes")).toString())
+                            .toLower();
+                    if (haystack.contains(query)) {
+                        matches.append(card);
+                    }
+                }
+                replyToPage(request, QJsonObject{{QStringLiteral("cards"), matches}});
+            });
+            return;
+        }
+        replyToPage(request, {}, QStringLiteral("ismeretlen híd-kérdés: %1").arg(method));
         return;
     }
     // An unknown method is a version mismatch, not a crash: say so and keep the surface alive.
     setStatus(QStringLiteral("ismeretlen híd-hívás: %1").arg(method));
+}
+
+void MainWindow::replyToPage(qint64 request, const QJsonObject& json, const QString& error) {
+    if (request <= 0 || engine_ == nullptr) {
+        return;
+    }
+    engine_->bridgeReply(request, json, error);
 }
 
 void MainWindow::pushCardsToGrid(qint64 surface) {

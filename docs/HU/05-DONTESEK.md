@@ -3,6 +3,28 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-034 — A lap kérdezhet: a híd kétirányú, és ez protokoll v2 (2026-11-17)
+
+**Kontextus.** Az ADR-032 egyirányú hidat rögzített, mert a lap nem tudott kérdezni: a shell tolt, a
+lap csak jelezni tudott (`open_card`, `freeze_card`). Ez elég a rács feltöltéséhez, de nem elég ahhoz,
+hogy a lap a mag adataiból **választ** kapjon — keresés, pin, jegyzet —, és a „lap a saját másolatát
+tartja” állapot hosszú távon két igazságot jelent.
+
+**Döntés.** A lap `window.antikoltNative.request(method, args)` hívása **perzisztens `cefQuery`**: a
+motor a callbacket a kezében tartja, a kérést `bridge_call` eseményként továbbadja egy
+**kérés-számmal**, a shell `bridge_reply`-vel válaszol (`json` vagy `error`), és ezzel a lap promise-a
+lezárul. Az egyirányú hívások (`open_card`, `freeze_card`) változatlanok — a motor azonnal `{}`-t
+válaszol. Ez **protokoll v2**: új `Message::BridgeReply` variáns, `PROTOCOL_VERSION` 1 → 2, és a
+`bridge_reply` op a `proto/README.md`-ben. A verziót **mindkét oldal ellenőrzi**, tehát egy v1 shell és
+egy v2 motor nem „félműködik”, hanem elutasítja egymást.
+
+**Következmény.** (+) a lap a mag adataiból kap választ, nem a saját másolatából; (+) minden kérés
+pontosan egy választ kap — ismeretlen metódusra is elutasítás jön, nem csend (a lógó promise a legdrágább
+hiba egy lapon); (+) a híd továbbra is csak azokon a felületeken él, amiket a shell engedélyezett, és
+csak a main worldben; (−) a perzisztens query-k élettartamát a motornak kell kezelnie (a lap eltűnésekor
+a callbackek eldobódnak), és a verzió-lépés miatt a shell és a motor együtt szállítható; (−) a lap által
+kérdezhető metódusok **szerződése** mostantól a `proto/README.md`, nem a `home/app.js`.
+
 ## ADR-033 — A munkamenet-politikát a mag értékeli ki, a shell csak végrehajt (2026-11-17)
 
 **Kontextus.** A 24 órás politika (`keep`/`sweep`/`wipe`) eldönti, hogy egy origin tárhelye mikor
@@ -171,6 +193,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-031 | Széf: a titkosítás varrata zártan viselkedik (nincs crate → nincs titok, nincs plaintext) | Elfogadva |
 | ADR-032 | A kártyalista shell-tolással jut a lapra, amíg a híd egyirányú (kétirányú híd = protokoll v2) | Elfogadva |
 | ADR-033 | A munkamenet-politikát a mag értékeli ki (`session_due`), a shell csak végrehajt és megjelenít | Elfogadva |
+| ADR-034 | A lap kérdezhet: perzisztens `cefQuery` + `bridge_reply` = protokoll v2 (az ADR-032 továbbra is érvényes az egyirányú hívásokra) | Elfogadva |
 
 ---
 
