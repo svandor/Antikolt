@@ -151,6 +151,35 @@ BOOL CALLBACK CountChildWindows(HWND child, LPARAM param) {
 }  // namespace
 #endif
 
+/// Count distinct colours on a coarse grid: proof that something was drawn, not a filled rectangle.
+int CountDistinctColours(const QImage& image) {
+    QSet<QRgb> colours;
+    for (int y = 0; y < image.height(); y += 8) {
+        for (int x = 0; x < image.width(); x += 8) {
+            colours.insert(image.pixel(x, y));
+        }
+    }
+    return colours.size();
+}
+
+/// Report what a screen grab of the card shows. **Diagnostic only.**
+///
+/// This measures the desktop, not the engine: it reported one colour on identical code whenever the
+/// window was occluded or on a different compositor path (thirteenth slice). It is printed so a
+/// mismatch against the engine's own capture stays visible, but it no longer decides pass or fail.
+void ReportScreenGrab(QTextStream& out, QWidget* card) {
+    QScreen* screen = card->screen();
+    const QPixmap shot = screen != nullptr ? screen->grabWindow(card->winId()) : QPixmap();
+    if (shot.isNull()) {
+        out << "screenshot=unavailable\n";
+        return;
+    }
+    const QImage image = shot.toImage();
+    out << "screenshot=ok\n";
+    out << "screenshot_size=" << image.width() << 'x' << image.height() << '\n';
+    out << "screenshot_colours=" << CountDistinctColours(image) << " (informational)\n";
+}
+
 /// Prove that the engine really embedded its browser window into a Qt widget: the child window must
 /// exist inside the card's native handle, and the page must see the card's physical size as its
 /// viewport. Both are checked against numbers the shell knows independently.
@@ -276,57 +305,74 @@ int runEmbedCheck(const QString& enginePath) {
                                      viewport_ok = std::abs(page_w - card->width()) <= 2 &&
                                                    std::abs(page_h - card->height()) <= 2;
 
-                                     // Geometry is not painting: grab the card's screen area and
-                                     // check that it is not a uniform rectangle. A window can sit at
-                                     // exactly the right place and size and still show nothing.
-                                     const QPixmap shot = card->screen()->grabWindow(card->winId());
-                                     if (shot.isNull()) {
-                                         out << "screenshot=FAILED\n";
-                                     } else {
-                                         const QImage image = shot.toImage();
-                                         QString path = QDir::temp().filePath(
-                                             QStringLiteral("antikolt-embed.png"));
-                                         const bool saved = image.save(path, "PNG");
-                                         out << "screenshot=" << (saved ? path : QStringLiteral("FAILED"))
-                                             << '\n';
-                                         out << "screenshot_size=" << image.width() << 'x'
-                                             << image.height() << '\n';
-                                         // Distinct colours prove that something was drawn, not
-                                         // just a filled background.
-                                         QSet<QRgb> colours;
-                                         for (int y = 0; y < image.height(); y += 8) {
-                                             for (int x = 0; x < image.width(); x += 8) {
-                                                 colours.insert(image.pixel(x, y));
+                                     // Geometry is not painting, so ask the engine for its own
+                                     // picture: `capture` reads Chromium's compositor, which stays
+                                     // deterministic where a screen grab of the desktop does not
+                                     // (thirteenth slice).
+                                     ReportScreenGrab(out, card);
+                                     client.capture(
+                                         id, QStringLiteral("png"), 80,
+                                         [&, id](const QJsonObject& shot, const QString& shot_error) {
+                                             if (!shot_error.isEmpty()) {
+                                                 out << "capture=FAILED " << shot_error << '\n';
+                                                 painted_ok = false;
+                                             } else {
+                                                 const QString path =
+                                                     shot.value(QStringLiteral("path")).toString();
+                                                 const QImage image(path);
+                                                 const int distinct = image.isNull()
+                                                                          ? 0
+                                                                          : CountDistinctColours(image);
+                                                 const int captured_w =
+                                                     shot.value(QStringLiteral("width")).toInt();
+                                                 const int captured_h =
+                                                     shot.value(QStringLiteral("height")).toInt();
+                                                 out << "capture_path=" << path << '\n';
+                                                 out << "capture_image=" << image.width() << 'x'
+                                                     << image.height() << '\n';
+                                                 out << "capture_colours=" << distinct << '\n';
+                                                 // The compositor's pixels must match the size the
+                                                 // shell gave the card, with the one-pixel tolerance
+                                                 // the viewport check uses: Chromium draws its own
+                                                 // border inside the child window.
+                                                 const bool size_matches =
+                                                     std::abs(captured_w -
+                                                              card->physicalSize().width()) <= 2 &&
+                                                     std::abs(captured_h -
+                                                              card->physicalSize().height()) <= 2;
+                                                 out << "capture_size_match="
+                                                     << (size_matches ? "ok" : "FAILED") << '\n';
+                                                 painted_ok = distinct > 2 && size_matches;
                                              }
-                                         }
-                                         out << "screenshot_colours=" << colours.size() << '\n';
-                                         painted_ok = colours.size() > 2;
 
-                                         // Focus is the last link: a child window in another process
-                                         // does not inherit activation, so the shell sends `focus` and
-                                         // the page must agree that it has the keyboard.
-                                         card->setFocus(Qt::OtherFocusReason);
-                                         client.focus(id, true);
-                                         QTimer::singleShot(300, &loop, [&, id] {
-                                             client.evaluate(
-                                                 id, QStringLiteral("document.hasFocus()"),
-                                                 [&](const QJsonObject& focused,
-                                                     const QString& failure) {
-                                                     if (!failure.isEmpty()) {
-                                                         out << "focus_eval=FAILED " << failure
-                                                             << '\n';
-                                                     } else {
-                                                         const QString value = focused
-                                                                                   .value(QStringLiteral(
-                                                                                       "value"))
-                                                                                   .toString();
-                                                         out << "page_has_focus=" << value << '\n';
-                                                         focus_ok = value == QStringLiteral("true");
-                                                     }
-                                                     loop.quit();
-                                                 });
+                                             // Focus is the last link: a child window in another
+                                             // process does not inherit activation, so the shell
+                                             // sends `focus` and the page must agree that it has the
+                                             // keyboard.
+                                             card->setFocus(Qt::OtherFocusReason);
+                                             client.focus(id, true);
+                                             QTimer::singleShot(300, &loop, [&, id] {
+                                                 client.evaluate(
+                                                     id, QStringLiteral("document.hasFocus()"),
+                                                     [&](const QJsonObject& focused,
+                                                         const QString& failure) {
+                                                         if (!failure.isEmpty()) {
+                                                             out << "focus_eval=FAILED " << failure
+                                                                 << '\n';
+                                                         } else {
+                                                             const QString value =
+                                                                 focused
+                                                                     .value(QStringLiteral("value"))
+                                                                     .toString();
+                                                             out << "page_has_focus=" << value
+                                                                 << '\n';
+                                                             focus_ok =
+                                                                 value == QStringLiteral("true");
+                                                         }
+                                                         loop.quit();
+                                                     });
+                                             });
                                          });
-                                     }
                                  });
                          });
                      });
@@ -363,6 +409,180 @@ int runEmbedCheck(const QString& enginePath) {
     }
     client.shutdown();
     window.close();
+    out.flush();
+    return failures == 0 ? 0 : 1;
+}
+
+/// Prove the engine can describe its own pixels: `capture` must answer with a real picture of the
+/// page.
+///
+/// This is the measurement a screen grab cannot make, and it is the same call that will fill the card
+/// grid's previews — a test-only path would prove nothing about the product. The page is three flat
+/// bands, so a working capture has distinct colours, and the size must equal the page's own viewport
+/// multiplied by the device scale, which the page reports independently.
+int runCaptureCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    int failures = 0;
+
+    // The card lives in a visible Qt widget, exactly as a real card does. A window of the engine's
+    // own that another window covers produced a flat capture (one colour) on this machine, so the
+    // check measures the path the product actually uses.
+    QWidget window;
+    window.setWindowTitle(QStringLiteral("Antikolt capture check"));
+    window.resize(700, 460);
+    window.move(160, 120);
+    auto* layout = new QVBoxLayout(&window);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* card = new LiveCard(&window);
+    layout->addWidget(card);
+    window.show();
+    QCoreApplication::processEvents();
+
+    EngineClient client;
+    const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                            QStringLiteral("/capture-selftest");
+    QDir().mkpath(profile);
+    if (!client.start(enginePath, profile, /*hidden=*/true)) {
+        out << "engine_start=FAILED\n";
+        return 1;
+    }
+    out << "engine_start=ok\n";
+
+    QEventLoop loop;
+    qint64 surface = 0;
+    bool loaded = false;
+    bool painted = false;
+    bool sized = false;
+    int expected_w = 0;
+    int expected_h = 0;
+
+    // `#` would start a URL fragment and truncate the document, so the colours are percent-encoded.
+    const QString page = QStringLiteral(
+        "data:text/html,<title>capture</title>"
+        "<body style='margin:0;background:%23fff'>"
+        "<div style='height:130px;background:%2306c'></div>"
+        "<div style='height:130px;background:%23c30'></div>"
+        "<div style='height:140px;background:%23093'></div>"
+        "</body>");
+
+    QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "engine_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(&client, &EngineClient::engineReady, &loop, [&](const QJsonObject& info) {
+        const QJsonArray capabilities = info.value(QStringLiteral("capabilities")).toArray();
+        bool announced = false;
+        for (const QJsonValue& capability : capabilities) {
+            if (capability.toString() == QStringLiteral("capture")) {
+                announced = true;
+            }
+        }
+        out << "capture_capability=" << (announced ? "announced" : "MISSING") << '\n';
+        if (!card->attach(&client, QStringLiteral("persist:capture-selftest"))) {
+            out << "attach=FAILED\n";
+            loop.quit();
+        }
+    });
+    QObject::connect(card, &LiveCard::surfaceAttached, &loop, [&](qint64 id) {
+        surface = id;
+        out << "surface=" << id << '\n';
+        client.navigate(surface, page);
+    });
+    QObject::connect(&client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int status) {
+                         // The surface first loads `about:blank`, and the final URL of the probe page
+                         // comes back re-encoded, so only the placeholder is filtered by name.
+                         if (id != surface || loaded || url == QStringLiteral("about:blank")) {
+                             return;
+                         }
+                         loaded = true;
+                         out << "load_status=" << status << '\n';
+                         // Wait a frame so the capture sees the painted page and not the blank frame
+                         // a navigation starts from.
+                         QTimer::singleShot(500, &loop, [&] {
+                             client.evaluate(
+                                 surface,
+                                 QStringLiteral("JSON.stringify({w:innerWidth,h:innerHeight,"
+                                                "dpr:devicePixelRatio})"),
+                                 [&](const QJsonObject& metrics, const QString& failure) {
+                                     const QString json =
+                                         metrics.value(QStringLiteral("value")).toString();
+                                     const auto number_of = [&json](const QString& key) {
+                                         const QRegularExpression match(
+                                             QStringLiteral("\"%1\":([0-9.]+)").arg(key));
+                                         const auto found = match.match(json);
+                                         return found.hasMatch() ? found.captured(1).toDouble()
+                                                                 : 0.0;
+                                     };
+                                     if (!failure.isEmpty()) {
+                                         out << "metrics=FAILED " << failure << '\n';
+                                     }
+                                     // The page's own viewport is the independent witness of the size;
+                                     // the screenshot is in device pixels, so the two are multiplied.
+                                     expected_w = static_cast<int>(
+                                         qRound(number_of(QStringLiteral("w")) *
+                                                number_of(QStringLiteral("dpr"))));
+                                     expected_h = static_cast<int>(
+                                         qRound(number_of(QStringLiteral("h")) *
+                                                number_of(QStringLiteral("dpr"))));
+                                     out << "page_css=" << number_of(QStringLiteral("w")) << 'x'
+                                         << number_of(QStringLiteral("h")) << '\n';
+                                     out << "dpr=" << number_of(QStringLiteral("dpr")) << '\n';
+                                     out << "expected_physical=" << expected_w << 'x' << expected_h
+                                         << '\n';
+                                     client.capture(
+                                         surface, QStringLiteral("png"), 80,
+                                         [&](const QJsonObject& shot, const QString& shot_error) {
+                                             if (!shot_error.isEmpty()) {
+                                                 out << "capture=FAILED " << shot_error << '\n';
+                                                 loop.quit();
+                                                 return;
+                                             }
+                                             const QString path =
+                                                 shot.value(QStringLiteral("path")).toString();
+                                             const int width =
+                                                 shot.value(QStringLiteral("width")).toInt();
+                                             const int height =
+                                                 shot.value(QStringLiteral("height")).toInt();
+                                             const QImage image(path);
+                                             const int distinct = image.isNull()
+                                                                      ? 0
+                                                                      : CountDistinctColours(image);
+                                             out << "capture_path=" << path << '\n';
+                                             out << "capture_bytes="
+                                                 << shot.value(QStringLiteral("bytes")).toInt()
+                                                 << '\n';
+                                             out << "capture_size=" << width << 'x' << height
+                                                 << '\n';
+                                             out << "capture_image=" << image.width() << 'x'
+                                                 << image.height() << '\n';
+                                             out << "capture_colours=" << distinct << '\n';
+                                             painted = !image.isNull() && distinct > 2;
+                                             // Chromium rounds the device-scaled surface down, so a
+                                             // one-pixel difference is arithmetic, not a bug.
+                                             sized = expected_w > 0 && expected_h > 0 &&
+                                                     std::abs(width - expected_w) <= 2 &&
+                                                     std::abs(height - expected_h) <= 2 &&
+                                                     image.width() == width;
+                                             loop.quit();
+                                         });
+                                 });
+                         });
+                     });
+
+    client.handshake();
+    QTimer::singleShot(40000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    out << "capture=" << (painted ? "ok" : "FAILED") << '\n';
+    out << "capture_size=" << (sized ? "ok" : "FAILED") << '\n';
+    if (!painted || !sized) {
+        ++failures;
+    }
+    if (surface != 0) {
+        client.destroySurface(surface, [](const QJsonObject&, const QString&) {});
+    }
+    client.shutdown();
     out.flush();
     return failures == 0 ? 0 : 1;
 }
@@ -624,6 +844,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("opentest"),
         QStringLiteral("Prove the home page bridge opens a card as the live surface, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption capturetest(
+        QStringLiteral("capturetest"),
+        QStringLiteral("Prove the engine can capture its own pixels through DevTools, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -632,11 +856,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(engine);
     parser.addOption(embedtest);
     parser.addOption(opentest);
+    parser.addOption(capturetest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(capturetest)) {
+        return runCaptureCheck(parser.value(capturetest));
     }
 
     if (parser.isSet(opentest)) {

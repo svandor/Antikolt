@@ -66,6 +66,12 @@ public:
     /// a random web page cannot reach the shell through the same channel as the home page.
     void installBridge(qint64 surface, ReplyHandler handler = {});
     void snapshot(qint64 surface, ReplyHandler handler);
+    /// Capture one screenshot through Chromium's own compositor (`Page.captureScreenshot`).
+    ///
+    /// The reply carries the written file `path`, its `bytes`, and the encoded image's real
+    /// `width`/`height` — the compositor's pixels, not a screen grab of another process's window.
+    /// `format` is `png`, `jpeg` or `webp`; `quality` (0..100) only matters for the lossy ones.
+    void capture(qint64 surface, const QString& format, int quality, ReplyHandler handler);
     void destroySurface(qint64 surface, ReplyHandler handler = {});
     void shutdown();
 

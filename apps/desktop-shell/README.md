@@ -54,6 +54,30 @@ that each of the four documented themes produces a stylesheet that carries its o
 accent colours. A build that cannot do this is not a working build, so CI and the build script both
 run it.
 
+## The engine-backed checks
+
+Each of these starts the engine host (and a real browser surface) and exits with 0 only if every line
+below it says `ok`:
+
+```powershell
+antikolt-shell.exe --embedtest  build/apps/engine-host/antikolt-engine-host.exe
+antikolt-shell.exe --opentest   build/apps/engine-host/antikolt-engine-host.exe
+antikolt-shell.exe --capturetest build/apps/engine-host/antikolt-engine-host.exe
+antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
+```
+
+- `--embedtest` — the engine really drew into the Qt card's window: Chromium's child window exists
+  inside the card's handle, the page's own viewport equals the card's size, the painting and the focus
+  travel in both directions. Painting is measured with the engine's own `capture` (ADR-030); the screen
+  grab is printed as a diagnostic only.
+- `--opentest` — the product loop: the home page calls the injected bridge, the shell hibernates the
+  grid and opens the requested card as a new surface on a new partition.
+- `--capturetest` — `capture` returns a real picture of a three-band page through Chromium's compositor,
+  at exactly the viewport × device scale, with distinct colours.
+- `--coretest` — the shell talks to the Rust core service: handshake, card list, card open (timestamp).
+
+Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).
+
 ## What is not here yet
 
 - The CEF engine host (`apps/engine-host`): created when `ANTIKOLT_CEF_ROOT` points at an extracted

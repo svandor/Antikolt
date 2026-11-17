@@ -3,6 +3,45 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-029 — Minden DevTools-hívás egy típuson megy át (2026-11-17)
+
+**Kontextus.** A CEF DevTools-átvitele aszimmetrikus: `ExecuteDevToolsMethod` csak **elindít** egy
+hívást, a válasz később, `OnDevToolsMethodResult`-ban érkezik, és a hívó csak az üzenet-azonosítóból
+tudja, melyik válasz az övé. Az első két fogyasztó (MHTML-pillanatkép, JS-kiértékelés) ezért két külön,
+majdnem azonos observer-osztályt kapott. A `capture` és a passkey (ADR-027) ugyanazt a hármat igényli:
+egyedi azonosító, paraméter-szótár, válasz-feldolgozó.
+
+**Döntés.** Egyetlen `DevToolsCall` típus (`apps/engine-host/src/devtools.{h,cpp}`): metódusnév +
+paraméterek + válaszhívó. A **sorozatokat a válaszhívók láncolják** (`Page.enable` →
+`Page.captureSnapshot` → `Runtime.evaluate`), nem egy állapotgép. A válasz **egyszer**, egy helyen
+parse-olódik (`DevToolsReply`), és ez a típus **birtokolja a parse-olt JSON-dokumentumot**: a CEF belső
+szótárai a dokumentumban élnek, és ha a dokumentum felszabadul, a szótár **üresen** jön vissza — nem
+hibázik, hanem hazudik (üres `value`, `state_bytes=0`). Ez a hiba kétszer került elő (egyszer a közvetlen
+observernél, egyszer amikor ez a típus elvette a dokumentum élettartamát a hívótól).
+
+**Következmény.** (+) egy helyen dől el a válasz-parse, az azonosító-kiosztás és az observer élettartama;
+(+) a `capture` és a WebAuthn-hívások ugyanezt ingyen kapják; (+) az `eval` és a pillanatkép
+`state.json`-ja újra működik. (−) a válasz JSON-je a feldolgozó lefutásáig a memóriában marad (néhány KB;
+a pillanatképnél a base64 dekódolás után a hívó már nem hivatkozik rá). Részletek:
+`16-FEJLESZTESI-NAPLO.md`, tizennegyedik szelet.
+
+## ADR-030 — A festést a motor saját képével mérjük, nem a képernyőről (2026-11-17)
+
+**Kontextus.** A korábbi festés-ellenőrzés a képernyőről készített másolatot (`QScreen::grabWindow`), és
+ugyanaz a bináris ugyanazon a kódon hol 25 színt, hol 1 színt mért (tizenharmadik szelet). A képernyőkép a
+**desktopot** méri, nem a motort: egy takart, minimalizált vagy más kompozitor-úton rajzolt ablak
+egyszínű képet ad, miközben a lap hibátlanul kirajzolódott.
+
+**Döntés.** A festés mértéke a motor saját képe: CDP `Page.captureScreenshot` a `capture` protokoll-opon
+keresztül, PNG-ben, a fájl mellé írt valódi képmérettel. A képernyőkép csak **diagnosztika** marad (nem
+dönt átmenetről), és a `capture` ugyanaz az út, ami a rács **előnézeteit** is adja — nem teszt-segédeszköz.
+
+**Következmény.** (+) determinisztikus mérés (a kompozitor pixelei, a lap saját viewportja a független
+tanú); (+) az előnézet-pipeline ugyanezen a primitíven épül; (−) a takart/önálló motorablak képe üres
+lehet, ezért az előnézet-készítésnek látható felületet kell adnia (mért megfigyelés: önálló, takart
+ablaknál 1 szín, beágyazott kártyánál 25). A mérés a `--capturetest` és a `--embedtest` önellenőrzésben
+él.
+
 ## ADR-027 — A passkey a v1.0 része, nem v1.1 (2026-11-17)
 
 **Kontextus.** A felhasználónak vannak regisztrált passkey-ei (az Ügyfélkapu is erre épül), és
@@ -61,6 +100,10 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-024 | Kódaláírás: SignPath Foundation + Ed25519 frissítés-aláírás | Elfogadva |
 | ADR-025 | Lemezkvóta: 50 GB alap, gépenként felülbírálható | Elfogadva |
 | ADR-026 | Közreműködés és biztonsági kormányzás (DCO, védett területek, fuzz, SECURITY.md) | Elfogadva |
+| ADR-027 | Passkey a v1.0-ben: CDP virtuális hitelesítő, a hitelesítő adatok a széfben | Elfogadva |
+| ADR-028 | Lemezkvóta: állítható, alapértéke 50 GB, LRU-leszorítással | Elfogadva |
+| ADR-029 | Minden DevTools-hívás egy `DevToolsCall` típuson; a válasz birtokolja a JSON-dokumentumot | Elfogadva |
+| ADR-030 | Festés-mérés a motor saját képével (`capture`); a képernyőkép csak diagnosztika | Elfogadva |
 
 ---
 

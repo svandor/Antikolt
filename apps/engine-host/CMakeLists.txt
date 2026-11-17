@@ -34,6 +34,8 @@ add_executable(antikolt-engine-host
   src/main.cpp
   src/host.cpp
   src/host.h
+  src/devtools.cpp
+  src/devtools.h
   src/protocol.cpp
   src/protocol.h
 )

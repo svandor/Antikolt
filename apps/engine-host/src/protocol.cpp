@@ -98,6 +98,24 @@ bool ParseCommand(const std::string& payload, Command* out) {
     out->script = GetString(message, "script");
     out->protocol = static_cast<int>(GetNumber(message, "protocol"));
 
+    out->format = GetString(message, "format");
+    if (out->format.empty()) {
+        out->format = "png";
+    }
+    if (CefRefPtr<CefValue> quality = message->GetValue("quality")) {
+        double requested = -1.0;
+        if (quality->GetType() == VTYPE_INT) {
+            requested = static_cast<double>(quality->GetInt());
+        } else if (quality->GetType() == VTYPE_DOUBLE) {
+            requested = quality->GetDouble();
+        }
+        // A quality outside 0..100 is rejected by CDP *after* the call was submitted, which turns a
+        // bad argument into a slow failure; clamping keeps the answer an answer.
+        if (requested >= 0.0) {
+            out->quality = requested > 100.0 ? 100 : static_cast<int>(requested);
+        }
+    }
+
     CefRefPtr<CefDictionaryValue> config = GetDictionary(message, "config");
     if (config) {
         out->partition = GetString(config, "partition");

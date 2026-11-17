@@ -3,6 +3,113 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizennegyedik szelet) — `capture`: a motor a saját képét adja
+
+A tizenharmadik szelet kimondta, hogy a festést nem a képernyőről kell mérni. Ez a szelet megépítette a
+hozzá szükséges réteget és magát a mérést: a **DevTools-réteg egyetlen típuson** megy át, és a `capture`
+protokoll-op a motor kompozítorától kér képet.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| `apps/engine-host/src/devtools.{h,cpp}` | **`DevToolsCall`**: metódus + paraméterek + válaszhívó, egyedi üzenet-azonosítóval; a sorozatokat a hívók láncolják. **`DevToolsReply`**: a válasz egyszer parse-olva (`success`, `error`, `from_protocol`, `result`, `raw`), és **birtokolja a parse-olt JSON-dokumentumot** (ADR-029) |
+| Motor | `MhtmlCapture` és `EvalCapture` átállítva a közös típusra (viselkedés-azonos, ~180 sor duplikáció törölve); új `ScreenshotCapture`; a válasz-parse egy helyen él |
+| `capture` op | `Page.captureScreenshot` (`png`/`jpeg`/`webp`, `quality` 0..100, `fromSurface:true`, `captureBeyondViewport:false`); a fájl `<user_data>/screenshots/shot-N-M.<fmt>`, a válasz: `{ok, path, bytes, width, height, format, surface}` — a **szélesség/magasság a kép fejlécéből** (PNG/JPEG/WebP), nem a viewportból számolva |
+| Shell | `EngineClient::capture`; új önellenőrzés `--capturetest <motor>`; az `--embedtest` festés-mérése **átállt a capture-re** (a képernyőkép `screenshot_colours=… (informational)` sorként megmarad, de nem dönt átmenetről) |
+
+### Bizonyíték (a tényleges kimenet)
+
+`antikolt-shell --capturetest <motor>` — a kártya valódi, beágyazott felületen, három színsávos lapon:
+
+```
+engine_start=ok
+capture_capability=announced
+surface=1
+load_status=200
+page_css=700x460
+dpr=1.25
+expected_physical=875x575
+capture_path=C:/Users/info/AppData/Roaming/Antikolt Project/Antikolt/capture-selftest\screenshots\shot-1-0.png
+capture_bytes=2775
+capture_size=875x575
+capture_image=875x575
+capture_colours=4
+capture=ok
+capture_size=ok      (exit code 0)
+```
+
+Vagyis a kép a **lap saját viewportja × eszközskálája** (700×460 CSS → 875×575 device px), és a három
+sáv + a fehér háttér valóban ott van a képen.
+
+`antikolt-shell --embedtest <motor>` — ugyanaz a mérés a beágyazott kártyán, a többi méréssel együtt:
+
+```
+page={"w":900,"h":640,"dpr":1.25,"screenW":4096,"screenH":1152,"outerW":0,"outerH":0}
+screenshot_colours=20 (informational)
+capture_colours=25
+capture_size_match=ok
+page_has_focus=true
+embed=ok  viewport_match=ok  paint=ok  focus=ok      (exit code 0)
+```
+
+A `--opentest` (kártyanyitás a hídon át) ismét zöld: `bridge=object`, `open_card=ok`, `card_opened=ok`;
+a `--coretest`: `cards=3`, `card_open=ok`. A `scripts/check-repo.ps1`: **ALL CHECKS PASSED** (46 SPDX-os
+forrásfájl, link-ellenőrzés, `node --check`, `cargo fmt`/`clippy -D warnings`, 87 Rust-teszt).
+
+A protokoll-próba (kézi stdio-kliens) a formátumokat és a hibautat is mérte ugyanazon a felületen:
+
+```
+capture png  -> {"bytes":2495,"format":"png","height":442,"width":779,"ok":true,...}
+capture webp -> {"bytes":1704,"format":"webp","height":442,"width":779,"ok":true,...}   (quality=70)
+capture gif  -> {"code":"invalid_argument","message":"format must be png, jpeg or webp"}
+snapshot     -> {"bytes":1189,"mhtml":true,"state_bytes":390,...}
+```
+
+A `state.json` tartalma (a pillanatkép második fele, ami eddig üresen maradt):
+
+```json
+{"url":"data:text/html,…","title":"probe","scrollX":0,"scrollY":0,
+ "anchor":{"selector":"html > body:nth-of-type(1) > div:nth-of-type(1)","dy":0},
+ "forms":[],"session":{},"media":[],"viewport":{"width":623,"height":354,"dpr":1.25}}
+```
+
+### Három hiba, amit ez a szelet hozott (mind javítva)
+
+1. **A `DevToolsReply` üres szótárat adott** (`type=''`, `value=''`, `state_bytes=0`), miközben a nyers
+   válasz helyes volt: `{"result":{"type":"string","value":"…"}}`. A CEF belső szótárai a parse-olt
+   JSON-**dokumentumban** élnek; amikor a dokumentum felszabadult, a szótár *üresen* jött vissza —
+   nem hibázott, hanem hazudott. Pontosan ezt írta le a korábbi kód kommentje („a real bug that cost a
+   debugging round"), most **másodszor** került elő, amikor a dokumentum élettartama a hívótól ehhez a
+   típushoz került. A javítás: a válasz **tagja** a dokumentumnak (`document`), nem lokális változó.
+2. **A pillanatkép `state.json`-ja eddig csendben üres maradt** (`state_bytes=0`). Ugyanaz a hiba;
+   a javítás után `state_bytes=390`, `state: 390 bytes written`.
+3. **A `data:` URL-ben a `#` fragmentumnak számít**: a `--capturetest` első változata
+   `background:#06c`-t írt, a lap a `#`-nél elvágódott, a kép egyszínű lett (`capture_colours=1`).
+   Percent-kódolva (`%2306c`) 4 szín. Ez a fajta csapda a mérésben magában is hibaforrás.
+
+Mellékesen: a `QScreen::grabWindow` nem `const`, a diagnosztika-helper `QScreen*`-t kap.
+
+### Mérési megfigyelés, ami a következő szeletre kötelez
+
+Az **önálló, takart** motorablak (`parent_window=0`, a konzolablak mögött) `capture`-je **egyszínű**
+(`capture_colours=1`) volt, miközben a beágyazott, látható kártyáé 25 szín. A kompozítor tehát a takart
+ablakot nem festi. Következmény: az **előnézet-készítésnek látható felületet kell adnia** (vagy a
+`fromSurface:false` utat kell használnia), különben a rács néma, üres előnézeteket kapna. Ezt az
+ADR-030 rögzíti.
+
+### Ami még nyitott
+
+- Az **előnézet-pipeline** (260×150, WebP q=80, blob-tár + luminance/dhash, napi 100 frissítés) még nem
+  épült meg: a `capture` primitív kész, a feldolgozó nem.
+- A `capture`-nek nincs `from_surface` kapcsolója, és nincs még `metrics` op (a `capture` képmérete most a
+  mérés, a DOM-csomószám/szórás-próbák jönnek később).
+- A **széf** a következő szelet (ADR-010, ADR-027): a DevTools-réteg már készen áll rá, a passkey
+  hívásai (`WebAuthn.*`) ugyanezen a `DevToolsCall` típuson mennek majd.
+- A motor `stderr`-je a shell alatt nem látszik (a `qInfo` út nem ér el a konzolig), ezért a hibát egy
+  kézi, PowerShell-alapú stdio-próba tárta fel, ami a nyers kereteket és a motor stderr-jét is
+  megmutatta. Ezt a csatornát érdemes bekötni (vagy a `crates/antikolt-probe`-ot használni rá).
+
 ## 2026-11-17 (tizenharmadik szelet) — a festés-mérés megbízhatatlan: `capture` kell
 
 A `--embedtest` festés-ellenőrzése a képernyőről készít másolatot (`QScreen::grabWindow`) és

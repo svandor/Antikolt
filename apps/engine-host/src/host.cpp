@@ -9,15 +9,15 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <thread>
 
 #include "include/cef_command_line.h"
-#include "include/cef_devtools_message_observer.h"
 #include "include/cef_parser.h"
-#include "include/cef_registration.h"
 #include "include/cef_string_visitor.h"
 #include "include/cef_version.h"
 #include "include/wrapper/cef_helpers.h"
+#include "devtools.h"
 #include "protocol.h"
 
 namespace antikolt {
@@ -362,56 +362,8 @@ private:
 /// Monotonic id for snapshot files, so two freezes never overwrite each other.
 int64_t s_snapshot_counter = 0;
 
-/// Monotonic id for DevTools method calls.
-///
-/// The id must be **unique per request**: reusing one silently drops the second reply, which looks
-/// exactly like a hung engine. Every capture object takes its own ids from here.
-int NextDevToolsId() {
-    static int next = 100;
-    return next++;
-}
-
-/// Decode standard base64. CDP's `Page.captureSnapshot` returns `data` as a `binary` type, which is
-/// base64 on the wire; older/other builds hand back the MHTML as-is, and the caller decides by
-/// looking at the first bytes.
-std::string Base64Decode(const std::string& input) {
-    auto value_of = [](unsigned char character) -> int {
-        if (character >= 'A' && character <= 'Z') {
-            return character - 'A';
-        }
-        if (character >= 'a' && character <= 'z') {
-            return character - 'a' + 26;
-        }
-        if (character >= '0' && character <= '9') {
-            return character - '0' + 52;
-        }
-        if (character == '+') {
-            return 62;
-        }
-        if (character == '/') {
-            return 63;
-        }
-        return -1;
-    };
-
-    std::string out;
-    out.reserve(input.size() * 3 / 4);
-    int accumulator = 0;
-    int bits = -8;
-    for (unsigned char character : input) {
-        const int value = value_of(character);
-        if (value < 0) {
-            continue;  // padding and whitespace
-        }
-        accumulator = (accumulator << 6) | value;
-        bits += 6;
-        if (bits >= 0) {
-            out.push_back(static_cast<char>((accumulator >> bits) & 0xFF));
-            bits -= 8;
-        }
-    }
-    return out;
-}
+/// Monotonic id for screenshot files, for the same reason.
+int64_t s_screenshot_counter = 0;
 
 /// The page state a card must not lose, gathered in the page and returned as one JSON string.
 ///
@@ -486,14 +438,118 @@ constexpr const char* kStateExpression = R"JS(
 })()
 )JS";
 
+/// Write bytes to a capture file. Truncates first, so a shorter snapshot never leaves the tail of a
+/// longer one behind.
+bool WriteFileBytes(const std::string& path, const std::string& bytes) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        return false;
+    }
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    return out.good();
+}
+
+/// The pixel size of an encoded image, read from its header.
+///
+/// `Page.captureScreenshot` answers with the encoded bytes and nothing else, so the reply must not
+/// guess a size from the viewport: multiplying CSS pixels by the device scale would report what the
+/// caller *expected* instead of what was produced. Only the three formats CDP can emit are known
+/// here; anything else reports 0x0, which the caller must read as "not measured".
+struct ImageSize {
+    int width = 0;
+    int height = 0;
+};
+
+ImageSize MeasureImage(const std::string& bytes) {
+    const auto* data = reinterpret_cast<const unsigned char*>(bytes.data());
+    const size_t count = bytes.size();
+    auto byte_at = [data, count](size_t index) -> unsigned {
+        return index < count ? static_cast<unsigned>(data[index]) : 0u;
+    };
+    auto be16 = [&](size_t index) -> int {
+        return static_cast<int>((byte_at(index) << 8) | byte_at(index + 1));
+    };
+    auto be32 = [&](size_t index) -> int {
+        return static_cast<int>((byte_at(index) << 24) | (byte_at(index + 1) << 16) |
+                                (byte_at(index + 2) << 8) | byte_at(index + 3));
+    };
+    auto le24 = [&](size_t index) -> int {
+        return static_cast<int>(byte_at(index) | (byte_at(index + 1) << 8) |
+                                (byte_at(index + 2) << 16));
+    };
+
+    ImageSize size;
+    if (count > 24 && byte_at(0) == 0x89 && byte_at(1) == 'P' && byte_at(2) == 'N' &&
+        byte_at(3) == 'G') {
+        // PNG: the IHDR chunk always comes first, so width and height sit at a fixed offset.
+        size.width = be32(16);
+        size.height = be32(20);
+        return size;
+    }
+    if (count > 4 && byte_at(0) == 0xFF && byte_at(1) == 0xD8) {
+        // JPEG: walk the segment list to the first start-of-frame header.
+        size_t pos = 2;
+        while (pos + 8 < count) {
+            if (byte_at(pos) != 0xFF) {
+                ++pos;
+                continue;
+            }
+            const unsigned marker = byte_at(pos + 1);
+            if (marker == 0xFF) {
+                ++pos;  // fill byte before the real marker
+                continue;
+            }
+            if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD9)) {
+                pos += 2;  // markers without a length field
+                continue;
+            }
+            const size_t length = static_cast<size_t>(be16(pos + 2));
+            const bool start_of_frame =
+                marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 &&
+                marker != 0xCC;
+            if (start_of_frame) {
+                size.height = be16(pos + 5);
+                size.width = be16(pos + 7);
+                return size;
+            }
+            if (length < 2) {
+                break;
+            }
+            pos += 2 + length;
+        }
+        return size;
+    }
+    if (count > 30 && std::memcmp(data, "RIFF", 4) == 0 && std::memcmp(data + 8, "WEBP", 4) == 0) {
+        const bool lossy = std::memcmp(data + 12, "VP8 ", 4) == 0;
+        const bool lossless = std::memcmp(data + 12, "VP8L", 4) == 0;
+        const bool extended = std::memcmp(data + 12, "VP8X", 4) == 0;
+        if (lossy) {
+            // Frame tag (3), start code (3), then two 14-bit values with a 2-bit scale.
+            size.width = static_cast<int>((byte_at(26) | (byte_at(27) << 8)) & 0x3FFF);
+            size.height = static_cast<int>((byte_at(28) | (byte_at(29) << 8)) & 0x3FFF);
+        } else if (lossless) {
+            // Signature byte, then 14 bits of width-1 and 14 bits of height-1.
+            const unsigned bits = byte_at(21) | (byte_at(22) << 8) | (byte_at(23) << 16) |
+                                  (byte_at(24) << 24);
+            size.width = 1 + static_cast<int>(bits & 0x3FFF);
+            size.height = 1 + static_cast<int>((bits >> 14) & 0x3FFF);
+        } else if (extended) {
+            size.width = 1 + le24(24);
+            size.height = 1 + le24(27);
+        }
+        return size;
+    }
+    return size;
+}
+
 /// Captures the page as MHTML plus its runtime state through the DevTools protocol, then replies to
 /// the `snapshot` request.
 ///
 /// This is the full hibernation artifact: the DOM with its resources inlined (readable offline) and a
 /// small JSON file with everything the DOM does not carry (scroll, anchor, form values, session
-/// storage, media position). The sequence is a small state machine because DevTools answers
-/// asynchronously: enable -> capture -> evaluate -> write.
-class MhtmlCapture : public CefDevToolsMessageObserver {
+/// storage, media position). The sequence is a chain of DevTools calls — enable, capture, evaluate,
+/// write — because DevTools answers asynchronously: each handler starts the next call.
+class MhtmlCapture : public CefBaseRefCounted {
 public:
     MhtmlCapture(int64_t request_id,
                  std::string base_path,
@@ -504,88 +560,49 @@ public:
           base_path_(std::move(base_path)),
           surface_id_(surface_id),
           url_(std::move(url)),
-          title_(std::move(title)),
-          enable_id_(NextDevToolsId()),
-          capture_id_(NextDevToolsId()),
-          evaluate_id_(NextDevToolsId()) {}
+          title_(std::move(title)) {}
 
-    /// Attach the observer and start the sequence. Returns false when DevTools cannot be used at all,
-    /// so the caller can fall back to the DOM-only capture.
+    /// Start the sequence. Returns false when DevTools cannot be used at all, so the caller can fall
+    /// back to the DOM-only capture.
     bool Start(CefRefPtr<CefBrowser> browser) {
-        registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
-        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-        const int submitted =
-            browser->GetHost()->ExecuteDevToolsMethod(enable_id_, "Page.enable", params);
-        if (submitted == 0) {
-            registration_ = nullptr;
-            return false;
-        }
-        return true;
-    }
-
-    void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
-                                int message_id,
-                                bool success,
-                                const void* result,
-                                size_t result_size) override {
-        const std::string raw =
-            (result != nullptr && result_size > 0)
-                ? std::string(static_cast<const char*>(result), result_size)
-                : std::string();
-        Log("[engine-host] devtools id=%d success=%d bytes=%zu\n", message_id, success ? 1 : 0,
-            result_size);
-
-        if (message_id == enable_id_) {
-            SubmitCapture(browser);
-        } else if (message_id == capture_id_) {
-            OnCaptured(browser, success, raw);
-        } else if (message_id == evaluate_id_) {
-            OnEvaluated(success, raw);
-        }
+        CefRefPtr<MhtmlCapture> self(this);
+        return Submit(browser, "Page.enable", nullptr,
+                      [self](CefRefPtr<CefBrowser> browser, const DevToolsReply&) {
+                          // Page.enable's own answer carries nothing worth handling: the capture
+                          // call reports the failure if the domain really is unavailable.
+                          self->RequestSnapshot(browser);
+                      });
     }
 
 private:
-    int enable_id_;
-    int capture_id_;
-    int evaluate_id_;
+    /// Submit one call of the sequence. The handler keeps `self` alive, so the object survives until
+    /// the last call in the chain has answered.
+    bool Submit(CefRefPtr<CefBrowser> browser,
+                const char* method,
+                CefRefPtr<CefDictionaryValue> params,
+                DevToolsCall::Handler handler) {
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(method, params, std::move(handler)));
+        return call->Start(browser);
+    }
 
-    void SubmitCapture(CefRefPtr<CefBrowser> browser) {
+    void RequestSnapshot(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<MhtmlCapture> self(this);
         CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
         params->SetString("format", "mhtml");
-        if (browser->GetHost()->ExecuteDevToolsMethod(capture_id_, "Page.captureSnapshot",
-                                                      params) == 0) {
+        if (!Submit(browser, "Page.captureSnapshot", params,
+                    [self](CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+                        self->OnCaptured(browser, reply);
+                    })) {
             Finish("could not submit Page.captureSnapshot");
         }
     }
 
-    void OnCaptured(CefRefPtr<CefBrowser> browser, bool success, const std::string& raw) {
-        if (!success || raw.empty()) {
-            Finish("Page.captureSnapshot failed");
+    void OnCaptured(CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            Finish(reply.error);
             return;
         }
-        // The parsed CefValue owns its dictionaries: keep it alive while reading them, otherwise the
-        // inner dictionary comes back empty (a real bug that cost a debugging round).
-        CefRefPtr<CefValue> parsed = CefParseJSON(CefString(raw), JSON_PARSER_RFC);
-        if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
-            Finish("unparseable DevTools result");
-            return;
-        }
-        CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
-        if (CefRefPtr<CefValue> error = root->GetValue("error")) {
-            if (error->GetType() == VTYPE_DICTIONARY) {
-                Finish(error->GetDictionary()->GetString("message").ToString());
-                return;
-            }
-        }
-        std::string data;
-        if (CefRefPtr<CefValue> result_value = root->GetValue("result")) {
-            if (result_value->GetType() == VTYPE_DICTIONARY) {
-                data = result_value->GetDictionary()->GetString("data").ToString();
-            }
-        }
-        if (data.empty()) {
-            data = root->GetString("data").ToString();
-        }
+        const std::string data = reply.String("data");
         if (data.empty()) {
             Finish("DevTools result has no data");
             return;
@@ -599,42 +616,36 @@ private:
         }
 
         // Second half: the runtime state the MHTML cannot carry.
+        CefRefPtr<MhtmlCapture> self(this);
         CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
         params->SetString("expression", kStateExpression);
         params->SetBool("returnByValue", true);
-        if (browser->GetHost()->ExecuteDevToolsMethod(evaluate_id_, "Runtime.evaluate",
-                                                      params) == 0) {
+        if (!Submit(browser, "Runtime.evaluate", params,
+                    [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+                        self->OnEvaluated(reply);
+                    })) {
             FinishOk();  // MHTML is on disk; a missing state file is degraded, not fatal.
         }
     }
 
-    void OnEvaluated(bool success, const std::string& raw) {
-        Log("[engine-host] state evaluate success=%d bytes=%zu\n", success ? 1 : 0, raw.size());
-        if (success) {
-            CefRefPtr<CefValue> parsed = CefParseJSON(CefString(raw), JSON_PARSER_RFC);
-            if (parsed && parsed->GetType() == VTYPE_DICTIONARY) {
-                CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
-                CefRefPtr<CefDictionaryValue> value_holder = root;
-                if (CefRefPtr<CefValue> result_value = root->GetValue("result")) {
-                    if (result_value->GetType() == VTYPE_DICTIONARY) {
-                        value_holder = result_value->GetDictionary();
-                    }
-                }
-                const std::string json = value_holder->GetString("value").ToString();
-                const std::string state_path = base_path_ + ".state.json";
-                if (!json.empty() && WriteFileBytes(state_path, json)) {
-                    state_bytes_ = json.size();
-                    Log("[engine-host] state: %zu bytes written\n", json.size());
-                } else {
-                    Log("[engine-host] state: no usable value\n");
-                }
+    void OnEvaluated(const DevToolsReply& reply) {
+        if (reply.ok()) {
+            // The state expression returns one JSON string, so `value` really is a string here.
+            const std::string json = reply.String("value");
+            const std::string state_path = base_path_ + ".state.json";
+            if (!json.empty() && WriteFileBytes(state_path, json)) {
+                state_bytes_ = json.size();
+                Log("[engine-host] state: %zu bytes written\n", state_bytes_);
+            } else {
+                Log("[engine-host] state: no usable value\n");
             }
+        } else {
+            Log("[engine-host] state: no usable value (%s)\n", reply.error.c_str());
         }
         FinishOk();
     }
 
     void FinishOk() {
-        registration_ = nullptr;
         CefRefPtr<CefDictionaryValue> reply = CefDictionaryValue::Create();
         reply->SetBool("ok", true);
         reply->SetBool("mhtml", !mhtml_.empty());
@@ -651,17 +662,7 @@ private:
     }
 
     void Finish(const std::string& error) {
-        registration_ = nullptr;
         StdioLink::Instance().ReplyError(request_id_, "internal", error.c_str());
-    }
-
-    static bool WriteFileBytes(const std::string& path, const std::string& bytes) {
-        std::ofstream out(path, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            return false;
-        }
-        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        return out.good();
     }
 
     int64_t request_id_;
@@ -671,107 +672,156 @@ private:
     std::string title_;
     std::string mhtml_;
     size_t state_bytes_ = 0;
-    CefRefPtr<CefRegistration> registration_;
 
     IMPLEMENT_REFCOUNTING(MhtmlCapture);
     DISALLOW_COPY_AND_ASSIGN(MhtmlCapture);
 };
 
+/// Captures one screenshot through `Page.captureScreenshot` and replies to the `capture` request.
+///
+/// The pixels come from Chromium's own compositor, which is what makes this the honest basis for a
+/// painting check and for card previews: a screen grab of an embedded child window belongs to another
+/// process's desktop, and reports a blank or stale rectangle whenever the window is occluded,
+/// minimised or simply on a different compositor path.
+class ScreenshotCapture : public CefBaseRefCounted {
+public:
+    ScreenshotCapture(int64_t request_id,
+                      std::string base_path,
+                      int64_t surface_id,
+                      std::string format,
+                      int quality)
+        : request_id_(request_id),
+          base_path_(std::move(base_path)),
+          surface_id_(surface_id),
+          format_(std::move(format)),
+          quality_(quality) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<ScreenshotCapture> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("format", format_);
+        // `quality` is a JPEG/WebP knob: PNG ignores it, and some CDP versions validate it anyway.
+        if (format_ != "png") {
+            params->SetInt("quality", quality_);
+        }
+        params->SetBool("fromSurface", true);
+        params->SetBool("captureBeyondViewport", false);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Page.captureScreenshot", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) { self->OnCaptured(reply); }));
+        return call->Start(browser);
+    }
+
+private:
+    void OnCaptured(const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            ReplyError(reply.from_protocol ? "invalid_argument" : "internal", reply.error);
+            return;
+        }
+        const std::string encoded = reply.String("data");
+        if (encoded.empty()) {
+            ReplyError("internal", "DevTools result has no data");
+            return;
+        }
+        const std::string bytes = Base64Decode(encoded);
+        const std::string path = base_path_ + "." + format_;
+        if (!WriteFileBytes(path, bytes)) {
+            ReplyError("internal", "could not write the screenshot");
+            return;
+        }
+        const ImageSize size = MeasureImage(bytes);
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetString("path", path);
+        result->SetInt("bytes", static_cast<int>(bytes.size()));
+        result->SetInt("width", size.width);
+        result->SetInt("height", size.height);
+        result->SetString("format", format_);
+        result->SetInt("surface", static_cast<int>(surface_id_));
+        StdioLink::Instance().Reply(request_id_, result);
+        Log("[engine-host] screenshot written: %s (%d bytes, %dx%d)\n", path.c_str(),
+            static_cast<int>(bytes.size()), size.width, size.height);
+    }
+
+    void ReplyError(const char* code, const std::string& message) {
+        StdioLink::Instance().ReplyError(request_id_, code, message.c_str());
+    }
+
+    int64_t request_id_;
+    std::string base_path_;
+    int64_t surface_id_;
+    std::string format_;
+    int quality_ = 80;
+
+    IMPLEMENT_REFCOUNTING(ScreenshotCapture);
+    DISALLOW_COPY_AND_ASSIGN(ScreenshotCapture);
+};
+
+/// A `Runtime.evaluate` value rendered as the string the wire format carries.
+///
+/// `value` arrives as JSON and is not always a string: reading it with `GetString` made every boolean
+/// and number come back empty — `document.hasFocus()` answered nothing at all — so primitives are
+/// rendered to their JSON text here.
+std::string ScalarToString(CefRefPtr<CefValue> value) {
+    if (!value) {
+        return {};
+    }
+    switch (value->GetType()) {
+        case VTYPE_BOOL:
+            return value->GetBool() ? "true" : "false";
+        case VTYPE_INT:
+            return std::to_string(value->GetInt());
+        case VTYPE_DOUBLE: {
+            std::ostringstream text;
+            text << value->GetDouble();
+            return text.str();
+        }
+        case VTYPE_STRING:
+            return value->GetString().ToString();
+        default:
+            return {};
+    }
+}
+
 /// Evaluates JavaScript in the page through DevTools and replies with the resulting value.
 ///
 /// The main world is used deliberately: this is the shell's own script (restore, measurement), not a
 /// credential or a page-visible secret. Anything secret must go through an isolated world instead.
-class EvalCapture : public CefDevToolsMessageObserver {
+class EvalCapture : public CefBaseRefCounted {
 public:
     EvalCapture(int64_t request_id, std::string script)
-        : request_id_(request_id), script_(std::move(script)), message_id_(NextDevToolsId()) {}
+        : request_id_(request_id), script_(std::move(script)) {}
 
     bool Start(CefRefPtr<CefBrowser> browser) {
-        registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
+        CefRefPtr<EvalCapture> self(this);
         CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
         params->SetString("expression", script_);
         params->SetBool("returnByValue", true);
-        if (browser->GetHost()->ExecuteDevToolsMethod(message_id_, "Runtime.evaluate", params) ==
-            0) {
-            registration_ = nullptr;
-            return false;
-        }
-        return true;
-    }
-
-    void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
-                                int message_id,
-                                bool success,
-                                const void* result,
-                                size_t result_size) override {
-        if (message_id != message_id_) {
-            return;
-        }
-        registration_ = nullptr;
-        if (!success || result == nullptr || result_size == 0) {
-            StdioLink::Instance().ReplyError(request_id_, "internal", "Runtime.evaluate failed");
-            return;
-        }
-        const std::string raw(static_cast<const char*>(result), result_size);
-        CefRefPtr<CefValue> parsed = CefParseJSON(CefString(raw), JSON_PARSER_RFC);
-        if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
-            StdioLink::Instance().ReplyError(request_id_, "internal", "unparseable evaluate result");
-            return;
-        }
-        CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
-        if (CefRefPtr<CefValue> error = root->GetValue("error")) {
-            if (error->GetType() == VTYPE_DICTIONARY) {
-                const std::string message =
-                    error->GetDictionary()->GetString("message").ToString();
-                StdioLink::Instance().ReplyError(request_id_, "invalid_argument", message.c_str());
-                return;
-            }
-        }
-        CefRefPtr<CefDictionaryValue> inner = root;
-        if (CefRefPtr<CefValue> result_value = root->GetValue("result")) {
-            if (result_value->GetType() == VTYPE_DICTIONARY) {
-                inner = result_value->GetDictionary();
-            }
-        }
-        CefRefPtr<CefDictionaryValue> reply = CefDictionaryValue::Create();
-        reply->SetBool("ok", true);
-        reply->SetString("type", inner->GetString("type").ToString());
-        // `value` is always a string on the wire, whatever the script returned. Reading it with
-        // GetString made every boolean and number come back empty — `document.hasFocus()` answered
-        // nothing at all — so primitives are rendered to their JSON text here.
-        CefRefPtr<CefValue> value = inner->GetValue("value");
-        if (!value) {
-            reply->SetString("value", "");
-        } else {
-            switch (value->GetType()) {
-                case VTYPE_BOOL:
-                    reply->SetString("value", value->GetBool() ? "true" : "false");
-                    break;
-                case VTYPE_INT:
-                    reply->SetString("value", std::to_string(value->GetInt()));
-                    break;
-                case VTYPE_DOUBLE: {
-                    std::ostringstream text;
-                    text << value->GetDouble();
-                    reply->SetString("value", text.str());
-                    break;
-                }
-                case VTYPE_STRING:
-                    reply->SetString("value", value->GetString().ToString());
-                    break;
-                default:
-                    reply->SetString("value", "");
-                    break;
-            }
-        }
-        StdioLink::Instance().Reply(request_id_, reply);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Runtime.evaluate", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) { self->OnEvaluated(reply); }));
+        return call->Start(browser);
     }
 
 private:
+    void OnEvaluated(const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            // A script DevTools rejected is a bad argument, not a broken engine.
+            StdioLink::Instance().ReplyError(request_id_,
+                                             reply.from_protocol ? "invalid_argument" : "internal",
+                                             reply.error.c_str());
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetString("type", reply.String("type"));
+        result->SetString("value",
+                          ScalarToString(reply.result ? reply.result->GetValue("value") : nullptr));
+        StdioLink::Instance().Reply(request_id_, result);
+    }
+
     int64_t request_id_;
-    int message_id_;
     std::string script_;
-    CefRefPtr<CefRegistration> registration_;
 
     IMPLEMENT_REFCOUNTING(EvalCapture);
     DISALLOW_COPY_AND_ASSIGN(EvalCapture);
@@ -1273,6 +1323,30 @@ int RunEngineHostServer(const HostConfig& config) {
                     state.browser->GetMainFrame()->GetSource(visitor);
                 }
                 // The reply is sent by the capture object when the payload arrives.
+            } else if (command.op == "capture") {
+                if (!state.browser || !state.browser->GetMainFrame()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                if (command.format != "png" && command.format != "jpeg" &&
+                    command.format != "webp") {
+                    link.ReplyError(command.id, "invalid_argument",
+                                    "format must be png, jpeg or webp");
+                    continue;
+                }
+                std::error_code dir_error;
+                std::filesystem::create_directories(config.user_data_path + "\\screenshots",
+                                                    dir_error);
+                const std::string base = config.user_data_path + "\\screenshots\\shot-" +
+                                         std::to_string(state.surface_id) + "-" +
+                                         std::to_string(s_screenshot_counter++);
+                CefRefPtr<ScreenshotCapture> shot(new ScreenshotCapture(
+                    command.id, base, state.surface_id, command.format, command.quality));
+                if (!shot->Start(state.browser)) {
+                    link.ReplyError(command.id, "not_supported",
+                                    "DevTools is unavailable, cannot capture");
+                }
+                // The reply is sent by the capture object when the pixels arrive.
             } else if (command.op == "set_bounds") {
                 if (!state.browser) {
                     link.ReplyError(command.id, "surface_not_found", "no live surface");
@@ -1337,8 +1411,8 @@ int RunEngineHostServer(const HostConfig& config) {
             } else {
                 link.ReplyError(command.id, "not_supported",
                                 "this milestone implements hello, ping, create_surface, navigate, "
-                                "eval, set_bounds, focus, install_bridge, destroy_surface and "
-                                "shutdown");
+                                "eval, capture, snapshot, set_bounds, focus, install_bridge, "
+                                "destroy_surface and shutdown");
             }
         }
 

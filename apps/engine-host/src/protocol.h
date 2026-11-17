@@ -39,6 +39,11 @@ struct Command {
     /// JavaScript to evaluate (`eval`), executed in the page's main world.
     std::string script;
     std::string partition;
+    /// Screenshot encoding (`capture`): `png`, `jpeg` or `webp`. Defaults match the Rust contract
+    /// (crates/antikolt-ipc `Message::Capture`), where `format` is `webp`/`png` and `quality` is 80.
+    std::string format = "png";
+    /// Quality for the lossy encodings, 0..100. Ignored by PNG.
+    int quality = 80;
     int width = 1280;
     int height = 800;
     int protocol = 0;

@@ -75,7 +75,7 @@ gracefully when a capability is missing, and must never assume one:
 | `scroll` | core → engine | `surface`, `x`, `y`, `animate` | `reply` |
 | `set_zoom` | core → engine | `surface`, `factor_percent` | `reply` |
 | `set_media` | core → engine | `surface`, `scheme`, `forced_colors` | `reply` |
-| `capture` | core → engine | `surface`, `format`, `quality` (default 80) | `reply` (`{bytes, width, height}`) |
+| `capture` | core → engine | `surface`, `format`, `quality` (default 80) | `reply` (`{bytes, width, height}` plus `path`, `format`, `surface`) |
 | `snapshot` | core → engine | `surface` | `reply` (`{mhtml_bytes, integrity}`) |
 | `metrics` | core → engine | `surface` | `reply` (`{dom_nodes, js_heap_bytes, engine_working_set_bytes}`) |
 | `clear_origin_data` | core → engine | `partition`, `origin`, `storages[]` | `reply` |
@@ -155,7 +155,14 @@ live surface waits for this event.
 | `create_surface` (with `parent_window`), `navigate`, `destroy_surface`, `shutdown` | implemented |
 | `set_bounds`, `focus` | implemented (Windows windowed embedding) |
 | `snapshot`, `eval` | implemented through DevTools (MHTML + runtime state, `Runtime.evaluate`) |
-| everything else (`capture`, `scroll`, `set_zoom`, `set_media`, `metrics`, `clear_origin_data`) | answers `not_supported` until the freeze milestone |
+| `capture` | implemented through DevTools (`Page.captureScreenshot`; PNG/JPEG/WebP, `quality`) |
+| everything else (`scroll`, `set_zoom`, `set_media`, `metrics`, `clear_origin_data`) | answers `not_supported` until the freeze milestone |
+
+`capture`'s reply carries more than the minimum `{bytes, width, height}` the table above promises: it also
+names the written file (`path`), the encoding (`format`) and the surface. `width`/`height` are read from
+the encoded image's own header (PNG, JPEG, WebP), so they are the compositor's pixels — not the viewport
+multiplied by a device scale. Both the request and the reply are additive: `quality` defaults to 80 and a
+client that ignores the extra reply fields still works.
 
 `crates/antikolt-probe` exercises the implemented set end to end; `docs/HU/16-FEJLESZTESI-NAPLO.md`
 records the verified output.

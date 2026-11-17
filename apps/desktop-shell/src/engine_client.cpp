@@ -197,6 +197,15 @@ void EngineClient::snapshot(qint64 surface, ReplyHandler handler) {
     send(QStringLiteral("snapshot"), fields, std::move(handler));
 }
 
+void EngineClient::capture(qint64 surface, const QString& format, int quality,
+                           ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("format"), format);
+    fields.insert(QStringLiteral("quality"), quality);
+    send(QStringLiteral("capture"), fields, std::move(handler));
+}
+
 void EngineClient::destroySurface(qint64 surface, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
