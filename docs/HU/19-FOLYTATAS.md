@@ -102,6 +102,14 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 **Bizonyíték:** `--gridtest` második fázisa: a kártya `previewRef`-je betöltődik, a kép nem üres
 (`naturalWidth > 0`), és a `capture` fájlja a profilban van.
 
+## 4b. Memória-mérés (kész, ADR-036)
+
+> A motor `metrics` opja méri a lap DOM-csomópontjait, JS-halmát és a saját munkakészletét; a shell a lap
+> `system.memory` kérésére válaszol vele. `--metricstest`: `dom_nodes=57`, `engine_working_set_bytes=…`,
+> `page_used_bytes=…`, `metrics=ok`.
+> **Ami hátra van:** a memória-**büdzsé** (F6) és a kártyánkénti bontás; a JS-halom a Chromium miatt
+> kvantált, tehát indikátor.
+
 ## 5. Széf és passkey
 
 **Miért:** F4/F4b; a varrat kész (`crates/antikolt-core/src/vault.rs`, 10 teszt, ADR-031).

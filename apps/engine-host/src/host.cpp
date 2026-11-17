@@ -12,6 +12,10 @@
 #include <sstream>
 #include <thread>
 
+#ifdef _WIN32
+#include <psapi.h>
+#endif
+
 #include "include/cef_command_line.h"
 #include "include/cef_parser.h"
 #include "include/cef_string_visitor.h"
@@ -783,6 +787,70 @@ std::string ScalarToString(CefRefPtr<CefValue> value) {
             return {};
     }
 }
+
+/// Accounts what one surface costs: DOM nodes and JS heap from the page, plus this process's working set.
+///
+/// The memory promise is only honest if it is measured, so the numbers come from the browser itself rather
+/// than from a guess: `Runtime.evaluate` for the page's own view (its node count and `performance.memory`)
+/// and `GetProcessMemoryInfo` for the engine host's footprint. The reply is
+/// `{dom_nodes, js_heap_bytes, engine_working_set_bytes}` — the shape `Message::Metrics` documents.
+class MetricsCapture : public CefBaseRefCounted {
+public:
+    explicit MetricsCapture(int64_t request_id) : request_id_(request_id) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<MetricsCapture> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression",
+                          "JSON.stringify({nodes: document.getElementsByTagName('*').length,"
+                          " heap: (performance.memory && performance.memory.usedJSHeapSize) || 0})");
+        params->SetBool("returnByValue", true);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Runtime.evaluate", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) { self->OnMeasured(reply); }));
+        return call->Start(browser);
+    }
+
+private:
+    void OnMeasured(const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            StdioLink::Instance().ReplyError(request_id_,
+                                             reply.from_protocol ? "invalid_argument" : "internal",
+                                             reply.error.c_str());
+            return;
+        }
+        const std::string json =
+            ScalarToString(reply.result ? reply.result->GetValue("value") : nullptr);
+        int64_t nodes = 0;
+        int64_t heap = 0;
+        if (CefRefPtr<CefValue> parsed = CefParseJSON(CefString(json), JSON_PARSER_RFC)) {
+            if (CefRefPtr<CefDictionaryValue> measured = parsed->GetDictionary()) {
+                nodes = measured->GetInt("nodes");
+                heap = measured->GetInt("heap");
+            }
+        }
+        int64_t working_set = 0;
+#ifdef _WIN32
+        PROCESS_MEMORY_COUNTERS_EX counters{};
+        if (K32GetProcessMemoryInfo(GetCurrentProcess(),
+                                    reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                                    sizeof(counters))) {
+            working_set = static_cast<int64_t>(counters.WorkingSetSize);
+        }
+#endif
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetInt("dom_nodes", static_cast<int>(nodes));
+        result->SetString("js_heap_bytes", std::to_string(heap));
+        result->SetString("engine_working_set_bytes", std::to_string(working_set));
+        StdioLink::Instance().Reply(request_id_, result);
+    }
+
+    int64_t request_id_;
+
+    IMPLEMENT_REFCOUNTING(MetricsCapture);
+    DISALLOW_COPY_AND_ASSIGN(MetricsCapture);
+};
 
 /// Evaluates JavaScript in the page through DevTools and replies with the resulting value.
 ///
@@ -1575,6 +1643,19 @@ int RunEngineHostServer(const HostConfig& config) {
                                     "clearing origin data needs the DevTools protocol");
                 }
                 // The reply is sent by the call itself once the protocol answered.
+            } else if (command.op == "metrics") {
+                // What one surface costs: the page's own numbers plus this process's working set. Only a
+                // live surface can be measured; a hidden one has no document to count.
+                if (!state.browser || !state.browser->GetMainFrame()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                CefRefPtr<MetricsCapture> metrics(new MetricsCapture(command.id));
+                if (!metrics->Start(state.browser)) {
+                    link.ReplyError(command.id, "not_supported",
+                                    "DevTools is unavailable, cannot measure");
+                }
+                // The reply is sent by the metrics object when the numbers arrive.
             } else if (command.op == "capture") {
                 if (!state.browser || !state.browser->GetMainFrame()) {
                     link.ReplyError(command.id, "surface_not_found", "no live surface");

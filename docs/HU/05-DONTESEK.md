@@ -3,6 +3,26 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-036 — A memória-számot a motor méri, a lap a híd kérés-csatornáján kapja meg (2026-11-17)
+
+**Kontextus.** A termék ígérete a „memóriatakarékos" böngésző, de a felület semmit nem mutatott a
+fogyasztásról: a lap `system.memory` hívása a mockból nullát kapott. Három rossz út: a shell tippeljen
+(nem mérés), a lap számoljon (nem láthatja a motor folyamatát, és a lap adata nem megbízható), vagy a
+státuszsor a semmit mutassa (ez volt a helyzet).
+
+**Döntés.** A **motor** méri, ami mérhető: `metrics` op, ami a `Runtime.evaluate`-vel lekéri a lap saját
+nézetszámát (`document.getElementsByTagName('*').length`) és a `performance.memory` JS-halmot, a
+`GetProcessMemoryInfo`-val pedig a **saját munkakészletét**, és `{dom_nodes, js_heap_bytes,
+engine_working_set_bytes}`-t válaszol. A shell a lap `system.memory` **kérésére** ezt továbbítja
+`{usedBytes, budgetBytes}` alakban; a `budgetBytes` 0, amíg a profilok nem hordoznak memória-büdzsét (F6),
+és a lap ilyenkor csak a felhasznált értéket írja ki — nem talál ki büdzsét.
+
+**Következmény.** (+) a felület valódi, mért számot mutat, és a lap a kétirányú hídon keresztül kapja
+(ugyanaz a csatorna, mint a kártya-kérdéseké); (+) a mérés helye a motor, mert csak ő látja a dokumentumot
+és a saját folyamatát; (−) a JS-halom értéke **kvantált**: a Chromium adatvédelmi okból kerekíti
+(`10 000 000` pontosan), tehát indikátor, nem könyvelési adat — ezt a napló kimondja, a felület pedig
+kerekítve, MB-ban mutatja; (−) a büdzsé és a kártyánkénti bontás (F6) továbbra is nyitott.
+
 ## ADR-035 — A kártya-előnézet a motorból jön, `antikolt://blob/` sémán, nem a hálóról (2026-11-17)
 
 **Kontextus.** A rácsnak előnézet kell, és a lap már hivatkozik rá (`antikolt://blob/<ref>`). Két rossz
@@ -215,6 +235,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-033 | A munkamenet-politikát a mag értékeli ki (`session_due`), a shell csak végrehajt és megjelenít | Elfogadva |
 | ADR-034 | A lap kérdezhet: perzisztens `cefQuery` + `bridge_reply` = protokoll v2 (az ADR-032 továbbra is érvényes az egyirányú hívásokra) | Elfogadva |
 | ADR-035 | A kártya-előnézetet a motor szolgálja ki a profilból (`antikolt://blob/`), a nevet a könyvtáron belül oldva fel | Elfogadva |
+| ADR-036 | A memóriát a motor méri (`metrics`), a lap a kérés-csatornán kapja; a büdzsé 0, amíg a profilok nem hordozzák | Elfogadva |
 
 ---
 

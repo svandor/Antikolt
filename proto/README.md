@@ -85,6 +85,7 @@ gracefully when a capability is missing, and must never assume one:
 | `snapshot` | core → engine | `surface` | `reply` (`{mhtml_bytes, integrity}`) |
 | `metrics` | core → engine | `surface` | `reply` (`{dom_nodes, js_heap_bytes, engine_working_set_bytes}`) |
 | `clear_origin_data` | core → engine | `surface`, `origin`, `storages[]` | `reply` (`{cleared: true, origin}`) |
+| `metrics` | core → engine | `surface` | `reply` (`{dom_nodes, js_heap_bytes, engine_working_set_bytes}`) |
 | `bridge_reply` | core → engine | `request`, `json` **or** `error` | `reply` (`{}`; the page's callback is what carries the answer) |
 | `shutdown` | core → engine | — | `reply`, then the process exits |
 | `reply` | engine → core | `to`, `outcome` (`kind`: `ok`/`err`) | — |
@@ -212,7 +213,7 @@ live surface waits for this event.
 | `snapshot`, `eval` | implemented through DevTools (MHTML + runtime state, `Runtime.evaluate`) |
 | `capture` | implemented through DevTools (`Page.captureScreenshot`; PNG/JPEG/WebP, `quality`) |
 | `clear_origin_data` | implemented through DevTools (`Storage.clearDataForOrigin`; the plan's `indexed_db` is sent as CDP's `indexeddb`) |
-| everything else (`scroll`, `set_zoom`, `set_media`, `metrics`) | answers `not_supported` until the freeze milestone |
+| everything else (`scroll`, `set_zoom`, `set_media`) | answers `not_supported` until the freeze milestone |
 
 `capture`'s reply carries more than the minimum `{bytes, width, height}` the table above promises: it also
 names the written file (`path`), the encoding (`format`) and the surface. `width`/`height` are read from

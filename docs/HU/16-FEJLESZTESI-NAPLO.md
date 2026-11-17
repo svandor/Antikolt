@@ -3,6 +3,38 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harminckettedik szelet) — a memória-szám valódi: a motor méri, a lap látja
+
+A termék ígérete a memóriatakarékos böngésző, de a felület semmit nem mutatott: a lap `system.memory`
+hívása a mockból nullát kapott. Most a motor `metrics` opja mér — a lap saját DOM-csomópontjait és
+JS-halmát (`Runtime.evaluate`), valamint a saját munkakészletét (`GetProcessMemoryInfo`) —, a shell pedig a
+lap **kérésére** ezt válaszolja meg a kétirányú csatornán. A büdzsé szándékosan 0, amíg a profilok nem
+hordoznak memória-büdzsét (F6): a lap ilyenkor csak a felhasznált értéket írja ki, nem talál ki büdzsét.
+A döntés az ADR-036-ban.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --metricstest <motor>
+asked=ok
+dom_nodes=57
+js_heap_bytes=10000000
+engine_working_set_bytes=117497856
+page_used_bytes=103763968
+metrics=ok      (exit code 0)
+```
+
+Két tanú: a motor `metrics` válasza (DOM-csomópontok, munkakészlet) és a lap `system.memory` válasza, ami a
+hídon jött vissza. Megjegyzés a számokhoz: a **JS-halom kvantált** — a Chromium adatvédelmi okból kerekíti
+(`10 000 000` pontosan), tehát indikátor, nem könyvelési adat; a munkakészlet és a lap válasza időben
+kicsit eltér (117 MB a motor folyamata, 103 MB a kérés pillanatában), mert a working set mozog.
+
+### Ami még nyitott
+
+- A **büdzsé** (F6) és a kártyánkénti memória-bontás: a `metrics` ma az élő felületet méri, nem kártyánként.
+- A `metrics` a **home felületre** is válaszol (57 csomópont) — a kártyák mérése ugyanaz az út, de a
+  státuszsor és a napló még nem használja kártyánként.
+
 ## 2026-11-17 (harmincegyedik szelet) — az előnézet elkészül: a kártya megnyitása képet ad neki
 
 A harmincadik szelet kiszolgálta az előnézetet; most **elő is állítja** a shell. A kártya rekordja additív

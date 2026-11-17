@@ -862,7 +862,8 @@ class HomePage {
       if (memory && typeof memory.usedBytes === "number" && memory.usedBytes > 0) {
         const used = Math.round(memory.usedBytes / (1024 * 1024));
         const budget = Math.round((memory.budgetBytes || 0) / (1024 * 1024));
-        this.memEl.textContent = `${used} / ${budget} MB`;
+        // A budget of zero means "no budget is known yet" (F6), not "zero megabytes".
+        this.memEl.textContent = budget > 0 ? `${used} / ${budget} MB` : `${used} MB`;
       } else {
         this.memEl.textContent = "motor: hideg";
       }
@@ -938,6 +939,19 @@ function withNativeOpen(mock) {
         Promise.resolve(
           nativeBridge() ? "CEF (beágyazott kártya)" : "mock bridge (statikus előnézet)",
         ),
+      // The memory figure is measured by the engine (ADR-036), not estimated here. `budgetBytes` is 0
+      // until profiles carry a budget, and the renderer then shows the used figure alone.
+      memory: async () => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          return mock.system.memory();
+        }
+        const answer = await native.request("system.memory", {});
+        return {
+          usedBytes: Number(answer?.usedBytes) || 0,
+          budgetBytes: Number(answer?.budgetBytes) || 0,
+        };
+      },
     },
   };
 }

@@ -1379,6 +1379,100 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the memory figure is *measured*: the engine counts the page, the shell answers the page.
+///
+/// Two witnesses again: the engine's own `metrics` reply (DOM nodes, working set) and the page's
+/// `system.memory` answer, which travels through the request channel. A number of zero on either side means
+/// the promise is still a guess.
+int runMetricsCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 home_surface = 0;
+    QJsonObject engine_metrics;
+    QString page_state;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             home_surface = id;
+                             QTimer::singleShot(900, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "window.__mem='pending';"
+                                         "window.antikoltNative.request('system.memory', {})"
+                                         ".then(function(r){window.__mem=r;},"
+                                         "function(e){window.__mem={error:String(e.message)};});"
+                                         " 'asked'"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         const bool asked =
+                                             error.isEmpty() &&
+                                             reply.value(QStringLiteral("value")).toString() ==
+                                                 QStringLiteral("asked");
+                                         out << "asked=" << (asked ? "ok" : "FAILED") << '\n';
+                                         QTimer::singleShot(1200, &loop, [&, id] {
+                                             window.engine()->metrics(
+                                                 home_surface,
+                                                 [&](const QJsonObject& measured,
+                                                     const QString& measure_error) {
+                                                     if (measure_error.isEmpty()) {
+                                                         engine_metrics = measured;
+                                                     } else {
+                                                         engine_metrics.insert(
+                                                             QStringLiteral("error"), measure_error);
+                                                     }
+                                                     window.engine()->evaluate(
+                                                         id,
+                                                         QStringLiteral(
+                                                             "JSON.stringify(window.__mem||null)"),
+                                                         [&](const QJsonObject& value,
+                                                             const QString& failure) {
+                                                             page_state = failure.isEmpty()
+                                                                              ? value.value(
+                                                                                       QStringLiteral("value"))
+                                                                                   .toString()
+                                                                              : failure;
+                                                             loop.quit();
+                                                         });
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    const qint64 working_set = engine_metrics.value(QStringLiteral("engine_working_set_bytes"))
+                                   .toString()
+                                   .toLongLong();
+    const qint64 heap =
+        engine_metrics.value(QStringLiteral("js_heap_bytes")).toString().toLongLong();
+    const int dom_nodes = engine_metrics.value(QStringLiteral("dom_nodes")).toInt();
+    const QJsonObject page_memory = QJsonDocument::fromJson(page_state.toUtf8()).object();
+    const qint64 page_used =
+        static_cast<qint64>(page_memory.value(QStringLiteral("usedBytes")).toDouble());
+    out << "dom_nodes=" << dom_nodes << '\n';
+    out << "js_heap_bytes=" << heap << '\n';
+    out << "engine_working_set_bytes=" << working_set << '\n';
+    out << "page_used_bytes=" << page_used << '\n';
+    const bool ok = dom_nodes > 0 && working_set > 0 && page_used > 0;
+    out << "metrics=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove previews are *produced*: opening a card gives it a picture, and the grid can show it.
 ///
 /// A card pointing at the local probe origin is written into the core without a preview. The grid shows it
@@ -2485,6 +2579,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("previewgentest"),
         QStringLiteral("Prove opening a card produces its preview, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption metricstest(
+        QStringLiteral("metricstest"),
+        QStringLiteral("Prove the memory figure is measured by the engine, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -2505,11 +2603,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(timeouttest);
     parser.addOption(previewtest);
     parser.addOption(previewgentest);
+    parser.addOption(metricstest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(metricstest)) {
+        return runMetricsCheck(parser.value(metricstest));
     }
 
     if (parser.isSet(previewgentest)) {

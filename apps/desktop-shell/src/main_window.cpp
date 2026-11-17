@@ -634,6 +634,28 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
             method == QStringLiteral("test.hang")) {
             return;
         }
+        if (method == QStringLiteral("system.memory")) {
+            // The page asks what the browser costs; the engine measures the live surface. The budget is
+            // not a measurement and is not invented here: until profiles carry a memory budget (F6) it is
+            // reported as 0, and the page shows the used figure alone.
+            if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0) {
+                replyToPage(request, {}, QStringLiteral("nincs élő felület"));
+                return;
+            }
+            engine_->metrics(surface_, [this, request](const QJsonObject& measured,
+                                                       const QString& error) {
+                if (!error.isEmpty()) {
+                    replyToPage(request, {}, error);
+                    return;
+                }
+                const qint64 used = measured.value(QStringLiteral("engine_working_set_bytes"))
+                                        .toString()
+                                        .toLongLong();
+                replyToPage(request, QJsonObject{{QStringLiteral("usedBytes"), static_cast<double>(used)},
+                                                 {QStringLiteral("budgetBytes"), 0}});
+            });
+            return;
+        }
         replyToPage(request, {}, QStringLiteral("ismeretlen híd-kérdés: %1").arg(method));
         return;
     }

@@ -231,6 +231,12 @@ void EngineClient::destroySurface(qint64 surface, ReplyHandler handler) {
     send(QStringLiteral("destroy_surface"), fields, std::move(handler));
 }
 
+void EngineClient::metrics(qint64 surface, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    send(QStringLiteral("metrics"), fields, std::move(handler));
+}
+
 void EngineClient::bridgeReply(qint64 request, const QJsonObject& json, const QString& error) {
     QJsonObject fields;
     fields.insert(QStringLiteral("request"), static_cast<double>(request));

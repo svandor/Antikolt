@@ -79,6 +79,11 @@ public:
     /// The reply carries `{cleared: true, origin}`; a rejected call comes back as an error.
     void clearOriginData(qint64 surface, const QString& origin, const QStringList& storages,
                          ReplyHandler handler);
+    /// What one surface costs: `{dom_nodes, js_heap_bytes, engine_working_set_bytes}` (ADR-036).
+    ///
+    /// The numbers are measured by the engine — the page's own node count and JS heap through DevTools, and
+    /// the engine host's working set — so the status bar can show a real figure instead of a guess.
+    void metrics(qint64 surface, ReplyHandler handler);
     void destroySurface(qint64 surface, ReplyHandler handler = {});
     /// Answer a page request (`request > 0`) the engine is holding open.
     ///

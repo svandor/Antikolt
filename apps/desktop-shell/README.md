@@ -103,6 +103,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   `previews` directory, the home page loads it as `antikolt://blob/probe.png`, and the page's own witness
   must report `naturalWidth × naturalHeight`. A second request for `..%2Fhost.cpp` must be *refused* — a
   card's data may not read another file through the browser.
+- `--metricstest` — the memory figure is measured (ADR-036): the engine counts the page (DOM nodes, JS
+  heap) and reports its own working set, and the page's `system.memory` question comes back through the
+  request channel with a non-zero `usedBytes`. Two witnesses: the engine's reply and the page's answer.
 - `--previewgentest` — opening a card *produces* its preview: a card pointing at the local probe origin is
   written into the core without a picture, the grid shows it, the test clicks it, and once the page has
   loaded the shell captures it, moves the image into `previews/` and writes the name back to the record.
