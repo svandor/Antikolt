@@ -2592,6 +2592,21 @@ int runSessionPanelCheck(const QString& enginePath) {
         QTimer::singleShot(10000, &loop, &QEventLoop::quit);
         loop.exec();
     }
+    // The panel's editors show what the *core* holds, so the check sets the rules it asserts: otherwise it
+    // would be reading whatever the previous run left behind, and a shared store makes that a lie.
+    {
+        QEventLoop loop;
+        QJsonObject rules;
+        rules.insert(QStringLiteral("ttl_ms"), 7200000.0);
+        rules.insert(QStringLiteral("wipe_on_app_lock"), true);
+        rules.insert(QStringLiteral("container_default"), QStringLiteral("wipe"));
+        oracle.sessionRules(rules, [&](const QJsonObject&, const QString& error) {
+            out << "panel_rules_seeded=" << (error.isEmpty() ? "ok" : error) << '\n';
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
     oracle.shutdown();
     if (!written) {
         return 1;
@@ -2606,6 +2621,8 @@ int runSessionPanelCheck(const QString& enginePath) {
 
     int rows = -1;
     QString summary;
+    int panel_ttl_hours = 0;
+    bool panel_lock_wipe = false;
     {
         QEventLoop loop;
         QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
@@ -2618,6 +2635,8 @@ int runSessionPanelCheck(const QString& enginePath) {
                                  window.showSessions();
                                  QTimer::singleShot(700, &loop, [&] {
                                      rows = window.sessionPanelRowCount();
+                                     panel_ttl_hours = window.sessionPanelTtlHours();
+                                     panel_lock_wipe = window.sessionPanelLockWipe();
                                      summary = window.sessionPanelSummary();
                                      const QString dir =
                                          QStandardPaths::writableLocation(
@@ -2641,12 +2660,16 @@ int runSessionPanelCheck(const QString& enginePath) {
     }
 
     out << "panel_rows=" << rows << '\n';
+    out << "panel_ttl_hours=" << panel_ttl_hours << '\n';
+    out << "panel_lock_wipe=" << (panel_lock_wipe ? "true" : "false") << '\n';
     for (const QString& line : summary.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
         out << "panel_row=" << line << '\n';
     }
-    // Both halves matter: the row is there, and the policy the core computed marks it due.
+    // Three things: the row is there, the policy the core computed marks it due, and the editors show the
+    // rules the core holds (the panel is a view of the policy, not of its own memory — ADR-039).
     const bool ok = rows == 1 && summary.contains(QStringLiteral("https://example.org")) &&
-                    summary.contains(QStringLiteral("lejárt"));
+                    summary.contains(QStringLiteral("lejárt")) && panel_ttl_hours == 2 &&
+                    panel_lock_wipe;
     out << "session_panel=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

@@ -27,11 +27,20 @@ A `session_rules` először `SessionError::Rejected(LedgerError::UnknownState)`-
 a válasz „unknown state" lett volna egy elírásra. Külön `SessionError::Rules` változat készült, saját
 üzenettel.
 
+### A szerkesztőmezők a mag állapotát mutatják
+
+A panel most **feltölti** a mezőket a `session_list` válaszából (óra, app-zárnál törlés), és a konténer
+alapértelmezését (`container_default`) változatlanul küldi vissza — a shellnek nincs véleménye róla, tehát
+nem írhatja felül. Így egy elutasított szerkesztés soha nem látszik mentettnek: a panel a *politika nézete*,
+nem a saját memóriája.
+
+A `--sessionpanel` ezt méri: `panel_ttl_hours=2`, `panel_lock_wipe=true` (a teszt előbb beállítja a
+szabályokat, hogy ne a korábbi futás maradékát olvassa — a megosztott tár itt is csapda volt).
+
 ### Ami még nyitott
 
 - **Kártyánkénti** (origin-szintű) felülírás a konténer-szabály mellett.
-- A panel a szabályokat a `session_list` válaszából olvassa, de a szerkesztőmezők még nem töltődnek fel
-  belőlük (a Mentés felülírja őket) — ez a következő szelet.
+- Az órás egység miatt nem egész órás lejárat nem adható meg (szándékos egyszerűsítés).
 ## 2026-11-17 (harmincnegyedik szelet) — görgetés és nagyítás: a szerződés beváltva
 
 A `proto/README.md` régóta hirdette a `scroll` és a `set_zoom` opot, a motor `not_supported`-ot válaszolt.

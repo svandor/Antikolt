@@ -818,7 +818,7 @@ void MainWindow::saveSessionRules() {
     QJsonObject rules;
     rules.insert(QStringLiteral("ttl_ms"), static_cast<double>(hours * 3600 * 1000));
     rules.insert(QStringLiteral("wipe_on_app_lock"), lock_wipe);
-    rules.insert(QStringLiteral("container_default"), QStringLiteral("sweep"));
+    rules.insert(QStringLiteral("container_default"), session_policy_);
     core_->sessionRules(rules, [this](const QJsonObject& saved, const QString& error) {
         if (!error.isEmpty()) {
             setStatus(QStringLiteral("a szabályok nem mentődtek: %1").arg(error));
@@ -969,6 +969,23 @@ void MainWindow::refreshSessions() {
             setStatus(QStringLiteral("a munkamenet-napló nem érkezett meg: %1").arg(error));
             return;
         }
+        // The editors show what the core holds, not what the shell remembers: the panel is a view of the
+        // policy, so an edit that was refused never looks saved (ADR-039). The container default travels
+        // back unchanged on save, because the shell has no opinion about it.
+        const QJsonObject rules = listed.value(QStringLiteral("rules")).toObject();
+        session_policy_ = rules.value(QStringLiteral("container_default")).toString();
+        if (session_policy_.isEmpty()) {
+            session_policy_ = QStringLiteral("sweep");
+        }
+        if (sessions_ttl_ != nullptr) {
+            const qint64 ttl_ms = static_cast<qint64>(rules.value(QStringLiteral("ttl_ms")).toDouble());
+            if (ttl_ms > 0) {
+                sessions_ttl_->setValue(static_cast<int>(std::lround(ttl_ms / 3600000.0)));
+            }
+        }
+        if (sessions_lock_wipe_ != nullptr) {
+            sessions_lock_wipe_->setChecked(rules.value(QStringLiteral("wipe_on_app_lock")).toBool());
+        }
         const QJsonArray rows = listed.value(QStringLiteral("sessions")).toArray();
         // What the policy would do right now, asked from the core that owns the clock and the rules:
         // the shell does not recompute the TTL (ADR-033).
@@ -1017,6 +1034,13 @@ void MainWindow::refreshSessions() {
     });
 }
 
+int MainWindow::sessionPanelTtlHours() const {
+    return (sessions_ttl_ != nullptr) ? sessions_ttl_->value() : 0;
+}
+
+bool MainWindow::sessionPanelLockWipe() const {
+    return (sessions_lock_wipe_ != nullptr) && sessions_lock_wipe_->isChecked();
+}
 QString MainWindow::sessionPanelSummary() const {
     if (sessions_table_ == nullptr) {
         return QString();

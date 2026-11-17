@@ -100,6 +100,9 @@ public:
     void setZoomPercent(int percent);
     /// Send the panel's rules to the core (ADR-039). The core validates them; a refusal is shown, not hidden.
     void saveSessionRules();
+    /// The panel's rule editors as the user sees them (self test witnesses).
+    int sessionPanelTtlHours() const;
+    bool sessionPanelLockWipe() const;
     /// Emulate the live page's site theme: `auto`, `dark` or `light` (ADR-037).
     ///
     /// The preference is remembered and re-applied when a surface attaches or loads, because the emulation
@@ -201,6 +204,8 @@ private:
     /// The panel's rule editors (ADR-039): the TTL in hours and the app-lock wipe.
     QSpinBox* sessions_ttl_ = nullptr;
     QCheckBox* sessions_lock_wipe_ = nullptr;
+    /// The container default the core reported (`keep`/`sweep`/`wipe`), sent back unchanged on save.
+    QString session_policy_ = QStringLiteral("sweep");
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
 };

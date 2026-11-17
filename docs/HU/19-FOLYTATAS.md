@@ -85,7 +85,8 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 
 > `session_rules` op + panel-szerkesztő (óra, app-zárnál törlés, Mentés). `--rulestest`: `rules_ttl_ms=7200000`,
 > `rules_lock_wipe=true`, `rules_refused=refused`, `rules_reread_ttl_ms=7200000`, `session_rules=ok`.
-> **Ami hátra van:** a szerkesztőmezők feltöltése a beolvasott szabályokból, kártyánkénti felülírás.
+> A szerkesztőmezők a mag állapotát mutatják (`panel_ttl_hours=2`, `panel_lock_wipe=true`), a konténer-alapértelmezés változatlanul megy vissza.
+> **Ami hátra van:** kártyánkénti (origin-szintű) felülírás.
 
 ## 4. Előnézetek
 
