@@ -117,8 +117,14 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > `media_light=light`, `site_theme=ok`.
 > **Ami hátra van:** oldalankénti kivétel, rákényszerített sötétítés (szándékosan nincs), `scroll`/`set_zoom`.
 
-## 5. Széf és passkey
+## 4d. Görgetés és nagyítás (kész, ADR-038)
 
+> A motor `scroll` (`window.scrollBy`) és `set_zoom` (`Emulation.setDeviceMetricsOverride`, a DPR-rel
+> szorozva) opja kész. `--scrollzoomtest`: `scroll_y=600`, `dpr_at_150=1.875`, `dpr_at_100=1.25`,
+> `scroll_zoom=ok`.
+> **Ami hátra van:** shell-oldali nagyítás-gomb és scroll-pozíció visszaállítás, gesztus-alapú görgetés.
+
+## 5. Széf és passkey
 **Miért:** F4/F4b; a varrat kész (`crates/antikolt-core/src/vault.rs`, 10 teszt, ADR-031).
 
 **Hogyan:** `cargo vendor` egy **hálózatos** gépen (`aes-gcm`, `argon2`, `zeroize`, + a

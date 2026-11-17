@@ -16,12 +16,14 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QImage>
 #include <QPixmap>
+#include <functional>
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSet>
@@ -1379,6 +1381,188 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove scrolling and zoom reach the page (ADR-038): `scrollY` moves, `devicePixelRatio` follows the zoom.
+///
+/// The card is a tall local page, so scrolling has somewhere to go. The witnesses are the page's own
+/// `window.scrollY` and `window.devicePixelRatio` — a shell that only *claims* to zoom would pass neither.
+int runScrollZoomCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    const QString tall_page = QStringLiteral(
+        "<!doctype html><meta charset=\"utf-8\"><title>Tall</title>"
+        "<style>body{margin:0;font:14px sans-serif}"
+        "section{height:4000px;background:linear-gradient(#fff,#bbb)}</style>"
+        "<section>tall page</section>");
+    ProbeOrigin probe(tall_page);
+    if (!probe.listening()) {
+        out << "server=FAILED " << probe.errorString() << '\n';
+        return 1;
+    }
+    const QString origin = probe.origin();
+    out << "origin=" << origin << '\n';
+
+    const QString core_dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/core");
+    QDir().mkpath(core_dir);
+    CoreClient oracle;
+    if (!oracle.start(MainWindow::coreExecutable(), core_dir)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    bool written = false;
+    {
+        QEventLoop loop;
+        QJsonObject card;
+        card.insert(QStringLiteral("id"), QStringLiteral("scroll-probe"));
+        card.insert(QStringLiteral("title"), QStringLiteral("Tall probe"));
+        card.insert(QStringLiteral("url"), origin + QStringLiteral("/"));
+        card.insert(QStringLiteral("container"), QStringLiteral("c-private"));
+        card.insert(QStringLiteral("status"), QStringLiteral("unknown"));
+        card.insert(QStringLiteral("pinned"), false);
+        card.insert(QStringLiteral("notes"), QString());
+        card.insert(QStringLiteral("preview_ref"), QString());
+        card.insert(QStringLiteral("last_opened_at_ms"), 0);
+        oracle.cardUpsert(card, [&](const QJsonObject&, const QString& error) {
+            written = error.isEmpty();
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    oracle.shutdown();
+    if (!written) {
+        out << "card_written=FAILED\n";
+        return 1;
+    }
+    out << "card_written=ok\n";
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    QString scroll_y;
+    QString dpr_zoomed;
+    QString dpr_reset;
+    {
+        QEventLoop loop;
+        const auto eval = [&window](qint64 surface, const QString& expression,
+                                    std::function<void(const QString&)> done) {
+            window.engine()->evaluate(
+                surface, expression,
+                [done](const QJsonObject& reply, const QString& error) {
+                    done(error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error);
+                });
+        };
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:"))) {
+                                 QTimer::singleShot(900, &loop, [&, id] {
+                                     window.engine()->evaluate(
+                                         id,
+                                         QStringLiteral(
+                                             "(function(){var els=document.querySelectorAll("
+                                             "'antikolt-card');for(var i=0;i<els.length;i++){"
+                                             "var c=els[i].card;"
+                                             "if(c&&c.id==='scroll-probe'){"
+                                             "els[i].shadowRoot.querySelector('.card').click();"
+                                             "return 'clicked:'+c.id;}}"
+                                             "return 'no-card';})()"),
+                                         [&](const QJsonObject& reply, const QString& error) {
+                                             const QString value =
+                                                 error.isEmpty()
+                                                     ? reply.value(QStringLiteral("value")).toString()
+                                                     : error;
+                                             out << "card_opened="
+                                                 << (value.startsWith(QStringLiteral("clicked:"))
+                                                         ? "ok"
+                                                         : "FAILED")
+                                                 << '\n';
+                                         });
+                                 });
+                                 return;
+                             }
+                             if (!url.startsWith(origin)) {
+                                 return;
+                             }
+                             window.engine()->scroll(
+                                 id, 0, 600, false,
+                                 [&, id](const QJsonObject&, const QString& error) {
+                                     if (!error.isEmpty()) {
+                                         out << "scroll_error=" << error << '\n';
+                                         loop.quit();
+                                         return;
+                                     }
+                                     QTimer::singleShot(600, &loop, [&, id] {
+                                         eval(id, QStringLiteral("String(window.scrollY)"),
+                                              [&, id](const QString& y) {
+                                                  scroll_y = y;
+                                                  window.engine()->setZoom(
+                                                      id, 150,
+                                                      [&, id](const QJsonObject&,
+                                                              const QString& zoom_error) {
+                                                          if (!zoom_error.isEmpty()) {
+                                                              out << "zoom_error=" << zoom_error
+                                                                  << '\n';
+                                                              loop.quit();
+                                                              return;
+                                                          }
+                                                          QTimer::singleShot(
+                                                              700, &loop, [&, id] {
+                                                                  eval(id,
+                                                                       QStringLiteral(
+                                                                           "String(window."
+                                                                           "devicePixelRatio)"),
+                                                                       [&, id](const QString& dpr) {
+                                                                           dpr_zoomed = dpr;
+                                                                           window.engine()->setZoom(
+                                                                               id, 100,
+                                                                               [&, id](const QJsonObject&,
+                                                                                       const QString&) {
+                                                                                   QTimer::singleShot(
+                                                                                       700, &loop,
+                                                                                       [&, id] {
+                                                                                           eval(
+                                                                                               id,
+                                                                                               QStringLiteral(
+                                                                                                   "String(window."
+                                                                                                   "devicePixel"
+                                                                                                   "Ratio)"),
+                                                                                               [&](const QString& back) {
+                                                                                                   dpr_reset =
+                                                                                                       back;
+                                                                                                   loop.quit();
+                                                                                               });
+                                                                                       });
+                                                                               });
+                                                                       });
+                                                              });
+                                                      });
+                                              });
+                                     });
+                                 });
+                         });
+        QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    const int scrolled = scroll_y.toInt();
+    const double zoomed = dpr_zoomed.toDouble();
+    const double reset = dpr_reset.toDouble();
+    out << "scroll_y=" << scroll_y << '\n';
+    out << "dpr_at_150=" << dpr_zoomed << '\n';
+    out << "dpr_at_100=" << dpr_reset << '\n';
+    // The zoom multiplies the screen's own DPR, so the *ratio* is what the browser controls:
+    // 1.875 / 1.25 = 1.5 on a 125 % display, and 1.5 / 1.0 = 1.5 on a plain one.
+    const bool ok = scrolled >= 500 && reset > 0.0 && std::abs(zoomed / reset - 1.5) < 0.05;
+    out << "scroll_zoom=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the site theme reaches the page: `prefers-color-scheme` flips, and flips back (ADR-037).
 ///
 /// The witness is the page's own `matchMedia`: nothing in the shell may claim the page changed. Both
@@ -1624,7 +1808,7 @@ int runPreviewGenCheck(const QString& enginePath) {
                                              "(function(){var els=document.querySelectorAll("
                                              "'antikolt-card');for(var i=0;i<els.length;i++){"
                                              "var c=els[i].card;"
-                                             "if(c&&String(c.url).indexOf('127.0.0.1')>=0){"
+                                             "if(c&&c.id==='preview-probe'){"
                                              "els[i].shadowRoot.querySelector('.card').click();"
                                              "return 'clicked:'+c.id;}}"
                                              "return 'no-card';})()"),
@@ -2670,6 +2854,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption scrollzoomtest(
+        QStringLiteral("scrollzoomtest"),
+        QStringLiteral("Prove scrolling and zoom reach the page, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -2692,11 +2880,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(previewgentest);
     parser.addOption(metricstest);
     parser.addOption(mediatest);
+    parser.addOption(scrollzoomtest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(scrollzoomtest)) {
+        return runScrollZoomCheck(parser.value(scrollzoomtest));
     }
 
     if (parser.isSet(mediatest)) {

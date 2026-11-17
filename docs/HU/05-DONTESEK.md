@@ -3,6 +3,24 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-038 — Scroll és zoom: a dokumentumon, illetve újratördeléssel (2026-11-17)
+
+**Kontextus.** A huzal-szerződés régóta hirdette a `scroll` és a `set_zoom` opokat, a motor `not_supported`-ot
+válaszolt. Mindkettőnek legalább két megvalósítása van, és a rossz választás látszólag működik, valójában
+mást csinál.
+
+**Döntés.** A `scroll` **`window.scrollBy`**: determinisztikus, nem kell hozzá pointer-pozíció, és pontosan az,
+amire a scroll-pozíció visszaállításához szükség van. Nem görget be belső overflow-konténert — az gesztus-alapú
+görgetés (`Input.synthesizeScrollGesture`) lenne, ami egy *másik*, későbbi funkció. A `set_zoom`
+**`Emulation.setDeviceMetricsOverride`**: a CSS-viewport zsugorodik, a szöveg újratördelődik (mint egy
+böngészőben), nem a kép nagyítódik. A méretarány **szorzódik** a képernyő saját DPR-jével (amit előbb
+DevTools-szal mérünk), ezért 150 % egy 125 %-os kijelzőn 1,875 DPR-t ad, nem 1,5-et — egy abszolút tényező
+csendben kicsinyítene HiDPI-n. A 100 % törli a felülírást.
+
+**Következmény.** (+) a görgetés és a nagyítás mérhető a lap saját `scrollY`/`devicePixelRatio` értékén; (+)
+a HiDPI helyes; (−) a görgetés a dokumentumot mozgatja, nem a fókuszban lévő belső konténert; (−) a nagyítás
+felülírja a lap méretét, tehát a `resize` eseményeket a lap megkapja (ez helyes, de a shellnek nem szabad
+`set_bounds`-szal visszaírnia).
 ## ADR-037 — Az oldal-témát a lap dönti el, a böngésző csak jelenti (`set_media`) (2026-11-17)
 
 **Kontextus.** A sötét oldal-téma (F7) kétféleképp képzelhető el: a böngésző **rákényszeríti** a színeket
@@ -256,6 +274,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-035 | A kártya-előnézetet a motor szolgálja ki a profilból (`antikolt://blob/`), a nevet a könyvtáron belül oldva fel | Elfogadva |
 | ADR-036 | A memóriát a motor méri (`metrics`), a lap a kérés-csatornán kapja; a büdzsé 0, amíg a profilok nem hordozzák | Elfogadva |
 | ADR-037 | Az oldal-témát a lap dönti el: `set_media` a `prefers-color-scheme`-et állítja, nem kényszerít színt | Elfogadva |
+| ADR-038 | `scroll` = `window.scrollBy`, `set_zoom` = újratördelő device-metrics felülírás, a DPR-rel szorozva | Elfogadva |
 
 ---
 

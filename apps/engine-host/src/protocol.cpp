@@ -109,6 +109,16 @@ bool ParseCommand(const std::string& payload, Command* out) {
     if (!media.empty()) {
         out->media = media;
     }
+    // Scrolling (`scroll`): CSS pixels, and whether the movement is animated.
+    out->scroll_x = static_cast<int>(GetNumber(message, "x"));
+    out->scroll_y = static_cast<int>(GetNumber(message, "y"));
+    if (CefRefPtr<CefValue> animate = message->GetValue("animate")) {
+        out->animate = animate->GetType() == VTYPE_BOOL && animate->GetBool();
+    }
+    // Zoom (`set_zoom`): 100 is the default. Sent as a number by the Rust contract.
+    if (const int factor = static_cast<int>(GetNumber(message, "factor_percent")); factor > 0) {
+        out->factor_percent = factor;
+    }
     if (CefRefPtr<CefValue> storages = message->GetValue("storages")) {
         if (storages->GetType() == VTYPE_LIST) {
             CefRefPtr<CefListValue> list = storages->GetList();

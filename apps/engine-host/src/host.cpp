@@ -788,6 +788,142 @@ std::string ScalarToString(CefRefPtr<CefValue> value) {
     }
 }
 
+/// Scrolls the page's document by a number of CSS pixels (`scroll`).
+///
+/// `window.scrollBy` is deliberate: it is deterministic, needs no pointer position, and is exactly what a
+/// restore-scroll-position feature needs. It scrolls the *document*, not an inner overflow container — a
+/// gesture-level scroll (`Input.synthesizeScrollGesture`) would move whatever is under a point, which is a
+/// different, later feature.
+class ScrollCall : public CefBaseRefCounted {
+public:
+    ScrollCall(int64_t request_id, int x, int y, bool animate)
+        : request_id_(request_id), x_(x), y_(y), animate_(animate) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<ScrollCall> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        std::ostringstream script;
+        script << "window.scrollBy({left:" << x_ << ",top:" << y_
+               << ",behavior:'" << (animate_ ? "smooth" : "auto") << "'});'ok'";
+        params->SetString("expression", script.str());
+        params->SetBool("returnByValue", true);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Runtime.evaluate", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) { self->OnScrolled(reply); }));
+        return call->Start(browser);
+    }
+
+private:
+    void OnScrolled(const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            StdioLink::Instance().ReplyError(request_id_,
+                                             reply.from_protocol ? "invalid_argument" : "internal",
+                                             reply.error.c_str());
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetInt("x", x_);
+        result->SetInt("y", y_);
+        StdioLink::Instance().Reply(request_id_, result);
+    }
+
+    int64_t request_id_;
+    int x_;
+    int y_;
+    bool animate_;
+
+    IMPLEMENT_REFCOUNTING(ScrollCall);
+    DISALLOW_COPY_AND_ASSIGN(ScrollCall);
+};
+
+/// Sets the page zoom (`set_zoom`) by overriding the device metrics.
+///
+/// Zooming by *reflow* is what a browser does: the CSS viewport shrinks and the text rewraps, instead of the
+/// page being scaled (which leaves the layout unchanged and the text blurry). The device scale factor is
+/// *multiplied* by the screen's own (measured first through DevTools), so 150 % on a 125 % display gives
+/// 1.875 instead of 1.5 — an absolute factor would silently zoom out on a HiDPI screen. 100 % clears it.
+class ZoomCall : public CefBaseRefCounted {
+public:
+    ZoomCall(int64_t request_id, int factor_percent, int viewport_width, int viewport_height)
+        : request_id_(request_id),
+          factor_percent_(factor_percent),
+          viewport_width_(viewport_width),
+          viewport_height_(viewport_height) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        browser_ = browser;
+        if (factor_percent_ == 100) {
+            return Apply(1.0);
+        }
+        CefRefPtr<ZoomCall> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", "String(window.devicePixelRatio)");
+        params->SetBool("returnByValue", true);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Runtime.evaluate", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+                double natural = 1.0;
+                if (reply.ok()) {
+                    const std::string text =
+                        ScalarToString(reply.result ? reply.result->GetValue("value") : nullptr);
+                    if (!text.empty()) {
+                        natural = std::atof(text.c_str());
+                    }
+                }
+                if (!(natural > 0.0)) {
+                    natural = 1.0;
+                }
+                self->Apply(natural);
+            }));
+        return call->Start(browser);
+    }
+
+private:
+    bool Apply(double natural_dpr) {
+        CefRefPtr<ZoomCall> self(this);
+        const char* method = "Emulation.setDeviceMetricsOverride";
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        if (factor_percent_ != 100) {
+            const double zoom = static_cast<double>(factor_percent_) / 100.0;
+            // The shell's bounds are CSS pixels at 100 %; at 150 % the same window holds fewer of them.
+            params->SetInt("width", static_cast<int>(viewport_width_ / zoom));
+            params->SetInt("height", static_cast<int>(viewport_height_ / zoom));
+            params->SetDouble("deviceScaleFactor", natural_dpr * zoom);
+            params->SetBool("mobile", false);
+        } else {
+            method = "Emulation.clearDeviceMetricsOverride";
+            params = nullptr;
+        }
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            method, params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) { self->OnZoomed(reply); }));
+        return call->Start(browser_);
+    }
+
+    void OnZoomed(const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            StdioLink::Instance().ReplyError(request_id_,
+                                             reply.from_protocol ? "invalid_argument" : "internal",
+                                             reply.error.c_str());
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetInt("factor_percent", factor_percent_);
+        StdioLink::Instance().Reply(request_id_, result);
+    }
+
+    int64_t request_id_;
+    int factor_percent_;
+    int viewport_width_;
+    int viewport_height_;
+    CefRefPtr<CefBrowser> browser_;
+
+    IMPLEMENT_REFCOUNTING(ZoomCall);
+    DISALLOW_COPY_AND_ASSIGN(ZoomCall);
+};
+
 /// Emulates the page's `prefers-color-scheme` (`set_media`, ADR-037).
 ///
 /// This is how a page that *supports* a dark theme actually gets one: the browser reports the emulated
@@ -1693,6 +1829,35 @@ int RunEngineHostServer(const HostConfig& config) {
                                     "clearing origin data needs the DevTools protocol");
                 }
                 // The reply is sent by the call itself once the protocol answered.
+            } else if (command.op == "scroll") {
+                if (!state.browser || !state.browser->GetMainFrame()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                CefRefPtr<ScrollCall> scroll(
+                    new ScrollCall(command.id, command.scroll_x, command.scroll_y, command.animate));
+                if (!scroll->Start(state.browser)) {
+                    link.ReplyError(command.id, "not_supported",
+                                    "DevTools is unavailable, cannot scroll");
+                }
+            } else if (command.op == "set_zoom") {
+                if (!state.browser || !state.browser->GetMainFrame()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                if (command.factor_percent < 25 || command.factor_percent > 500) {
+                    link.ReplyError(command.id, "invalid_argument",
+                                    "factor_percent must be between 25 and 500");
+                    continue;
+                }
+                const int width = state.bounds_width > 0 ? state.bounds_width : 1280;
+                const int height = state.bounds_height > 0 ? state.bounds_height : 800;
+                CefRefPtr<ZoomCall> zoom(
+                    new ZoomCall(command.id, command.factor_percent, width, height));
+                if (!zoom->Start(state.browser)) {
+                    link.ReplyError(command.id, "not_supported",
+                                    "DevTools is unavailable, cannot zoom");
+                }
             } else if (command.op == "set_media") {
                 if (!state.browser || !state.browser->GetMainFrame()) {
                     link.ReplyError(command.id, "surface_not_found", "no live surface");

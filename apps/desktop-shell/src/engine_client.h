@@ -79,6 +79,10 @@ public:
     /// The reply carries `{cleared: true, origin}`; a rejected call comes back as an error.
     void clearOriginData(qint64 surface, const QString& origin, const QStringList& storages,
                          ReplyHandler handler);
+    /// Scroll the live page by CSS pixels (`scroll`), optionally animated.
+    void scroll(qint64 surface, int x, int y, bool animate, ReplyHandler handler = {});
+    /// Set the page zoom (`set_zoom`), 100 is the default; the viewport reflows (ADR-038).
+    void setZoom(qint64 surface, int factorPercent, ReplyHandler handler = {});
     /// Emulate the page's `prefers-color-scheme` (`auto` clears it): `dark` or `light` (ADR-037).
     ///
     /// Only pages that support the query change — the browser tells them and their own CSS does the rest.

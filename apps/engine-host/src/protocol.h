@@ -53,6 +53,12 @@ struct Command {
     /// Site theme emulation (`set_media`, ADR-037): `auto` (no override), `dark` or `light` for
     /// `prefers-color-scheme`. Applied through DevTools, so pages that support the query follow it.
     std::string media = "auto";
+    /// Scrolling (`scroll`): the distance in CSS pixels, and whether the move is animated.
+    int scroll_x = 0;
+    int scroll_y = 0;
+    bool animate = false;
+    /// Zoom (`set_zoom`): percent, 100 is the default. The viewport reflows, the pixels do not scale.
+    int factor_percent = 100;
     int width = 1280;
     int height = 800;
     int protocol = 0;

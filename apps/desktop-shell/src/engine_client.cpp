@@ -231,6 +231,22 @@ void EngineClient::destroySurface(qint64 surface, ReplyHandler handler) {
     send(QStringLiteral("destroy_surface"), fields, std::move(handler));
 }
 
+void EngineClient::scroll(qint64 surface, int x, int y, bool animate, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("x"), x);
+    fields.insert(QStringLiteral("y"), y);
+    fields.insert(QStringLiteral("animate"), animate);
+    send(QStringLiteral("scroll"), fields, std::move(handler));
+}
+
+void EngineClient::setZoom(qint64 surface, int factorPercent, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("factor_percent"), factorPercent);
+    send(QStringLiteral("set_zoom"), fields, std::move(handler));
+}
+
 void EngineClient::setMedia(qint64 surface, const QString& media, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));

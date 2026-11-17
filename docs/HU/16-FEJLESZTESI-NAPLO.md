@@ -3,6 +3,42 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harmincnegyedik szelet) — görgetés és nagyítás: a szerződés beváltva
+
+A `proto/README.md` régóta hirdette a `scroll` és a `set_zoom` opot, a motor `not_supported`-ot válaszolt.
+Mindkettő elkészült, a döntésekkel együtt az ADR-038-ban: a `scroll` a **dokumentumot** görgeti
+(`window.scrollBy`, determinisztikus, pointer nélkül), a `set_zoom` pedig **újratördeli** a lapot
+(`Emulation.setDeviceMetricsOverride`), a méretarányt a képernyő saját DPR-jével **szorozva**.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --scrollzoomtest <motor>
+scroll_y=600
+dpr_at_150=1.875      ← 1,25 (a kijelő saját DPR-je) × 1,5
+dpr_at_100=1.25       ← a felülírás törlése a természetes értéket adja vissza
+scroll_zoom=ok      (exit code 0)
+```
+
+### Három hiba a mérésből, mindkettő javítva
+
+1. **A megosztott tár megint.** A teszt a `127.0.0.1` előtagra kattintott, és a korábbi futások
+   `preview-probe` kártyáját találta el, amelynek URL-je egy már halott portra mutatott
+   (`ERR_CONNECTION_REFUSED`) — a napló `load_failed` sora mutatta meg. A két próba-teszt most **saját
+   kártya-azonosító szerint** kattint (`scroll-probe`, illetve `preview-probe`).
+2. **Az abszolút DPR csapdája.** A nagyítás eredetileg `deviceScaleFactor = zoom`-ot állított, ami HiDPI-n
+   (ez a gép 125 %-os) *kicsinyít*: 150 % helyett 1,5 DPR-t adott a természetes 1,875 helyett. A motor most
+   előbb megméri a lap DPR-jét, és szoroz — a teszt pedig a **hányadost** állítja (1,875/1,25 = 1,5), ami a
+   kijelző felbontásától független.
+3. Egy `#include` sor a preprocessor-direktíva végére csúszott (`#include <functional>#include <QGuiApplication>`)
+   — a C4067 figyelmeztetés fogta meg, `#include` nélkül a build elhalt volna.
+
+### Ami még nyitott
+
+- A `scroll` a dokumentumot görgeti, nem a fókuszban lévő belső konténert (gesztus-alapú görgetés = külön
+  szelet).
+- A shell még nem használja ezt az op-párt: nincs nagyítás-gomb és nincs scroll-pozíció visszaállítás.
+- A nagyítás felülírja a viewportot, tehát a lap `resize`-ot kap; a shell nem írhatja vissza `set_bounds`-szal.
 ## 2026-11-17 (harmincharmadik szelet) — az oldal-téma: sötét oldal, ahol az oldal tudja
 
 Az F7 (oldal-témák) első, becsületes szelete: a böngésző **jelzi** a lapnak a `prefers-color-scheme`-et,

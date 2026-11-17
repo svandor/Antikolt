@@ -78,8 +78,8 @@ gracefully when a capability is missing, and must never assume one:
 | `focus` | core → engine | `surface`, `focused` (default `true`) | `reply` |
 | `install_bridge` | core → engine | `surface` | `reply` |
 | `eval` | core → engine | `surface`, `script`, `world` | `reply` (`{json}`) |
-| `scroll` | core → engine | `surface`, `x`, `y`, `animate` | `reply` |
-| `set_zoom` | core → engine | `surface`, `factor_percent` | `reply` |
+| `scroll` | core → engine | `surface`, `x`, `y`, `animate` | `reply` (`{ok: true, x, y}`) |
+| `set_zoom` | core → engine | `surface`, `factor_percent` (25..500) | `reply` (`{factor_percent}`) |
 | `set_media` | core → engine | `surface`, `media` (`auto`\|`dark`\|`light`) | `reply` (`{media: "dark"}`) |
 | `capture` | core → engine | `surface`, `format`, `quality` (default 80) | `reply` (`{bytes, width, height}` plus `path`, `format`, `surface`) |
 | `snapshot` | core → engine | `surface` | `reply` (`{mhtml_bytes, integrity}`) |
@@ -212,7 +212,7 @@ live surface waits for this event.
 | `snapshot`, `eval` | implemented through DevTools (MHTML + runtime state, `Runtime.evaluate`) |
 | `capture` | implemented through DevTools (`Page.captureScreenshot`; PNG/JPEG/WebP, `quality`) |
 | `clear_origin_data` | implemented through DevTools (`Storage.clearDataForOrigin`; the plan's `indexed_db` is sent as CDP's `indexeddb`) |
-| everything else (`scroll`, `set_zoom`) | answers `not_supported` until the freeze milestone |
+| `scroll`, `set_zoom` | **implemented** (ADR-038): `window.scrollBy` and a device-metrics override that reflows |
 
 `capture`'s reply carries more than the minimum `{bytes, width, height}` the table above promises: it also
 names the written file (`path`), the encoding (`format`) and the surface. `width`/`height` are read from
