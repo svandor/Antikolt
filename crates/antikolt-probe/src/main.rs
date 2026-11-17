@@ -141,7 +141,10 @@ fn run(exe: PathBuf, url: String, freeze: bool) -> Result<(), antikolt_ipc::Link
             url,
             reason,
         } => {
-            println!("load_failed surface={} url={url} reason={reason}", surface.0);
+            println!(
+                "load_failed surface={} url={url} reason={reason}",
+                surface.0
+            );
             return Err(antikolt_ipc::LinkError::Engine {
                 code: "load_failed".into(),
                 message: reason,
