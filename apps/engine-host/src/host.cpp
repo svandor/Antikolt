@@ -7,9 +7,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "include/cef_command_line.h"
+#include "include/cef_string_visitor.h"
 #include "include/cef_version.h"
 #include "include/wrapper/cef_helpers.h"
 #include "protocol.h"
@@ -174,9 +177,62 @@ CefRefPtr<CefDictionaryValue> MakeEngineInfo() {
     capabilities->SetString(1, "media_emulation");
     capabilities->SetString(2, "isolated_world");
     capabilities->SetString(3, "offscreen_surface");
+    // Claimed from this milestone on: the DOM snapshot that makes disk hibernation possible.
+    capabilities->SetString(4, "snapshot");
     engine->SetList("capabilities", capabilities);
     return engine;
 }
+
+/// Writes a frame's serialised DOM to disk and replies to the pending `snapshot` request.
+///
+/// This is the first half of the freeze mechanism (docs/HU/02 §5): capture the page state, *then*
+/// destroy the surface. `CefFrame::GetSource` is asynchronous and delivers the serialised DOM, which
+/// is the piece a hibernated card must not lose. MHTML with inlined resources, scroll position and
+/// storage come next; this proves the seam and the memory release.
+class SnapshotVisitor : public CefStringVisitor {
+public:
+    SnapshotVisitor(int64_t request_id, std::string path, std::string url, std::string title)
+        : request_id_(request_id),
+          path_(std::move(path)),
+          url_(std::move(url)),
+          title_(std::move(title)) {}
+
+    void Visit(const CefString& content) override {
+        const std::string html = content.ToString();
+        bool ok = false;
+        {
+            std::ofstream out(path_, std::ios::binary | std::ios::trunc);
+            if (out) {
+                out.write(html.data(), static_cast<std::streamsize>(html.size()));
+                ok = out.good();
+            }
+        }
+        if (!ok) {
+            StdioLink::Instance().ReplyError(request_id_, "internal", "could not write the snapshot");
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetString("path", path_);
+        result->SetInt("bytes", static_cast<int>(html.size()));
+        result->SetString("url", url_);
+        result->SetString("title", title_);
+        StdioLink::Instance().Reply(request_id_, result);
+        Log("[engine-host] snapshot written: %s (%zu bytes)\n", path_.c_str(), html.size());
+    }
+
+private:
+    int64_t request_id_;
+    std::string path_;
+    std::string url_;
+    std::string title_;
+
+    IMPLEMENT_REFCOUNTING(SnapshotVisitor);
+    DISALLOW_COPY_AND_ASSIGN(SnapshotVisitor);
+};
+
+/// Monotonic id for snapshot files, so two freezes never overwrite each other.
+int64_t s_snapshot_counter = 0;
 
 }  // namespace
 
@@ -476,6 +532,23 @@ int RunEngineHostServer(const HostConfig& config) {
                 }
                 state.browser->GetMainFrame()->LoadURL(command.url);
                 link.Reply(command.id);
+            } else if (command.op == "snapshot") {
+                if (!state.browser || !state.browser->GetMainFrame()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                // `<user_data>/snapshots/surface-N-M.html`: a real file the shell can verify, and
+                // later move into the content-addressed blob store.
+                std::error_code dir_error;
+                std::filesystem::create_directories(config.user_data_path + "\\snapshots",
+                                                    dir_error);
+                const std::string path = config.user_data_path + "\\snapshots\\surface-" +
+                                         std::to_string(state.surface_id) + "-" +
+                                         std::to_string(s_snapshot_counter++) + ".html";
+                CefRefPtr<SnapshotVisitor> visitor(
+                    new SnapshotVisitor(command.id, path, state.final_url, state.title));
+                state.browser->GetMainFrame()->GetSource(visitor);
+                // The reply is sent from SnapshotVisitor::Visit when the DOM arrives.
             } else if (command.op == "destroy_surface") {
                 DrainAndCloseBrowser(&state);
                 DestroyHostWindow(&state);

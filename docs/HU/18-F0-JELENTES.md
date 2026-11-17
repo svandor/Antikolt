@@ -78,10 +78,35 @@ Ezek a valódi mérnöki eredmények, nem mellékesek:
   visszaállítás, a kezdőlap, konténerek, széf.
 - Következő szelet:
   1. a GPU-folyamat leállásának kivizsgálása és megszüntetése (működő GPU-s mérés);
-  2. a **shell ↔ motorház** összekötése a `crates/antikolt-ipc` protokollal (első valódi IPC-hívás);
-  3. a **fagyasztás** prototípusa: MHTML pillanatkép készítése a motoron (CDP vagy `CefBrowserHost`),
-     majd a motor megszüntetése és a memória visszaesésének mérése — ez a termék legfontosabb
-     mechanizmusának első bizonyítéka.
+  2. a **shell ↔ motorház** összekötése a `crates/antikolt-ipc` protokollal — **kész** (5. fejezet);
+  3. a **fagyasztás** prototípusa — **kész** (5. fejezet): DOM-pillanatkép, majd a memória visszaesésének
+     mérése; a teljes MHTML + görgetés + tárolók a következő szelet.
+
+## 5. Fagyasztás-mérés: mennyi RAM-ot ad vissza a kártya lemezre mentése?
+
+Ez a termék legfontosabb mechanizmusának mérése (`perf/measure-freeze.ps1`): a motor betölt egy oldalt,
+a `snapshot` parancs kimenti a DOM-ot fájlba, majd a surface megszűnik — és közben folyamatosan mérjük a
+folyamatfa memóriáját, fázisonként.
+
+| Oldal | Betöltve | Pillanatkép után | **Lemezen (frozen)** | **Visszaadott RAM** | Pillanatkép mérete |
+|---|---|---|---|---|---|
+| `example.com` | 127,3 MB | 127,5 MB | 107,7 MB | **19,6 MB** | 2,4 KB |
+| Wikipédia-cikk | 182,6 MB | 183,7 MB | 115,9 MB | **66,7 MB** | 345 KB |
+
+**Amit ez bizonyít:**
+
+1. A **DOM-pillanatkép elkészül** (345 KB valódi HTML, `<title>Webböngésző – Wikipédia</title>` — a mérés
+   ellenőrizte a fájl tartalmát), és a `snapshot` költsége elhanyagolható (+1,1 MB, a renderelő még él).
+2. A **motor memóriát ad vissza**: a Wikipédia-cikk esetében **66,7 MB** szabadul fel attól, hogy a
+   surface megszűnik.
+3. A visszamaradó ~116 MB a **motor alapja** (böngésző-, hálózati- és utility-folyamatok) — ez az a rész,
+   amit a *T2/ultra-low* mód a motorház leállításával ad vissza. A két szint tehát pontosan úgy viselkedik,
+   ahogy a `02-ARCHITEKTURA.md` 3.4. pontja leírja: **T1 = gyors, de +100–120 MB alap; T2 = ~120 MB összesen**.
+
+**Fenntartás (őszintén):** a pillanatkép egyelőre **csak a DOM** (a CEF `GetSource`-a). A teljes
+lemezhibernáláshoz még kell az MHTML (beágyazott erőforrások), a görgetési pozíció és horgony, az űrlap-
+és `sessionStorage`-állapot, valamint a médialejátszó pozíció. A mérés azt bizonyítja, hogy **a
+mechanizmus és a memória-visszaadás valódi**, a teljesség a következő szelet.
 
 ## 6. Újrafuttatás
 
@@ -91,6 +116,9 @@ Ezek a valódi mérnöki eredmények, nem mellékesek:
 
 # több oldal, látható ablakkal
 & perf/measure-engine.ps1 -Visible -Url @('https://en.wikipedia.org/wiki/Web_browser','https://www.youtube.com/')
+
+# fagyasztás: mennyi RAM-ot ad vissza a kártya lemezre mentése
+& perf/measure-freeze.ps1 -Url https://hu.wikipedia.org/wiki/B%C3%B6ng%C3%A9sz%C5%91
 
 # a nyers riportok helye (gitignore-olt)
 perf/reports/

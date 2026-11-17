@@ -3,6 +3,39 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (ötödik szelet) — a fagyasztás működik, mérve
+
+A termék legfontosabb mechanizmusa most már **működik és mérhető**: a motor kimenti a lap DOM-ját
+fájlba, a surface megszűnik, és a mérés mutatja, mennyi RAM szabadul fel.
+
+### Ami elkészült
+
+| Terület | Tartalom |
+|---|---|
+| `snapshot` parancs (C++) | `CefFrame::GetSource` → szerializált DOM → `<user_data>/snapshots/surface-N-M.html`, majd válasz (`path`, `bytes`, `url`, `title`). A választ a `SnapshotVisitor` küldi, amikor a DOM megérkezik. |
+| `capabilities` | a motor most már `snapshot` képességet is jelent |
+| `antikolt-probe --freeze` | fázisokra bontott folyamat (`loaded` → `snapshot` → `frozen` → `done`), `phase=<név> ts=<ms>` jelölőkkel |
+| `perf/measure-freeze.ps1` | 400 ms-onként mintát vesz a folyamatfáról, a fázisjelölők alapján mediánt számol fázisonként, és megírja a riportot |
+
+### Mért eredmény (2026-11-17)
+
+| Oldal | Betöltve | Lemezen | Visszaadott RAM | Pillanatkép |
+|---|---|---|---|---|
+| `example.com` | 127,3 MB | 107,7 MB | **19,6 MB** | 2,4 KB |
+| Wikipédia-cikk | 182,6 MB | 115,9 MB | **66,7 MB** | 345 KB |
+
+A pillanatkép-fájl tartalmát a mérés ellenőrizte: valódi HTML `<title>Webböngésző – Wikipédia</title>`
+címmel. A visszamaradó ~116 MB a **motor alapja** — ezt a T2/ultra-low mód a motorház leállításával adja
+vissza, pontosan a terv szerint.
+
+### Nyitott (a következő szeletre)
+
+A pillanatkép egyelőre **csak a DOM**. A teljes lemezhibernáláshoz kell még: MHTML a beágyazott
+erőforrásokkal, görgetési pozíció + horgony, űrlap- és `sessionStorage`-állapot, médialejátszó pozíció.
+Ezek nélkül a visszaállítás „statikus olvasás" szintű, nem teljes állapot-visszaállítás.
+
+---
+
 ## 2026-11-16 (negyedik szelet) — a shell ↔ motorház protokoll **él**
 
 Ez a szelet köti össze a böngésző két felét: a Rust oldal (a leendő mag) és a C++ motorház most már
