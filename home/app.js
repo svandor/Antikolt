@@ -321,16 +321,71 @@ class AntikoltCard extends HTMLElement {
       );
     });
 
-    meta.append(dot, domain, badge);
+    // Notes are edited in place, not in a dialog: the editor is part of the card, so the card's own
+    // click (which opens it) must not fire from anything inside the editor.
+    const noteButton = document.createElement("button");
+    noteButton.type = "button";
+    noteButton.className = "note";
+    noteButton.textContent = card.notes ? "✎" : "＋";
+    noteButton.title = card.notes ? "Jegyzet szerkesztése" : "Jegyzet hozzáadása";
+
+    const editor = document.createElement("div");
+    editor.className = "note-editor";
+    editor.hidden = true;
+    const textarea = document.createElement("textarea");
+    textarea.rows = 2;
+    textarea.value = card.notes || "";
+    textarea.setAttribute("aria-label", "Jegyzet");
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "note-save";
+    save.textContent = "Mentés";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "note-cancel";
+    cancel.textContent = "Mégse";
+    // Typing must not reach the grid's keyboard navigation, and selecting text must not open the card.
+    for (const eventName of ["click", "keydown", "keyup", "pointerdown"]) {
+      textarea.addEventListener(eventName, (event) => event.stopPropagation());
+    }
+    save.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      editor.hidden = true;
+      this.dispatchEvent(
+        new CustomEvent("antikolt-note", {
+          detail: { id: this.card?.id, notes: textarea.value },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    });
+    cancel.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      textarea.value = this.card?.notes || "";
+      editor.hidden = true;
+    });
+    editor.append(textarea, save, cancel);
+    noteButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      // Open in place: a re-render would throw the typed text away.
+      editor.hidden = !editor.hidden;
+      if (!editor.hidden) textarea.focus();
+    });
+
+    meta.append(dot, domain, noteButton, badge);
     body.append(title, meta);
 
     if (card.notes) {
       const notes = document.createElement("div");
-      notes.className = "card-meta";
+      notes.className = "card-meta card-notes";
       notes.style.opacity = "0.75";
       notes.textContent = card.notes;
       body.append(notes);
     }
+    body.append(editor);
 
     article.append(preview, body);
     root.replaceChildren(style, article);
@@ -365,6 +420,13 @@ function cardStyles() {
     .badge { margin-left: auto; flex: none; }
     .pin { background: none; border: 0; padding: 0 2px; font: inherit; color: inherit; cursor: pointer; border-radius: 4px; }
     .pin:hover, .pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .note { background: none; border: 0; padding: 0 2px; margin-left: auto; font: inherit; color: inherit; cursor: pointer; border-radius: 4px; }
+    .note:hover, .note:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .badge { margin-left: 0; }
+    .note-editor { display: flex; flex-direction: column; gap: 4px; padding: 6px 0 0; }
+    .note-editor[hidden] { display: none; }
+    .note-editor textarea { width: 100%; resize: vertical; font: inherit; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+    .note-editor button { font: inherit; cursor: pointer; align-self: flex-start; }
     @media (prefers-reduced-motion: reduce) { .card { transition: none; } }
   `;
 }
@@ -487,6 +549,39 @@ class HomePage {
     }
   }
 
+  /**
+   * Save one card's note through the shell (`cards.upsert`), then re-render from the answer.
+   *
+   * Same rule as the pin: the grid shows what the core accepted, so a failed write cannot leave the card
+   * claiming a note the store does not hold.
+   */
+  async setNote(id, notes) {
+    if (!id) return;
+    const model = this.allCards.find((card) => card.id === id);
+    const record = this.coreRowById?.get(id);
+    if (!model || !record) {
+      this.lastNote = { id, notes: "", error: "nincs mag-rekord ehhez a kártyához" };
+      return;
+    }
+    if (typeof this.bridge?.cards?.upsert !== "function") {
+      this.lastNote = { id, notes: "", error: "a híd nem tud írni (nincs motor)" };
+      return;
+    }
+    const next = { ...record, notes: String(notes ?? "") };
+    try {
+      const answer = await this.bridge.cards.upsert(next);
+      const saved = answer?.card ?? next;
+      const stored = this.coreRowById.get(id);
+      if (stored) stored.notes = String(saved.notes ?? "");
+      model.notes = String(saved.notes ?? "");
+      this.lastNote = { id, notes: model.notes, error: "" };
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+    } catch (error) {
+      this.lastNote = { id, notes: "", error: String(error?.message ?? error) };
+    }
+  }
+
   bindEvents() {
     window.addEventListener("resize", () => this.onResize(), { passive: true });
     this.viewport.addEventListener("scroll", () => this.renderWindow(), { passive: true });
@@ -518,6 +613,9 @@ class HomePage {
     // The pin badge lives inside a card's shadow root, so its click arrives as a composed event from
     // the host. It is handled here, before anything else, because a pin is not an "open".
     document.addEventListener("antikolt-pin", (event) => this.togglePin(event.detail?.id));
+    document.addEventListener("antikolt-note", (event) =>
+      this.setNote(event.detail?.id, event.detail?.notes),
+    );
 
     // Delegated on the document on purpose: the pinned row lives outside `#viewport`, so a listener
     // bound there never saw a click on a pinned card — the most prominent cards were inert. One
@@ -877,4 +975,14 @@ window.antikoltPinState = () => ({
   lastId: page.lastPin?.id ?? "",
   lastPinned: page.lastPin?.pinned ?? null,
   lastError: page.lastPin?.error ?? "",
+});
+
+// The note witness: the last saved note, and the grid's own copy of it (they must agree).
+window.antikoltNoteState = () => ({
+  source: page.cardSource,
+  lastId: page.lastNote?.id ?? "",
+  notes: page.lastNote?.notes ?? "",
+  error: page.lastNote?.error ?? "",
+  cardNotes: page.cards.find((card) => card.id === page.lastNote?.id)?.notes ?? "",
+  cardsWithNotes: page.cards.filter((card) => card.notes).length,
 });

@@ -77,9 +77,9 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > tovább, a shell `bridge_reply`-vel válaszol. `PROTOCOL_VERSION` = 2, mindkét oldal ellenőrzi.
 > `--bridgetest`: `asked=ok`, `search_cards=1`, `search_first_title=Wikipedia — kezdőlap`,
 > `unknown_method=rejected`, `bridge_request=ok`.
-> **Ami hátra van:** a **jegyzet-szerkesztés** a kártyán (a csatorna kész hozzá, a pin kész van), a
-> shell-oldali válaszkötelezettség időkorlátja, és az, hogy a rács saját keresése szándékosan lokális
-> marad (a lap a teljes listát kapja).
+> **Ami hátra van:** a shell-oldali **válaszkötelezettség időkorlátja** (ha a shell nem válaszol, a lap
+> promise-a vár), a jegyzet-szerkesztő fókusz-visszaadása, és az, hogy a rács saját keresése
+> szándékosan lokális marad (a lap a teljes listát kapja).
 
 ## 4. Előnézetek
 

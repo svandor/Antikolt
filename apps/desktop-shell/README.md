@@ -99,6 +99,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   page's witness (`window.antikoltPinState`) and a fresh core client must both report the opposite of what
   the card had before, whichever direction that is — a click that changed nothing would pass a weaker
   test.
+- `--notetest` — the card's note editor writes too: the editor opens in place on the card (a re-render
+  would throw the typed text away), "Mentés" goes through `cards.upsert` to the core, and three witnesses
+  must agree — the editor's answer, the grid model and a fresh core client's record.
 - `--cleanuptest` — the policy's verdict is executed: a due row is written with `last_seen_ms: 0` and a
   `wipe` policy, the window cleans up while the grid is showing (nothing can be wiped immediately — one
   surface, I1), then the card for that origin is opened and the engine clears it. The page's own witness

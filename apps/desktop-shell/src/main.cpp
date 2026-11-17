@@ -1378,6 +1378,129 @@ int runWipeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the card's note editor writes: the editor opens in place, the save goes through the bridge to the
+/// core, and the store holds the text.
+///
+/// The text is fixed and ASCII so the script needs no escaping; the store is shared with the other checks,
+/// so the assertion compares the three witnesses (editor answer, page model, core record) rather than the
+/// store's whole shape.
+int runNoteCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    const QString probe_note = QStringLiteral("probe note");
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    QString card_id;
+    QJsonObject state;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             QTimer::singleShot(900, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "(function(){var els=document.querySelectorAll("
+                                         "'antikolt-card');if(!els.length)return 'no-card';"
+                                         "var host=els[0];"
+                                         "var b=host.shadowRoot.querySelector('.note');"
+                                         "if(!b)return 'no-note';b.click();"
+                                         "var ta=host.shadowRoot.querySelector('.note-editor textarea');"
+                                         "if(!ta)return 'no-editor';"
+                                         "if(ta.parentElement.hidden)return 'editor-hidden';"
+                                         "ta.value='probe note';"
+                                         "var s=host.shadowRoot.querySelector('.note-save');"
+                                         "if(!s)return 'no-save';s.click();"
+                                         "return 'saved:'+host.card.id;})()"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         const QString value = error.isEmpty()
+                                                                   ? reply.value(QStringLiteral("value"))
+                                                                         .toString()
+                                                                   : error;
+                                         const bool saved = value.startsWith(QStringLiteral("saved:"));
+                                         out << "note_save=" << (saved ? "ok" : "FAILED") << '\n';
+                                         if (!saved) {
+                                             out << "note_save_value=" << value << '\n';
+                                             loop.quit();
+                                             return;
+                                         }
+                                         card_id = value.mid(6);
+                                         QTimer::singleShot(1200, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id,
+                                                 QStringLiteral(
+                                                     "JSON.stringify(window.antikoltNoteState())"),
+                                                 [&](const QJsonObject& state_reply,
+                                                     const QString& state_error) {
+                                                     if (state_error.isEmpty()) {
+                                                         state = QJsonDocument::fromJson(
+                                                                     state_reply
+                                                                         .value(QStringLiteral("value"))
+                                                                         .toString()
+                                                                         .toUtf8())
+                                                                     .object();
+                                                     }
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    QString stored_notes;
+    bool found_in_core = false;
+    {
+        CoreClient verifier;
+        const QString core_dir =
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+            QStringLiteral("/core");
+        if (verifier.start(MainWindow::coreExecutable(), core_dir)) {
+            QEventLoop loop;
+            verifier.cardsList([&](const QJsonObject& listed, const QString& error) {
+                if (error.isEmpty()) {
+                    for (const QJsonValue& value :
+                         listed.value(QStringLiteral("cards")).toArray()) {
+                        const QJsonObject card = value.toObject();
+                        if (card.value(QStringLiteral("id")).toString() == card_id) {
+                            found_in_core = true;
+                            stored_notes = card.value(QStringLiteral("notes")).toString();
+                        }
+                    }
+                }
+                loop.quit();
+            });
+            QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+            loop.exec();
+            verifier.shutdown();
+        }
+    }
+
+    out << "note_id=" << card_id << '\n';
+    out << "note_page=" << state.value(QStringLiteral("notes")).toString() << '\n';
+    out << "note_model=" << state.value(QStringLiteral("cardNotes")).toString() << '\n';
+    out << "note_core=" << stored_notes << '\n';
+    out << "note_error=" << state.value(QStringLiteral("error")).toString() << '\n';
+    const bool ok = !card_id.isEmpty() && found_in_core && stored_notes == probe_note &&
+                    state.value(QStringLiteral("notes")).toString() == probe_note &&
+                    state.value(QStringLiteral("cardNotes")).toString() == probe_note &&
+                    state.value(QStringLiteral("error")).toString().isEmpty();
+    out << "note_write=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the grid can *write*: a pin click travels through the bridge to the core and persists.
 ///
 /// The page's own witness (`window.antikoltPinState`) says what the grid shows; a fresh core client says
@@ -1993,6 +2116,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("pintest"),
         QStringLiteral("Prove a pin click on the grid reaches the core, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption notetest(
+        QStringLiteral("notetest"),
+        QStringLiteral("Prove the card's note editor reaches the core, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -2009,11 +2136,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(cleanuptest);
     parser.addOption(bridgetest);
     parser.addOption(pintest);
+    parser.addOption(notetest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(notetest)) {
+        return runNoteCheck(parser.value(notetest));
     }
 
     if (parser.isSet(pintest)) {

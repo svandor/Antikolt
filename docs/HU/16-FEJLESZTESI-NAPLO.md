@@ -3,6 +3,43 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonnyolcadik szelet) — a jegyzet a kártyán írható
+
+A harmadik írási út ugyanazon a csatornán: a kártyán a **jegyzet-szerkesztő** a kártya belsejében
+nyílik (nem dialógusban), és a „Mentés” a `cards.upsert`-tel a maghoz megy. A szerkesztő **helyben**
+nyílik, nem újrarendereléssel — egy re-render eldobná a beírt szöveget. A billentyűzet- és
+egér-események `stopPropagation`-nal állnak meg a textarea határán, különben a rács nyílbillentyűs
+navigációja és a kártya „kattintásra megnyílik” viselkedése beszűrődne gépelés közben (a kettő közül az
+egyik biztos hibát okozott volna).
+
+| Terület | Tartalom |
+|---|---|
+| Kártya | `.note` gomb + `.note-editor` (textarea, Mentés, Mégse) a shadow rootban; a jegyzet szövege a body-ban |
+| Lap | `HomePage.setNote(id, notes)` → `cards.upsert`, majd újrarenderelés **a mag válaszából** |
+| Tanú | `window.antikoltNoteState()`: a mentés, a modell és a hiba egy helyen |
+| Önellenőrzés | `--notetest`: a szerkesztő kinyílik, a szöveg beíródik, a Mentés megjárja a hidat, a shellt és a magot |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --notetest <motor>
+note_save=ok
+note_id=01SEED000000000000000001
+note_page=probe note
+note_model=probe note
+note_core=probe note
+note_error=
+note_write=ok      (exit code 0)
+```
+
+Három független tanú egyezik: a szerkesztő válasza, a rács modellje és egy **friss** mag-kliens rekordja.
+
+### Ami még nyitott
+
+- A jegyzet **törlése** a Mentéssel üres szövegként megy (nincs külön „törlés” gomb).
+- A jegyzet szerkesztése közben a rács nem görgethető billentyűzettel (a fókusz a textareaé) — ez
+  szándékos, de a fókusz visszaadása a kártyának még nincs megoldva.
+
 ## 2026-11-17 (huszonhetedik szelet) — a rács ír: a pin-jelvény a magig ér
 
 A huszonhatodik szelet átadta a csatornát, de a rács még nem használta. Most a kártya **pin-jelvénye
