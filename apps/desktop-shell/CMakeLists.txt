@@ -14,6 +14,8 @@ qt_add_executable(antikolt-shell
   src/live_card.h
   src/engine_client.cpp
   src/engine_client.h
+  src/core_client.cpp
+  src/core_client.h
 )
 
 target_include_directories(antikolt-shell PRIVATE src)

@@ -3,6 +3,26 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (tizenkettedik szelet) — a shell beszél a maggal
+
+Új `CoreClient` a shellben: elindítja a `antikolt-core-service`-t, kézfog, kártyalista, kártyanyitás —
+ugyanazzal a keretezéssel, mint a motor-link. `antikolt-shell --coretest <mag>`:
+
+```
+core_start=ok
+core_name=antikolt-core   core_version=0.1.0
+cards=3
+first_id=01SEED000000000000000001
+opened_at_ms=1.7949e+12
+core_ready=ok  cards_list=ok  card_open=ok      (exit code 0)
+```
+
+Egy hiba: a `welcome` saját üzenetfajta, ezért a `hello` **kérés id-jét** visszhangozza `to` mezőben —
+enélkül a kliens örökké várt (10 s timeout, majd „a mag válaszára időtúllépés”).
+
+**Ami még nyitott:** a rács még nem ezt a listát mutatja (a híd `cards_list` válasza, perzisztens
+`cefQuery`-vel), és a magot a shell még nem indítja el automatikusan a főablak indulásakor.
+
 ## 2026-11-17 (tizenegyedik szelet) — a mag saját folyamatban: kártyák valódi tárból
 
 A shell eddig nem beszélt a Rust maggal: a kártyalista a kezdőlap mockja volt. Most elindult a mag

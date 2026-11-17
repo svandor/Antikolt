@@ -121,6 +121,8 @@ fn handle(request: &Value, store: &mut CardStore) -> (Value, bool) {
                 "version": CORE_PROTOCOL_VERSION,
                 "id": id,
                 "op": "welcome",
+                // `welcome` is its own message kind, so it echoes the request id instead of a `to`.
+                "to": id,
                 "core": { "name": "antikolt-core", "version": env!("CARGO_PKG_VERSION"),
                           "protocol": CORE_PROTOCOL_VERSION },
             }),

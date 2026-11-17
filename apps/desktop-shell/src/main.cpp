@@ -37,6 +37,7 @@
 #include <windows.h>
 #endif
 
+#include "core_client.h"
 #include "engine_client.h"
 #include "live_card.h"
 #include "main_window.h"
@@ -477,6 +478,80 @@ int runOpenCheck(const QString& enginePath) {
     return failures == 0 ? 0 : 1;
 }
 
+/// Prove the shell can talk to the core: handshake, read the card list, and record an open. The core
+/// owns the data, so this seam is where every later feature (sessions, policies) will hang.
+int runCoreCheck(const QString& corePath) {
+    QTextStream out(stdout);
+    int failures = 0;
+
+    CoreClient client;
+    const QString data_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                             QStringLiteral("/core-selftest");
+    QDir().mkpath(data_dir);
+    if (!client.start(corePath, data_dir)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    out << "core_start=ok\n";
+
+    QEventLoop loop;
+    bool ready = false;
+    int card_count = -1;
+    bool stamped = false;
+
+    QObject::connect(&client, &CoreClient::failed, &loop, [&](const QString& message) {
+        out << "core_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(&client, &CoreClient::ready, &loop, [&](const QJsonObject& info) {
+        out << "core_name=" << info.value(QStringLiteral("name")).toString() << '\n';
+        out << "core_version=" << info.value(QStringLiteral("version")).toString() << '\n';
+        ready = true;
+        client.cardsList([&](const QJsonObject& data, const QString& error) {
+            if (!error.isEmpty()) {
+                out << "cards_list=FAILED " << error << '\n';
+                loop.quit();
+                return;
+            }
+            const QJsonArray cards = data.value(QStringLiteral("cards")).toArray();
+            card_count = cards.size();
+            out << "cards=" << card_count << '\n';
+            if (cards.isEmpty()) {
+                loop.quit();
+                return;
+            }
+            const QString id = cards.first().toObject().value(QStringLiteral("id")).toString();
+            out << "first_id=" << id << '\n';
+            client.cardOpen(id, [&](const QJsonObject& opened, const QString& failure) {
+                if (!failure.isEmpty()) {
+                    out << "card_open=FAILED " << failure << '\n';
+                    loop.quit();
+                    return;
+                }
+                const QJsonObject card = opened.value(QStringLiteral("card")).toObject();
+                stamped = card.value(QStringLiteral("last_opened_at_ms")).toDouble() > 0;
+                out << "opened_at_ms=" << card.value(QStringLiteral("last_opened_at_ms")).toDouble()
+                    << '\n';
+                loop.quit();
+            });
+        });
+    });
+
+    client.handshake();
+    QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+    loop.exec();
+    client.shutdown();
+
+    out << "core_ready=" << (ready ? "ok" : "FAILED") << '\n';
+    out << "cards_list=" << (card_count > 0 ? "ok" : "FAILED") << '\n';
+    out << "card_open=" << (stamped ? "ok" : "FAILED") << '\n';
+    if (!ready || card_count <= 0 || !stamped) {
+        ++failures;
+    }
+    out.flush();
+    return failures == 0 ? 0 : 1;
+}
+
 int runSelfTest(bool with_engine, const QString& enginePath) {
     QTextStream out(stdout);
     out << "antikolt-shell " << ANTIKOLT_VERSION << '\n';
@@ -549,11 +624,20 @@ int main(int argc, char* argv[]) {
         QStringLiteral("opentest"),
         QStringLiteral("Prove the home page bridge opens a card as the live surface, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption coretest(
+        QStringLiteral("coretest"),
+        QStringLiteral("Prove the shell talks to the core service, then exit."),
+        QStringLiteral("path"));
     parser.addOption(selftest);
     parser.addOption(engine);
     parser.addOption(embedtest);
     parser.addOption(opentest);
+    parser.addOption(coretest);
     parser.process(app);
+
+    if (parser.isSet(coretest)) {
+        return runCoreCheck(parser.value(coretest));
+    }
 
     if (parser.isSet(opentest)) {
         return runOpenCheck(parser.value(opentest));
