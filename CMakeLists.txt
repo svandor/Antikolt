@@ -34,7 +34,7 @@ endif()
 
 # Qt is the shell (ADR-002). Qt Quick is required for the real UI; the first milestone only needs
 # Core/Gui/Widgets, so Quick is optional until the QML layer lands.
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network)
 find_package(Qt6 6.5 QUIET COMPONENTS Quick Qml)
 
 message(STATUS "Qt ${Qt6_VERSION} found at ${Qt6_DIR}")

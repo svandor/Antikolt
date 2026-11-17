@@ -90,6 +90,10 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
 - `--sessionpanel` — the session panel shows the core's ledger: a row is written into the service store,
   the window opens its Munkamenetek dock, and the panel's own text must contain that origin and the
   policy's verdict (`lejárt`). The window is also grabbed to a PNG, so a blank table shows up.
+- `--wipetest` — the engine can clear one origin's storage: a local `http://` origin (served by a socket
+  in the test process) writes a cookie and a localStorage entry, the test reads them, asks the engine to
+  clear them through `Storage.clearDataForOrigin`, and requires the second read to come back empty. The
+  wipe is proven by the difference, not by the reply.
 
 Requires `PATH` to contain the Qt `bin` directory (the shell links Qt dynamically).
 

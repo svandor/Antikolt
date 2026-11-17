@@ -24,6 +24,9 @@ target_link_libraries(antikolt-shell PRIVATE
   Qt6::Core
   Qt6::Gui
   Qt6::Widgets
+  # Qt Network is used by the self tests only (a local HTTP origin for the session wipe check), but the
+  # shell links it itself so a test never needs a second executable or an internet connection.
+  Qt6::Network
 )
 
 target_compile_definitions(antikolt-shell PRIVATE

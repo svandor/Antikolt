@@ -78,7 +78,7 @@ gracefully when a capability is missing, and must never assume one:
 | `capture` | core → engine | `surface`, `format`, `quality` (default 80) | `reply` (`{bytes, width, height}` plus `path`, `format`, `surface`) |
 | `snapshot` | core → engine | `surface` | `reply` (`{mhtml_bytes, integrity}`) |
 | `metrics` | core → engine | `surface` | `reply` (`{dom_nodes, js_heap_bytes, engine_working_set_bytes}`) |
-| `clear_origin_data` | core → engine | `partition`, `origin`, `storages[]` | `reply` |
+| `clear_origin_data` | core → engine | `surface`, `origin`, `storages[]` | `reply` (`{cleared: true, origin}`) |
 | `shutdown` | core → engine | — | `reply`, then the process exits |
 | `reply` | engine → core | `to`, `outcome` (`kind`: `ok`/`err`) | — |
 | `event` | engine → core | `event` | — |
@@ -156,7 +156,8 @@ live surface waits for this event.
 | `set_bounds`, `focus` | implemented (Windows windowed embedding) |
 | `snapshot`, `eval` | implemented through DevTools (MHTML + runtime state, `Runtime.evaluate`) |
 | `capture` | implemented through DevTools (`Page.captureScreenshot`; PNG/JPEG/WebP, `quality`) |
-| everything else (`scroll`, `set_zoom`, `set_media`, `metrics`, `clear_origin_data`) | answers `not_supported` until the freeze milestone |
+| `clear_origin_data` | implemented through DevTools (`Storage.clearDataForOrigin`; the plan's `indexed_db` is sent as CDP's `indexeddb`) |
+| everything else (`scroll`, `set_zoom`, `set_media`, `metrics`) | answers `not_supported` until the freeze milestone |
 
 `capture`'s reply carries more than the minimum `{bytes, width, height}` the table above promises: it also
 names the written file (`path`), the encoding (`format`) and the surface. `width`/`height` are read from

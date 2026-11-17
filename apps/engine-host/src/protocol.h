@@ -25,6 +25,7 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "include/cef_values.h"
 
@@ -39,6 +40,11 @@ struct Command {
     /// JavaScript to evaluate (`eval`), executed in the page's main world.
     std::string script;
     std::string partition;
+    /// Data control (`clear_origin_data`): the origin whose storage is cleared, and which storages —
+    /// CDP `Storage.clearDataForOrigin` identifiers such as `cookies` or `local_storage`. The Rust
+    /// contract (crates/antikolt-ipc `Message::ClearOriginData`) sends the list as an array.
+    std::string origin;
+    std::vector<std::string> storages;
     /// Screenshot encoding (`capture`): `png`, `jpeg` or `webp`. Defaults match the Rust contract
     /// (crates/antikolt-ipc `Message::Capture`), where `format` is `webp`/`png` and `quality` is 80.
     std::string format = "png";

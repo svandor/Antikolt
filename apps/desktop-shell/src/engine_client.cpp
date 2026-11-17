@@ -206,6 +206,19 @@ void EngineClient::capture(qint64 surface, const QString& format, int quality,
     send(QStringLiteral("capture"), fields, std::move(handler));
 }
 
+void EngineClient::clearOriginData(qint64 surface, const QString& origin,
+                                   const QStringList& storages, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("origin"), origin);
+    QJsonArray list;
+    for (const QString& storage : storages) {
+        list.append(storage);
+    }
+    fields.insert(QStringLiteral("storages"), list);
+    send(QStringLiteral("clear_origin_data"), fields, std::move(handler));
+}
+
 void EngineClient::destroySurface(qint64 surface, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));

@@ -72,6 +72,13 @@ public:
     /// `width`/`height` — the compositor's pixels, not a screen grab of another process's window.
     /// `format` is `png`, `jpeg` or `webp`; `quality` (0..100) only matters for the lossy ones.
     void capture(qint64 surface, const QString& format, int quality, ReplyHandler handler);
+    /// Clear one origin's storage through the engine (`Storage.clearDataForOrigin`).
+    ///
+    /// The policy is the core's (ADR-033): the shell passes the origin and the storage list a
+    /// `CleanupPlan` named, and the engine executes it in the same browser session the page lives in.
+    /// The reply carries `{cleared: true, origin}`; a rejected call comes back as an error.
+    void clearOriginData(qint64 surface, const QString& origin, const QStringList& storages,
+                         ReplyHandler handler);
     void destroySurface(qint64 surface, ReplyHandler handler = {});
     void shutdown();
 

@@ -26,6 +26,8 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTextStream>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -1052,6 +1054,140 @@ int runOpenCheck(const QString& enginePath) {
 
 /// Prove the shell can talk to the core: handshake, read the card list, and record an open. The core
 /// owns the data, so this seam is where every later feature (sessions, policies) will hang.
+/// Prove the engine can clear one origin's storage — the execution half of the 24-hour policy.
+///
+/// The origin is a real `http://` one served by a socket in this process, because storage needs an
+/// origin a page can own: `file://` has no storable origin and `data:` has an opaque one. The page
+/// writes a cookie and a localStorage entry, the test reads them back, asks the engine to clear them
+/// through `Storage.clearDataForOrigin`, and reads again — the second read must come back empty.
+int runWipeCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                            QStringLiteral("/wipe-selftest");
+    QDir(profile).removeRecursively();
+    QDir().mkpath(profile);
+
+    QTcpServer server;
+    if (!server.listen(QHostAddress::LocalHost, 0)) {
+        out << "server=FAILED " << server.errorString() << '\n';
+        return 1;
+    }
+    const QString html = QStringLiteral(
+        "<!doctype html><meta charset=\"utf-8\"><title>wipe probe</title><script>"
+        "localStorage.setItem('probe','1');document.cookie='probe=1; path=/';</script>"
+        "<h1>wipe probe</h1>");
+    QObject::connect(&server, &QTcpServer::newConnection, &server, [&server, html] {
+        while (QTcpSocket* socket = server.nextPendingConnection()) {
+            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, html] {
+                socket->readAll();
+                const QByteArray body = html.toUtf8();
+                QByteArray response =
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                    "Cache-Control: no-store\r\nConnection: close\r\nContent-Length: " +
+                    QByteArray::number(body.size()) + "\r\n\r\n" + body;
+                socket->write(response);
+                socket->disconnectFromHost();
+            });
+        }
+    });
+    const QString origin = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
+    out << "origin=" << origin << '\n';
+
+    EngineClient client;
+    if (!client.start(enginePath, profile, true)) {
+        out << "engine_start=FAILED\n";
+        return 1;
+    }
+    out << "engine_start=ok\n";
+
+    qint64 surface = 0;
+    bool cleared = false;
+    QString before;
+    QString after;
+    {
+        QEventLoop loop;
+        QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
+            out << "engine_error=" << message << '\n';
+            loop.quit();
+        });
+        QObject::connect(&client, &EngineClient::engineReady, &loop, [&](const QJsonObject&) {
+            client.createSurface(
+                QStringLiteral("persist:wipe"), 800, 600, 100, 0,
+                [&](const QJsonObject& created, const QString& error) {
+                    if (!error.isEmpty()) {
+                        out << "create_surface=FAILED " << error << '\n';
+                        loop.quit();
+                        return;
+                    }
+                    surface = static_cast<qint64>(created.value(QStringLiteral("surface")).toDouble());
+                    out << "surface=" << surface << '\n';
+                    client.navigate(surface, origin + QStringLiteral("/"));
+                });
+        });
+        QObject::connect(&client, &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int status) {
+                             if (id != surface || !url.startsWith(QStringLiteral("http://127.0.0.1"))) {
+                                 return;
+                             }
+                             out << "load_status=" << status << '\n';
+                             // Give the page's own script its moment, then read what it stored.
+                             QTimer::singleShot(300, &loop, [&] {
+                                 client.evaluate(
+                                     surface,
+                                     QStringLiteral("(localStorage.getItem('probe')||'')+'|'"
+                                                    "+document.cookie"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         if (!error.isEmpty()) {
+                                             out << "storage_read=FAILED " << error << '\n';
+                                             loop.quit();
+                                             return;
+                                         }
+                                         before = reply.value(QStringLiteral("value")).toString();
+                                         out << "storage_before=" << before << '\n';
+                                         client.clearOriginData(
+                                             surface, origin,
+                                             {QStringLiteral("cookies"),
+                                              QStringLiteral("local_storage")},
+                                             [&](const QJsonObject& result, const QString& failure) {
+                                                 if (!failure.isEmpty()) {
+                                                     out << "clear=FAILED " << failure << '\n';
+                                                     loop.quit();
+                                                     return;
+                                                 }
+                                                 cleared = result.value(QStringLiteral("cleared")).toBool();
+                                                 out << "clear=" << (cleared ? "ok" : "FAILED") << '\n';
+                                                 client.evaluate(
+                                                     surface,
+                                                     QStringLiteral("(localStorage.getItem('probe')||'')+'|'"
+                                                                    "+document.cookie"),
+                                                     [&](const QJsonObject& second, const QString& second_error) {
+                                                         if (second_error.isEmpty()) {
+                                                             after = second.value(QStringLiteral("value")).toString();
+                                                         }
+                                                         loop.quit();
+                                                     });
+                                             });
+                                     });
+                             });
+                         });
+        client.handshake();
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "storage_after=" << after << '\n';
+    // The wipe is proven by the difference, not by the reply: the data must have been readable first,
+    // and afterwards both halves must be empty — the page reads `localStorage + '|' + document.cookie`,
+    // so "gone" is exactly "|".
+    const bool ok = cleared && before.startsWith(QStringLiteral("1|")) &&
+                    before.contains(QStringLiteral("probe=1")) &&
+                    after == QStringLiteral("|");
+    out << "wipe=" << (ok ? "ok" : "FAILED") << '\n';
+    client.shutdown();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the session panel shows what the core's ledger says, and that the policy is the core's.
 ///
 /// A row is written straight into the store the window will use, then the window's panel is opened and
@@ -1408,6 +1544,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("sessionpanel"),
         QStringLiteral("Prove the session panel shows the core's ledger, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption wipetest(
+        QStringLiteral("wipetest"),
+        QStringLiteral("Prove the engine can clear one origin's storage, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption coretest(
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
@@ -1420,11 +1560,16 @@ int main(int argc, char* argv[]) {
     parser.addOption(gridtest);
     parser.addOption(lifecycletest);
     parser.addOption(sessionpanel);
+    parser.addOption(wipetest);
     parser.addOption(coretest);
     parser.process(app);
 
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+
+    if (parser.isSet(wipetest)) {
+        return runWipeCheck(parser.value(wipetest));
     }
 
     if (parser.isSet(sessionpanel)) {

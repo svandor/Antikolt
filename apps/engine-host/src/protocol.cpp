@@ -97,6 +97,21 @@ bool ParseCommand(const std::string& payload, Command* out) {
     out->url = GetString(message, "url");
     out->script = GetString(message, "script");
     out->protocol = static_cast<int>(GetNumber(message, "protocol"));
+    // Data control: the origin and the storage identifiers travel at the top level (`clear_origin_data`).
+    out->origin = GetString(message, "origin");
+    if (CefRefPtr<CefValue> storages = message->GetValue("storages")) {
+        if (storages->GetType() == VTYPE_LIST) {
+            CefRefPtr<CefListValue> list = storages->GetList();
+            if (list) {
+                for (size_t index = 0; index < list->GetSize(); ++index) {
+                    const std::string storage = list->GetString(index).ToString();
+                    if (!storage.empty()) {
+                        out->storages.push_back(storage);
+                    }
+                }
+            }
+        }
+    }
 
     out->format = GetString(message, "format");
     if (out->format.empty()) {

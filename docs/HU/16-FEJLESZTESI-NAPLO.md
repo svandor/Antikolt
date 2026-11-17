@@ -3,6 +3,50 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (huszonnegyedik szelet) — a wipe végrehajtása (a motor töröl, nem csak dönt)
+
+A huszonkettedik szelet a döntést tette le, a huszonharmadik megmutatta; ez a szelet **végrehajt**.
+A motor eddig `not_supported`-ot adott a `clear_origin_data`-ra — most a `Storage.clearDataForOrigin`
+DevTools-metódust hívja, ugyanazon a `DevToolsCall`-on, mint a pillanatkép, a capture és az eval, tehát
+a takarítás nem egy második, párhuzamos út a Chromium felé (ADR-029).
+
+| Terület | Tartalom |
+|---|---|
+| Motor | `ClearOriginCall` (`Storage.clearDataForOrigin`, a terv tárhely-neveivel), `not_supported` helyett valódi végrehajtás; ismeretlen CDP-nevet naplóz |
+| Név-egyeztetés | a terv `indexed_db`-je → CDP `indexeddb`; a többi átmegy (a Chromium az ismeretleneket figyelmen kívül hagyja, ezért a napló mondja meg) |
+| Huzal | `clear_origin_data` válasza `{cleared: true, origin}`; a `Command` most `origin` + `storages[]` mezőt is olvas |
+| Shell | `EngineClient::clearOriginData(surface, origin, storages, handler)` |
+| Önellenőrzés | `--wipetest`: **valódi `http://` origin** egy helyi socketről (a `file://`-nak nincs, a `data:`-nak opak origója van), süti + localStorage írás, olvasás, törlés, újraolvasás |
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --wipetest <motor>
+origin=http://127.0.0.1:49673
+engine_start=ok
+surface=1
+load_status=200
+storage_before=1|probe=1
+clear=ok
+storage_after=|
+wipe=ok      (exit code 0)
+```
+
+A bizonyíték a **különbség**, nem a válasz: előbb olvashatónak kell lennie (`1|probe=1`), utána mindkét
+tárolónak üresnek (`|` = üres localStorage + üres süti). A helyi HTTP-origin miatt a teszt nem függ a
+hálózattól — ehhez a shell most megkapja a `Qt6::Network`-öt (csak a tesztekhez, egy socket a saját
+processzben).
+
+### Ami még nyitott
+
+- A **panelről indított takarítás** még nincs: a `clear_origin_data` élő felületet vár (az adott
+  partíció böngészőjét), a panel viszont nem nyit kártyát. A végrehajtás a következő szelet: a due sor
+  kártyájának megnyitása (háttérben), törlés, majd vissza a rácsra.
+- A `session_storage` és a `code_cache` a CDP-ben nem külön típus: a `sessionStorage` a lap eldobásával
+  megy el (ezt a hibernálás már megteszi), a `code_cache` pedig a `cache_storage` része. A napló ezt
+  kimondja, a kód nem hazudik róla.
+- A `scroll`, `set_zoom`, `set_media`, `metrics` opok továbbra is `not_supported`-ot adnak.
+
 ## 2026-11-17 (huszonharmadik szelet) — a Munkamenetek panel
 
 A huszonkettedik szelet huzalja kész volt, de semmi nem mutatta meg. Ez a szelet a **látható** felét

@@ -827,6 +827,84 @@ private:
     DISALLOW_COPY_AND_ASSIGN(EvalCapture);
 };
 
+/// CDP's storage identifiers differ from the cleanup plan's names in exactly one place today: the plan
+/// calls IndexedDB `indexed_db`, the protocol calls it `indexeddb`. Everything else passes through, and
+/// Chromium ignores identifiers it does not know — which is why an unmapped one is logged here instead
+/// of being silently dropped.
+std::string ToCdpStorageType(const std::string& storage) {
+    if (storage == "indexed_db") {
+        return "indexeddb";
+    }
+    return storage;
+}
+
+/// Clear one origin's storage through DevTools (`Storage.clearDataForOrigin`).
+///
+/// This is the engine half of the 24-hour session policy (ADR-033): the core decides *whether* a wipe is
+/// due and *which* storages a plan touches, and this host only executes it — through the same
+/// `DevToolsCall` the snapshots, screenshots and evaluations use, so a session wipe is not a second,
+/// parallel way of talking to Chromium. `Storage.clearDataForOrigin` succeeds on an origin that owns
+/// nothing, so "cleared" is honestly "the protocol accepted it", not "there was data".
+class ClearOriginCall : public CefBaseRefCounted {
+public:
+    ClearOriginCall(int64_t request_id, std::string origin, std::vector<std::string> storages)
+        : request_id_(request_id), origin_(std::move(origin)), storages_(std::move(storages)) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("origin", origin_);
+        std::string types;
+        for (const std::string& storage : storages_) {
+            if (!types.empty()) {
+                types += ",";
+            }
+            types += ToCdpStorageType(storage);
+        }
+        // CDP takes one comma-separated list; an empty list means "every storage this origin owns".
+        if (!types.empty()) {
+            params->SetString("storageTypes", types);
+        }
+        // The call holds the only reference to this object, so the object cannot be freed while its own
+        // handler is running — the same lifetime rule `DevToolsCall` documents.
+        CefRefPtr<ClearOriginCall> self(this);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Storage.clearDataForOrigin", params,
+            [self](CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+                self->OnCleared(browser, reply);
+            }));
+        if (!call->Start(browser)) {
+            return false;
+        }
+        return true;
+    }
+
+private:
+    void OnCleared(CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+        (void)browser;
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetString("origin", origin_);
+        if (reply.ok()) {
+            result->SetBool("cleared", true);
+            Log("[engine-host] cleared origin data for %s (%zu storage types)\n", origin_.c_str(),
+                storages_.size());
+            StdioLink::Instance().Reply(request_id_, result);
+            return;
+        }
+        // A rejected call is the caller's fault; a transport or parse failure is the engine's.
+        const char* code = reply.from_protocol ? "invalid_argument" : "not_supported";
+        Log("[engine-host] clear_origin_data failed for %s: %s\n", origin_.c_str(),
+            reply.error.c_str());
+        StdioLink::Instance().ReplyError(request_id_, code, reply.error.c_str());
+    }
+
+    int64_t request_id_;
+    std::string origin_;
+    std::vector<std::string> storages_;
+
+    IMPLEMENT_REFCOUNTING(ClearOriginCall);
+    DISALLOW_COPY_AND_ASSIGN(ClearOriginCall);
+};
+
 }  // namespace
 
 void EngineApp::OnBeforeCommandLineProcessing(const CefString& process_type,
@@ -1337,6 +1415,24 @@ int RunEngineHostServer(const HostConfig& config) {
                     state.browser->GetMainFrame()->GetSource(visitor);
                 }
                 // The reply is sent by the capture object when the payload arrives.
+            } else if (command.op == "clear_origin_data") {
+                if (!state.browser || !state.browser->GetMainFrame()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                if (command.origin.empty()) {
+                    link.ReplyError(command.id, "invalid_argument",
+                                    "clear_origin_data needs an origin");
+                    continue;
+                }
+                CefRefPtr<ClearOriginCall> clear(new ClearOriginCall(
+                    command.id, command.origin, command.storages));
+                if (!clear->Start(state.browser)) {
+                    Log("[engine-host] DevTools unavailable: cannot clear origin data\n");
+                    link.ReplyError(command.id, "not_supported",
+                                    "clearing origin data needs the DevTools protocol");
+                }
+                // The reply is sent by the call itself once the protocol answered.
             } else if (command.op == "capture") {
                 if (!state.browser || !state.browser->GetMainFrame()) {
                     link.ReplyError(command.id, "surface_not_found", "no live surface");
