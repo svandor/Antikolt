@@ -13,7 +13,7 @@ preferenciádat** igénylik. Minden döntés a `05-DONTESEK.md`-ben ADR-ként is
 | Q4 | Meleg motor vagy leállított? | **Profilok** (Gyors / Kiegyensúlyozott / Takarékos / Ultra / Kézi), automatikus váltással; a mérés dönt | `09` 3. fejezet, ADR-020 |
 | Q5 | Natív ablak vagy OSR? | **Windows: natív ablak; Linux/Wayland: OSR** — ugyanazon absztrakció mögött | `11-OSR.md`, ADR-022 |
 | Q8 | 24 órás törlés | **`keep` / `sweep` / `wipe` politika**; a bejelentkezés alapból megmarad, mert az nem RAM-ban él | `10-MUNKAMENET.md`, ADR-009 |
-| Q9 | Passkey kell-e? | **v1.0: nincs; v1.1: szoftveres passkey a széfben** (CDP-út), hardveres csak később — a CEF-nek nincs beépített WebAuthn-je | `12-PASSKEY.md`, ADR-023 |
+| Q9 | Passkey kell-e? | **v1.0: szoftveres passkey a széfben** (CDP-út, ADR-027), hardveres csak később — a CEF-nek nincs beépített WebAuthn-je | `12-PASSKEY.md`, ADR-027 |
 | Q10 | Licenc | **MPL-2.0**, dinamikusan linkelt Qt, BSD-3 CEF, DCO, AI-nyilatkozat | `13-LICENC.md`, ADR-014 |
 | Q14 | Kódaláírás | **SignPath Foundation** (ingyenes, OSI-licenchez) + **Ed25519/minisign** frissítés-aláírás; EV nem (2024 óta nincs előnye) | `14-KODALAS.md`, ADR-024 |
 

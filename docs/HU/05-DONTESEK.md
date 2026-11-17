@@ -3,6 +3,36 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-027 — A passkey a v1.0 része, nem v1.1 (2026-11-17)
+
+**Kontextus.** A felhasználónak vannak regisztrált passkey-ei (az Ügyfélkapu is erre épül), és
+kimondta: a passkey fontos. A korábbi sorrend (v1.1 szoftveres passkey) a passkey nélküli v1.0-hoz
+vezetett volna, ami a felhasználó számára nem „elég jó böngésző", hanem egy olyan, amibe nem tud
+belépni a saját fiókjaiba.
+
+**Döntés.** A **szoftveres passkey v1.0-hatókör**, a `12-PASSKEY.md` „B" útja szerint:
+CEF + CDP `WebAuthn.enable` / `WebAuthn.addVirtualAuthenticator` (CTAP2, platform authenticator,
+`automaticPresenceSimulation`), a hitelesítő adatok a **széfben** tárolva
+(`WebAuthn.getCredentials` / `setCredential`), a széf feloldásához kötve. Hardveres kulcs (FIDO2 USB)
+továbbra is későbbi: a CEF-nek nincs beépített WebAuthn-je, azt a CDP-úton kell adni.
+
+**Következmény.** A `capture`/DevTools réteg kap egy új fogyasztót, és a széf (ADR a titkosított
+tárról) **nem tolható** a passkey után — a kettő egy szeletben kell. A sorrend tehát:
+DevTools-infrastruktúra → széf → passkey → autofill/TOTP.
+
+## ADR-028 — A lemezkvóta állítható, alapértéke 50 GB (2026-11-17)
+
+**Kontextus.** A korábbi válasz: „inkább 50 GB, de felülbírálható". A felhasználó most pontosított:
+**legyen állítható**.
+
+**Döntés.** A kvóta **felhasználói beállítás** (eszközönként), alapértéke 50 GB, felső korlát a szabad
+lemezterület mínusz biztonsági sáv; a beállítás a magban él (nem a shellben), mert a mag dönt a
+hibernálásról. A kvóta túllépése nem hiba, hanem **leszorítási szabály**: a legrégebben megnyitott
+kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
+
+**Következmény.** A `03-MEMORIA.md` költségvetése és a `session`/`snapshot` nyilvántartás egy
+`quota_bytes` beállítást kap; a shell csak megjeleníti.
+
 | # | Döntés | Állapot |
 |---|---|---|
 | ADR-001 | Egyetlen élő webes nézet | Elfogadva |
