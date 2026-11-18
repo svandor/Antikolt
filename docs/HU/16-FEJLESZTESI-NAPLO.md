@@ -16,6 +16,66 @@ workerek; `loses_login`), és a panel hatodik oszlopa ezt írja ki: `7 süti · 
 panel_row=https://example.org | expired | sweep | 7 | lejárt | 7 süti · 5.0 kB
 session_panel=ok
 ```
+## 2026-11-17 (negyvenkilencedik szelet) — hordozható build, parancsikon, Release, ikon, auto-indítás
+
+Nyolc szelet egy blokkban (42–49), mert a napló-bejegyzések beszúrása csendben elmaradt — a
+`Replace` horgonyai nem találtak (a napló fejlécei más sorszámozásúak voltak), és a "docs written" üzenet
+ellenére a fájl nem változott. Ez a bejegyzés pótolja, a **tényekkel**, nem az eredeti szándékkal.
+
+### 42. A panel mutatja, mennyi veszne el
+`session_list` sorai hordozzák a mag által mért mennyiséget (`size`) és a `loses_login` jelzőt; a panel
+hatodik oszlopa: `7 süti · 5.0 kB`, bejelentkezett sornál `· belépés`. Bizonyíték: `--sessionpanel`
+`panel_row=… | 7 süti · 5.0 kB`, `session_panel=ok`.
+
+### 43. A mentett jegyzet megjelenik (és a fókusz)
+A kártya újrarenderelési **aláírásából hiányzott a jegyzet**, ezért a mentett jegyzet nem frissült a
+képernyőn. Az aláírás most tartalmazza; a fókusz-visszaadás implementálva (render utáni, id-alapú). A fókusz
+**mérése** nem lehetséges a teszt-ablak fókusz-hiánya miatt (`note_focus=none` / `document.activeElement`
+sem létezik) — a próba állítás nélkül marad, ez a naplóban is szerepel.
+
+### 44. Hordozható build + asztali parancsikon (`scripts/dist.ps1`)
+`dist\Antikolt`: shell + motorház + mag + lap + Qt (`windeployqt`) + CEF futtatókörnyezet, és desktop
+parancsikon. Két hiba csak itt derült ki: a CEF **erőforrásai külön mappában** vannak (`Resources\`:
+`icudtl.dat`, `*.pak`, `locales\`), és a lap a hordozható mappában `appDir\home`. Bizonyíték a csomagból:
+`grid_source=core`, `grid_count=6`, `grid_matches_core=ok`, `grid_click_open=ok` (exit 0), 443 MB.
+
+### 45. Saját ikon
+`assets/antikolt.ico` (négy méret, kódból generálva), `--selftest` → `icon=ok`, a parancsikon
+`IconLocation`-ja erre mutat.
+
+### 46. `--capturetest` lezárási összeomlás javítva
+`0xC0000005` az eredmények kiírása **után**, 4 futásból 1-szer: a `destroy_surface` válasza egy megszűnő
+klienshez érkezett. A teszt most megvárja a választ (max. 2 s). Mérés: **8/8 futás zöld**.
+
+### 47. Release csomag (`dist.ps1 -Release`)
+Külön `build-release\` (`-Config Release`), `cargo build --release`; a fejlesztői `build\` érintetlen.
+Tanulság: a `cmake` nincs a héj PATH-ján — a script ezért a `build.ps1`-t hívja, nem duplikálja az
+eszközláncot. A `check-repo` és a `.gitignore` most a `build-release\`-t is generált kimenetnek veszi
+(ezért lett az SPDX-szám 55 → **52**, ami a helyes érték).
+
+### 48. Dupla kattintás = böngésző
+Sima indításnál a motor **magától** elindul (a „Motor indítása" gomb csak leállt motor esetén kell).
+Bizonyíték a csomagból, kapcsolók nélkül: `protocol server ready`, `op=hello`, `op=install_bridge`.
+
+### 49. Start menü + abszolút útvonalak
+A `dist.ps1` Start menü bejegyzést is ír (ugyanaz a `.lnk`), és a célmappát teljes útvonalra normalizálja —
+a parancsikon ikonja korábban `…\scripts\..\dist\…` volt.
+
+### A kapu állapota
+
+```
+scripts/verify.ps1  →  27/27 önteszt, ALL SELF TESTS PASSED
+cargo test          →  78 teszt
+check-repo          →  ALL CHECKS PASSED (52 SPDX fájl)
+```
+
+### Ami még hátra van
+
+- **Aláírás + telepítő** (SmartScreen az aláíratlan exe-nél; kód-aláíró tanúsítvány kell hozzá);
+- funkcionális maradék: háttér-előnézetek (I1), memória-büdzsé (F6), kártyánkénti munkamenet-felülírás,
+  a takarítás média-kivétele, Linux/Wayland (F7), széf/passkey;
+- a fókusz és a rendered-jegyzet mérése (a helyes mérési mód a naplóban).
+
 ## 2026-11-17 (negyvenegyedik szelet) — mennyi veszne el: `SessionSize`
 
 A `LossEstimate` már létezett, de az a **súrlódást** írja le (jelszó, TOTP, captcha) — nem az **mennyiséget**.
