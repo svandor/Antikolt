@@ -141,6 +141,11 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > tehát nem a teszt időzítése, hanem a **második push vizsgálata**: kap-e a másodszor betöltött rácslap
 > kártyalistát (a `pushCardsToGrid` lefut-e, és a lap `antikoltAcceptCards`-a elfogadja-e a második listát).
 > Ez valódi termék-kérdés, nem teszt-kérdés — ezért a bukó ellenőrzés nincs a kapuban.
+> **A `6d649f7` javítás igazolva:** a harmadik futásban a második rács **megtalálta** a kártyát
+> (`clicked`, nem `no-card`) — a lökés tehát lefut. A visszaállítás mérése viszont még mindig nem fejeződik
+> be a 90 s-os kereten belül (a második kártyalátogatás `loadFinished`-je nem érkezik meg a mérésig), tehát a
+> következő lépés a **második kártyanyitás** útjának vizsgálata (a `openCard`/`ensureSurface` sorrend a
+> rács-visszatérés után), nem a teszt időzítése.
 > (b) gesztus-alapú görgetés (belső konténer).
 
 ## 5. Széf és passkey
