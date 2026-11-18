@@ -185,3 +185,15 @@ Javítás: a teszt megvárja a `destroy_surface` válaszát (max. 2 s), és csak
 - `scripts/check-repo.ps1` — a CI kapuja (SPDX, linkek, higiénia, `node --check`, `cargo fmt/clippy/test`).
 - A motor naplója a shell `stderr`-jén: `[shell] info: [engine] [engine-host] …` — itt látszik minden
   protokoll-op, DevTools-hívás és lap-`console` üzenet.
+
+## 8. Kiadás és aláírás (ADR-040)
+
+| Elem | Állapot |
+|---|---|
+| Hordozható build + asztali/Start menü parancsikon | kész (`scripts/dist.ps1`, `-Release`) |
+| Saját ikon | kész (`assets/antikolt.icon`, `--selftest` → `icon=ok`) |
+| Aláírás-eszköz | kész (`scripts/sign.ps1`: PFX / thumbprint / self-signed / `-VerifyOnly`) |
+| Release workflow | **scaffold** (`.github/workflows/release.yml`, soha nem futott) |
+| **MSIX csomag** | kész (`scripts/msix.ps1`, `payload=ok`, 200.8 MB) |
+| Store Identity + helyi telepítés | hátra (Partner Center; tanúsítvány-kötelezettség) |
+| SignPath jelentkezés | emberi lépés (publikus repó + elbírálás) |

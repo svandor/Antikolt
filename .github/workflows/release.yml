@@ -41,6 +41,12 @@ jobs:
           # The release configuration, the CEF runtime and the Qt deployment, in one folder.
           pwsh -File scripts/dist.ps1 -Release -NoBuild -Shortcut:$false
 
+      - name: Store package (MSIX, signed by Microsoft after certification)
+        shell: pwsh
+        run: |
+          # The Store channel of ADR-040: the same payload, packed for submission. No certificate of ours is
+          # involved in a Store release - Partner Center re-signs it after certification.
+          pwsh -File scripts/msix.ps1
       - name: Package for verification
         shell: pwsh
         run: |
@@ -83,6 +89,7 @@ jobs:
           name: antikolt-windows
           path: |
             Antikolt-*.zip
+            dist/Antikolt.msix
             dist/Antikolt/README.txt
 
       - name: Attach to the draft release

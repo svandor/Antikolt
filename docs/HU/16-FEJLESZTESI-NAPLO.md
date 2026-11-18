@@ -16,6 +16,36 @@ workerek; `loses_login`), és a panel hatodik oszlopa ezt írja ki: `7 süti · 
 panel_row=https://example.org | expired | sweep | 7 | lejárt | 7 süti · 5.0 kB
 session_panel=ok
 ```
+## 2026-11-17 (ötvenedik szelet) — MSIX: a Store-ág csomagja
+
+Az ADR-040 két csatornát rögzít; a Store-ághoz eddig csak a döntés volt meg, csomag nem. Elkészült a
+`packaging\msix\AppxManifest.xml` (full-trust Win32 csomag, `internetClient` + `runFullTrust`, öt generált
+csempélő- és splash-kép) és a `scripts\msix.ps1`, ami a `dist\Antikolt` mappát **változtatás nélkül**
+becsomagolja, `makeappx`-szel, és a végén **visszafejtéssel ellenőrzi**, hogy a három folyamat, a lap és a CEF
+futtatókörnyezet benne van.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+pwsh -File scripts/msix.ps1
+  packed   : 200.8 MB
+  payload  : complete
+  msix=D:\Szerver\Antikolt\dist\Antikolt.msix size_mb=200.8 payload=ok
+  exit 0
+```
+
+A csomag tömörítve 200.8 MB (a hordozható mappa 442 MB), a payload ellenőrzése: `antikolt-shell.exe`,
+`antikolt-engine-host.exe`, `antikolt-core-service.exe`, `AppxManifest.xml`, `home\index.html`, `libcef.dll`,
+`icudtl.dat` — mind megvan a visszafejtett csomagban.
+
+### Ami még hátra van (Store-ág)
+
+- **Identity a Partner Centertől**: az `Identity` (`Name`, `Publisher`, `Version`) most helyőrző; a Store a
+  beküldéskor adja a valós értékeket, és a `Publisher`-nek egyeznie kell az aláíró tanúsítvánnyal.
+- **Helyi telepítési teszt**: `Add-AppxPackage` csak akkor működik, ha a tanúsítvány megbízható a gépen —
+  ebben a környezetben a tanúsítványtár írása tiltott (lásd `20-ALASAS.md`), tehát a telepítés **nincs
+  igazolva**, csak a csomagolás és a payload.
+- **Beküldés**: fiók + Store-ellenőrzés (emberi lépés).
 ## 2026-11-17 (negyvenkilencedik szelet) — hordozható build, parancsikon, Release, ikon, auto-indítás
 
 Nyolc szelet egy blokkban (42–49), mert a napló-bejegyzések beszúrása csendben elmaradt — a
