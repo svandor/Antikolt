@@ -3,6 +3,39 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harminckilencedik szelet) — a kártya helye: hol hagyta abba az olvasó
+
+A kártyát újranyitva a lap tetején kezdtünk: egy hosszú cikkben ez nem „visszatérés", hanem elveszett hely.
+Most a shell megjegyzi kártyánként a görgetési pozíciót a profil `scroll.json`-jában
+(`previews.h` mintájára `scroll_book.h`: `loadScrollBook`, `scrollPositionFor`, `saveScrollPosition`), a kártya
+elhagyásakor (`openCard`/`loadHome`) megkérdezi a motortól a `window.scrollY`-t, és visszatéréskor
+visszaállítja.
+
+**Miért nem a kártya-rekordon?** Mert ez minden látogatáskor változik, a rekord pedig a felhasználó adata —
+nem írjuk át csak azért, mert valaki görgetett. A nulla pozíció **törli** a bejegyzést, tehát a könyv csak
+olyan helyeket tart, amik jelentenek valamit.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --scrollbook
+scroll_before=0
+scroll_a=640
+scroll_b=120
+scroll_a_after_top=0      ← a tetejére állás törli a bejegyzést
+scroll_b_after_top=120    ← ...és nem viszi magával a másik kártyát
+scroll_reloaded=120       ← lemezről újraolvasva is megvan
+scroll_book=ok      (exit code 0)
+```
+
+A bekötést a meglévő kártyanyitó tesztek fedik (`--opentest`, `--scrollzoomtest`: a kártya továbbra is
+megnyílik és görgethető a visszaállítás mellett); **önálló end-to-end teszt** a visszaállításra még nincs —
+ez a következő szelet.
+
+### Ami még nyitott
+
+- End-to-end teszt: kártya megnyitása → görgetés → haza → újranyitás → ugyanott folytatja.
+- Kártyánkénti munkamenet-felülírás, `LossEstimate`, memória-büdzsé (F6).
 ## 2026-11-17 (harmincnyolcadik szelet) — az előnézet-gyártás napi büdzséje tartós
 
 A ≤100/nap korlát eddig futás-szintű számláló volt: újraindítás után nulláról kezdett, tehát nem korlát.

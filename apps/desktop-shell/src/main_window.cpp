@@ -32,6 +32,7 @@
 #include "core_client.h"
 #include "engine_client.h"
 #include "previews.h"
+#include "scroll_book.h"
 #include "live_card.h"
 
 namespace {
@@ -154,6 +155,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 // is the moment to wipe it — on its own surface, with the plan's storage list.
                 live_origin_ = originOfUrl(url);
                 producePreview(surface);
+                // The reader's place: a card is a place, and the top of a long article is not where they left
+                // it. The offset was remembered when this card was left (see rememberScroll).
+                if (!current_card_id_.isEmpty()) {
+                    const int remembered =
+                        antikolt::scrollPositionFor(scrollBookPath(), current_card_id_);
+                    if (remembered > 0) {
+                        engine_->scroll(surface, 0, remembered, false, nullptr);
+                    }
+                }
                 const auto queued = wipe_on_open_.find(live_origin_);
                 if (live_origin_.isEmpty() || queued == wipe_on_open_.end()) {
                     return;
@@ -528,6 +538,7 @@ void MainWindow::ensureSurface() {
 }
 
 void MainWindow::openCard(const QString& url, const QString& title) {
+    rememberScroll();
     if (url.isEmpty()) {
         setStatus(QStringLiteral("a kártyának nincs címe"));
         return;
@@ -587,6 +598,7 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
         }
         pending_pinned_ = args.value(QStringLiteral("pinned")).toBool();
         pending_card_id_ = args.value(QStringLiteral("id")).toString();
+        current_card_id_ = pending_card_id_;
         openCard(url, title);
         // An acknowledgement, not a result: the card loads asynchronously and the page follows it
         // through the grid. Answered anyway, so a page that awaits never hangs.
@@ -728,6 +740,7 @@ void MainWindow::pushCardsToGrid(qint64 surface) {
 }
 
 void MainWindow::loadHome() {
+    rememberScroll();
     if (!engine_->isRunning()) {
         setStatus(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot"));
         return;
@@ -874,6 +887,26 @@ void MainWindow::setPageMedia(const QString& media) {
     });
 }
 
+QString MainWindow::scrollBookPath() const {
+    return engine_profile_.isEmpty() ? QString()
+                                     : engine_profile_ + QStringLiteral("/scroll.json");
+}
+
+void MainWindow::rememberScroll() {
+    if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0 || current_card_id_.isEmpty() ||
+        engine_profile_.isEmpty()) {
+        return;
+    }
+    const QString card_id = current_card_id_;
+    engine_->evaluate(surface_, QStringLiteral("String(Math.round(window.scrollY))"),
+                      [this, card_id](const QJsonObject& reply, const QString& error) {
+                          if (!error.isEmpty()) {
+                              return;
+                          }
+                          const int y = reply.value(QStringLiteral("value")).toString().toInt();
+                          antikolt::saveScrollPosition(scrollBookPath(), card_id, y);
+                      });
+}
 void MainWindow::producePreview(qint64 surface) {
     if (pending_card_id_.isEmpty() || engine_profile_.isEmpty() || previews_made_ >= kPreviewCap) {
         return;

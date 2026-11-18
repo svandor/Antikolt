@@ -102,6 +102,10 @@ public:
     void saveSessionRules();
     /// Delete preview files whose card no longer exists (ADR-035). Runs with the cleanup round.
     void cleanupPreviews();
+    /// Where this browser keeps the per-card scroll positions (`scroll.json` in the profile).
+    QString scrollBookPath() const;
+    /// Remember the live card's offset before it is left (the grid is a place too).
+    void rememberScroll();
     /// The panel's rule editors as the user sees them (self test witnesses).
     int sessionPanelTtlHours() const;
     bool sessionPanelLockWipe() const;
@@ -195,6 +199,8 @@ private:
     QString engine_profile_;
     /// The card the page asked to open (the request carries its id), used to name its preview.
     QString pending_card_id_;
+    /// The card currently on screen, for the scroll book (it outlives `pending_card_id_`).
+    QString current_card_id_;
     /// How many previews this run has produced; the cap keeps a long browsing session from filling the
     /// disk with screenshots.
     int previews_made_ = 0;

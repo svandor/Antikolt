@@ -24,6 +24,7 @@
 #include <QImage>
 #include <QPixmap>
 #include "previews.h"
+#include "scroll_book.h"
 #include <functional>
 #include <QRegularExpression>
 #include <QScreen>
@@ -2356,6 +2357,41 @@ int runPinCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove where-the-reader-stopped is remembered per card, and forgotten when they return to the top.
+///
+/// The book is a file, so the check is a scratch file: a positive offset survives, a zero forgets, and two
+/// cards do not overwrite each other.
+int runScrollBookCheck() {
+    QTextStream out(stdout);
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                        QStringLiteral("/scroll-book-selftest");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    const QString path = dir + QStringLiteral("/scroll.json");
+
+    const int before = antikolt::scrollPositionFor(path, QStringLiteral("card-a"));
+    antikolt::saveScrollPosition(path, QStringLiteral("card-a"), 640);
+    antikolt::saveScrollPosition(path, QStringLiteral("card-b"), 120);
+    const int a = antikolt::scrollPositionFor(path, QStringLiteral("card-a"));
+    const int b = antikolt::scrollPositionFor(path, QStringLiteral("card-b"));
+    antikolt::saveScrollPosition(path, QStringLiteral("card-a"), 0);
+    const int a_after_top = antikolt::scrollPositionFor(path, QStringLiteral("card-a"));
+    const int b_after_top = antikolt::scrollPositionFor(path, QStringLiteral("card-b"));
+    // Re-reading from disk is the point: the book must survive the process, not just a QHash.
+    const int reloaded = antikolt::loadScrollBook(path).value(QStringLiteral("card-b"), 0);
+
+    out << "scroll_before=" << before << '\n';
+    out << "scroll_a=" << a << '\n';
+    out << "scroll_b=" << b << '\n';
+    out << "scroll_a_after_top=" << a_after_top << '\n';
+    out << "scroll_b_after_top=" << b_after_top << '\n';
+    out << "scroll_reloaded=" << reloaded << '\n';
+    const bool ok = before == 0 && a == 640 && b == 120 && a_after_top == 0 && b_after_top == 120 &&
+                    reloaded == 120;
+    out << "scroll_book=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
 /// Prove the daily budget persists: it counts, it refuses, and a new day starts at zero.
 ///
 /// The budget is a file in the profile, so the check is a scratch directory and two day strings - a counter
@@ -3113,6 +3149,8 @@ int main(int argc, char* argv[]) {
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption scrollbook(QStringLiteral("scrollbook"),
+                                        QStringLiteral("Prove the scroll book, then exit."));
     const QCommandLineOption previewbudget(QStringLiteral("previewbudget"),
                                          QStringLiteral("Prove the daily preview budget, then exit."));
     const QCommandLineOption previewrefresh(QStringLiteral("previewrefresh"),
@@ -3154,6 +3192,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(previewclean);
     parser.addOption(previewrefresh);
     parser.addOption(previewbudget);
+    parser.addOption(scrollbook);
     parser.addOption(coretest);
     parser.process(app);
 
@@ -3179,6 +3218,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(previewbudget)) {
         return runPreviewBudgetCheck();
+    }
+
+    if (parser.isSet(scrollbook)) {
+        return runScrollBookCheck();
     }
 
     if (parser.isSet(mediatest)) {

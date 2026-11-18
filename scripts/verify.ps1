@@ -133,6 +133,13 @@ if (-not $shell -or -not $engine -or -not $core) {
     Add-Result 'sessionpanel' ($LASTEXITCODE -eq 0)
 }
 
+Write-Host '=== scrollbook ===' -ForegroundColor Cyan
+if (-not $shell) {
+    Add-Result 'scrollbook' $false 'missing antikolt-shell.exe'
+} else {
+    & $shell --scrollbook
+    Add-Result 'scrollbook' ($LASTEXITCODE -eq 0)
+}
 Write-Host '=== previewbudget ===' -ForegroundColor Cyan
 if (-not $shell) {
     Add-Result 'previewbudget' $false 'missing antikolt-shell.exe'
