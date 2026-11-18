@@ -197,3 +197,18 @@ Javítás: a teszt megvárja a `destroy_surface` válaszát (max. 2 s), és csak
 | **MSIX csomag** | kész (`scripts/msix.ps1`, `payload=ok`, 200.8 MB) |
 | Store Identity + helyi telepítés | hátra (Partner Center; tanúsítvány-kötelezettség) |
 | SignPath jelentkezés | emberi lépés (publikus repó + elbírálás) |
+
+## 9. A következő szelet receptje: a háttér-előnézet munkása (`--previewworkertest`)
+
+Az ADR-041 dönt és a `previews.h` őrök készen vannak; a végrehajtás lépései, hogy ne kelljen újra levezetni:
+
+1. **Állapot** a `MainWindow`-ban: `PreviewWorker worker_state_ = Idle; qint64 worker_surface_ = 0; QString worker_card_id_; QTimer* worker_deadline_` (8 s, egy lövés).
+2. **Indítás** (`startPreviewWorker(const QString& id, const QString& url)`):
+   `previewWorkerCanStart(worker_state_, card_->hasSurface(), previewBudgetAllows(...), !id.isEmpty())` → ha nem, `return false`;
+   `engine_->createSurface({partition:"persist:preview"})` → válaszban `navigate`, `worker_state_ = Loading`, határidő indítása.
+3. **Betöltés**: a `loadFinished`-ben, ha `surface == worker_surface_` → `capture` (`png`, 80) → `worker_state_ = Capturing`.
+4. **Kész**: a fájl átmozgatása a `previews/` alá (mint `producePreview`), `core_->cardUpsert` a `preview_ref`-fel, `previewConsumeBudget`, majd `destroySurface` + `worker_state_ = Idle`.
+5. **Megszakítás**: a `surfaceAttached` (kártya nyílik) ágában `previewWorkerMustAbort(...)` → `destroySurface`, állapot `Idle`; a határidő lejártakor ugyanez.
+6. **Teszt**: seed kártya (probe URL) → grid betölt → `startPreviewWorker` → várni a kész jelzésre → állítások: a `previews/<id>.*` létezik, a mag rekordjában `preview_ref` beállt, `worker_state_ == Idle`, és a felület megszűnt (`live surfaces == 1`, csak a rács).
+
+**Csapda, amit már ismerünk:** a felület-létrehozás válasza később érkezhet, mint a `navigate` — a `surfaceAttached`/`loadFinished` párost a *worker* azonosítójára kell szűrni, különben a rács eseményeit eszi meg.
