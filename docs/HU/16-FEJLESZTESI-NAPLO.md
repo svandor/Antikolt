@@ -3,6 +3,34 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (negyvenedik szelet) — a hely visszaadása, end to end (három hiba)
+
+Az előző három kísérlet a mérésnél akadt el. Most a teszt **átment**, és közben **három valódi hibát**
+talált — egyik sem teszt-hiba volt:
+
+1. **A rács, ahova visszatérsz, halott volt.** `ensureSurface()` a meglévő felületet csak *navigálta* a
+   home URL-re, de a hidat nem telepítette oda (azt csak a `surfaceAttached` tette, új felületnél). Így a
+   kártyáról hazatérve a rács kártyái **nem voltak kattinthatók** — a felhasználó szemében „megállt a
+   böngésző". A meglévő felület ágában most `installBridge` + `home_surface_` beállítás történik.
+2. **A mentés versenyzett a navigációval.** `rememberScroll()` aszinkron `evaluate`-et indított, és a
+   hívó azonnal tovább navigált: az olvasott érték a *következő* lap 0-ja lett. Most a hívó csak a mentés
+   **után** folytatja (`rememberScroll(std::function<void()>)`), a `loadHome`/`openCard` láncolva.
+3. **A rács nullája felülírta a kártyáét.** Hazatérés után a felület a rács, a `current_card_id_` viszont
+   még a kártyáé volt: a következő mentés 0-t írt a 700 helyére (a naplóban `saving 700` majd `saving 0`).
+   Most a mentés kimarad, ha az élő felület a rács, és `loadHome` törli a kártya-azonosítót.
+4. **A visszaállítás abszolút és késleltetett.** `loadFinished` nem „layout kész", és egy lapra **kétszer**
+   is tüzel: a relatív görgetés kétszer futott (`restored_scroll_y=1400`). Most `window.scrollTo(0, N)`,
+   300 ms-mal a betöltés után.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --scrollrestore <motor>
+first_scroll_y=700
+restored_scroll_y=700
+scroll_restore=ok      (exit code 0)
+pwsh -File scripts/verify.ps1 → 27 ellenőrzés, ALL SELF TESTS PASSED
+```
 ## 2026-11-17 (harminckilencedik szelet) — a kártya helye: hol hagyta abba az olvasó
 
 A kártyát újranyitva a lap tetején kezdtünk: egy hosszú cikkben ez nem „visszatérés", hanem elveszett hely.

@@ -12,6 +12,8 @@
 #include <QMainWindow>
 #include <QSet>
 #include <QString>
+
+#include <functional>
 #include <QStringList>
 
 class QLabel;
@@ -105,7 +107,7 @@ public:
     /// Where this browser keeps the per-card scroll positions (`scroll.json` in the profile).
     QString scrollBookPath() const;
     /// Remember the live card's offset before it is left (the grid is a place too).
-    void rememberScroll();
+    void rememberScroll(std::function<void()> then = {});
     /// The panel's rule editors as the user sees them (self test witnesses).
     int sessionPanelTtlHours() const;
     bool sessionPanelLockWipe() const;

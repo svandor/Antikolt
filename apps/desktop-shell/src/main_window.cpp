@@ -165,9 +165,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     const int remembered =
                         antikolt::scrollPositionFor(scrollBookPath(), current_card_id_);
                     if (remembered > 0) {
-                        engine_->scroll(surface, 0, remembered, false, nullptr);
+                        // Absolute, a beat after the load: `loadFinished` is not "layout done" (a scroll then
+                        // is clamped to 0), and the event can fire twice for one page — a relative scroll
+                        // would apply twice and land at 1400 instead of 700 (measured).
+                        QTimer::singleShot(300, this, [this, surface, remembered] {
+                            engine_->evaluate(
+                                surface, QStringLiteral("window.scrollTo(0,%1)").arg(remembered),
+                                [](const QJsonObject&, const QString&) {});
+                        });
                     }
                 }
+                // A card finished loading: if the policy queued this origin (see cleanupSessions), this is
+                // the moment to wipe it — on its own surface, with the plan's storage list.
                 const auto queued = wipe_on_open_.find(live_origin_);
                 if (live_origin_.isEmpty() || queued == wipe_on_open_.end()) {
                     return;
@@ -524,7 +533,19 @@ void MainWindow::ensureSurface() {
         return;
     }
     if (card_->hasSurface()) {
-        engine_->navigate(card_->surface(), pending_url_.isEmpty() ? homePageUrl() : pending_url_);
+        // The surface already exists: going home *navigates* it, it is not re-attached, so nothing else
+        // will install the bridge. Without this the grid the user returns to has no bridge at all — its
+        // cards cannot be opened, which reads as "the browser died" (measured: a second card open never
+        // happened because the click had nothing to call).
+        const bool opening_home = pending_url_.isEmpty();
+        const QString target = opening_home ? homePageUrl() : pending_url_;
+        engine_->navigate(card_->surface(), target);
+        pending_url_.clear();
+        pending_title_.clear();
+        if (opening_home) {
+            engine_->installBridge(card_->surface());
+            home_surface_ = card_->surface();
+        }
         return;
     }
     // One partition per card: two cards never share cookies or storage by accident (ADR-009).
@@ -542,7 +563,7 @@ void MainWindow::ensureSurface() {
 }
 
 void MainWindow::openCard(const QString& url, const QString& title) {
-    rememberScroll();
+    rememberScroll([this, url, title] {
     if (url.isEmpty()) {
         setStatus(QStringLiteral("a kártyának nincs címe"));
         return;
@@ -575,6 +596,7 @@ void MainWindow::openCard(const QString& url, const QString& title) {
         engine_->destroySurface(previous, [this](const QJsonObject&, const QString&) {
             ensureSurface();
         });
+    });
     });
 }
 
@@ -744,15 +766,18 @@ void MainWindow::pushCardsToGrid(qint64 surface) {
 }
 
 void MainWindow::loadHome() {
-    rememberScroll();
+    rememberScroll([this] {
     if (!engine_->isRunning()) {
         setStatus(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot"));
         return;
     }
-    // Going home means leaving whatever card is open, so no pending URL may survive this.
+    // Going home means leaving whatever card is open, so no pending URL and no live card id may survive
+    // this: a stale id would later be saved as the grid's offset (measured: 700 became 0).
     pending_url_.clear();
     pending_title_.clear();
+    current_card_id_.clear();
     ensureSurface();
+    });
 }
 
 void MainWindow::freezeCard() {
@@ -896,19 +921,30 @@ QString MainWindow::scrollBookPath() const {
                                      : engine_profile_ + QStringLiteral("/scroll.json");
 }
 
-void MainWindow::rememberScroll() {
+void MainWindow::rememberScroll(std::function<void()> then) {
+    // The grid is not a card: after going home the live surface is the grid while the card id is stale, and
+    // saving then overwrites the place the reader left with the grid's zero (measured: 700 became 0).
     if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0 || current_card_id_.isEmpty() ||
+        surface_ == home_surface_ ||
         engine_profile_.isEmpty()) {
+        if (then) {
+            then();
+        }
         return;
     }
     const QString card_id = current_card_id_;
+    // The caller continues only after the offset is stored: an eval racing the navigation that follows would
+    // read the *next* page's zero, and the remembered place would silently be 0 (measured exactly that).
     engine_->evaluate(surface_, QStringLiteral("String(Math.round(window.scrollY))"),
-                      [this, card_id](const QJsonObject& reply, const QString& error) {
-                          if (!error.isEmpty()) {
-                              return;
+                      [this, card_id, then](const QJsonObject& reply, const QString& error) {
+                          if (error.isEmpty()) {
+                              const int y =
+                                  reply.value(QStringLiteral("value")).toString().toInt();
+                              antikolt::saveScrollPosition(scrollBookPath(), card_id, y);
                           }
-                          const int y = reply.value(QStringLiteral("value")).toString().toInt();
-                          antikolt::saveScrollPosition(scrollBookPath(), card_id, y);
+                          if (then) {
+                              then();
+                          }
                       });
 }
 void MainWindow::producePreview(qint64 surface) {

@@ -103,7 +103,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   `previews` directory, the home page loads it as `antikolt://blob/probe.png`, and the page's own witness
   must report `naturalWidth × naturalHeight`. A second request for `..%2Fhost.cpp` must be *refused* — a
   card's data may not read another file through the browser.
-- `--scrollbook` — where the reader stopped is remembered per card (`scroll.json`): a positive offset survives a
+- `--scrollrestore` — the reader's place end to end: scroll a card, go home, reopen it, and the page must be at
+  the same offset (`first_scroll_y=700`, `restored_scroll_y=700`). Two passes through the same handler, with the
+  click polling for the card because the list is pushed after the load.- `--scrollbook` — where the reader stopped is remembered per card (`scroll.json`): a positive offset survives a
   reload from disk, going back to the top forgets that card, and one card's offset does not overwrite another's.- `--previewbudget` — the daily budget persists: a scratch `budget.json` counts three previews, refuses at
   five, and a file written for another day reads as zero (a counter that resets on launch is not a budget).- `--previewrefresh` — the preview refresh policy: a missing file must be regenerated, a fresh one must not,
   a 30 day old one must, and a file whose timestamp is in the future must not turn every open into a

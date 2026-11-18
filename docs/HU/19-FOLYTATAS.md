@@ -136,18 +136,7 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > **A scroll-pozíció kártyánként kész** (39. szelet, `scroll_book.h` + `scroll.json`): `--scrollbook`
 > bizonyítja a könyvet (`scroll_a=640`, `scroll_b_after_top=120`, `scroll_reloaded=120`), a bekötést pedig
 > `--opentest`/`--scrollzoomtest` fedi.
-> **Ami hátra van:** (a) end-to-end ellenőrzés a visszaállításra. Két kísérlet után a **mérési kép pontos**:
-> az első fázis mindig működik (`first_scroll_y=700`), a másodikban viszont a rácsban a kártya **nem**
-> található meg — 25×400 ms pollozás után is `no-card`, holott a DOM-ban vannak kártyák. A következő lépés
-> tehát nem a teszt időzítése, hanem a **második push vizsgálata**: kap-e a másodszor betöltött rácslap
-> kártyalistát (a `pushCardsToGrid` lefut-e, és a lap `antikoltAcceptCards`-a elfogadja-e a második listát).
-> Ez valódi termék-kérdés, nem teszt-kérdés — ezért a bukó ellenőrzés nincs a kapuban.
-> **A `6d649f7` javítás igazolva:** a harmadik futásban a második rács **megtalálta** a kártyát
-> (`clicked`, nem `no-card`) — a lökés tehát lefut. A visszaállítás mérése viszont még mindig nem fejeződik
-> be a 90 s-os kereten belül (a második kártyalátogatás `loadFinished`-je nem érkezik meg a mérésig), tehát a
-> következő lépés a **második kártyanyitás** útjának vizsgálata (a `openCard`/`ensureSurface` sorrend a
-> rács-visszatérés után), nem a teszt időzítése.
-> (b) gesztus-alapú görgetés (belső konténer); (c) a 7 napos küszöb és a 100-as napi keret nem hangolható a felületről.
+> **Az end-to-end ellenőrzés kész** (40. szelet, `--scrollrestore`): `first_scroll_y=700`, `restored_scroll_y=700`. Közben három valódi hiba javult: a visszatérő rács hídja, a mentés/navigáció verseny, és a rács nullájának felülírása; a visszaállítás abszolút és késleltetett.`r`n> (b) gesztus-alapú görgetés (belső konténer); (c) a 7 napos küszöb és a 100-as napi keret nem hangolható a felületről.
 
 ## 5. Széf és passkey
 **Miért:** F4/F4b; a varrat kész (`crates/antikolt-core/src/vault.rs`, 10 teszt, ADR-031).

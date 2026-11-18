@@ -105,6 +105,7 @@ $engineChecks = @(
     @{ Name = 'metricstest'; Args = @('--metricstest') },
     @{ Name = 'mediatest'; Args = @('--mediatest') },
     @{ Name = 'scrollzoomtest'; Args = @('--scrollzoomtest') }
+    @{ Name = 'scrollrestore'; Args = @('--scrollrestore') }
 )
 
 foreach ($check in $engineChecks) {

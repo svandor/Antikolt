@@ -2357,6 +2357,169 @@ int runPinCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the reader's place end to end: scroll a card, go home, reopen it, land where they were.
+///
+/// Two passes through the same handler, and the click *polls* for the card instead of waiting on a timer.
+/// The second pass only works because the grid the user returns to gets the bridge installed
+/// (ensureSurface's existing-surface path): without it the click has nothing to call.
+int runScrollRestoreCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+    const QString tall_page = QStringLiteral(
+        "<!doctype html><meta charset=\"utf-8\"><title>Tall</title>"
+        "<style>body{margin:0;font:14px sans-serif}"
+        "section{height:4000px;background:linear-gradient(#fff,#bbb)}</style>"
+        "<section>tall page</section>");
+    ProbeOrigin probe(tall_page);
+    if (!probe.listening()) {
+        out << "server=FAILED\n";
+        return 1;
+    }
+    const QString origin = probe.origin();
+    const QString core_dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/core");
+    QDir().mkpath(core_dir);
+    const QString book_path =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+        QStringLiteral("/engine/scroll.json");
+    CoreClient oracle;
+    if (!oracle.start(MainWindow::coreExecutable(), core_dir)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    bool written = false;
+    {
+        QEventLoop loop;
+        QJsonObject card;
+        card.insert(QStringLiteral("id"), QStringLiteral("scroll-restore"));
+        card.insert(QStringLiteral("title"), QStringLiteral("Restore probe"));
+        card.insert(QStringLiteral("url"), origin + QStringLiteral("/"));
+        card.insert(QStringLiteral("container"), QStringLiteral("c-private"));
+        card.insert(QStringLiteral("status"), QStringLiteral("unknown"));
+        card.insert(QStringLiteral("pinned"), false);
+        card.insert(QStringLiteral("notes"), QString());
+        card.insert(QStringLiteral("preview_ref"), QString());
+        card.insert(QStringLiteral("last_opened_at_ms"), 0);
+        oracle.cardUpsert(card, [&](const QJsonObject&, const QString& error) {
+            written = error.isEmpty();
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    oracle.shutdown();
+    if (!written) {
+        out << "card_written=FAILED\n";
+        return 1;
+    }
+    QFile::remove(book_path);  // a remembered place from another run is not what this check asserts
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    int phase = 0;
+    QString first_y;
+    QString second_y;
+    {
+        QEventLoop loop;
+        const auto eval = [&window](qint64 surface, const QString& expression,
+                                    std::function<void(const QString&)> done) {
+            window.engine()->evaluate(surface, expression,
+                                      [done](const QJsonObject& reply, const QString& error) {
+                                          done(error.isEmpty()
+                                                   ? reply.value(QStringLiteral("value")).toString()
+                                                   : error);
+                                      });
+        };
+        std::function<void(qint64, int, std::function<void(bool)>)> click;
+        click = [&](qint64 grid, int attempt, std::function<void(bool)> done) {
+            window.engine()->evaluate(
+                grid,
+                QStringLiteral(
+                    "(function(){var els=document.querySelectorAll('antikolt-card');"
+                    "for(var i=0;i<els.length;i++){var c=els[i].card;"
+                    "if(c&&c.id==='scroll-restore'){"
+                    "els[i].shadowRoot.querySelector('.card').click();return 'clicked';}}"
+                    "return 'no-card';})()"),
+                [&, grid, attempt, done](const QJsonObject& reply, const QString& error) {
+                    const QString value = error.isEmpty()
+                                              ? reply.value(QStringLiteral("value")).toString()
+                                              : error;
+                    if (value == QStringLiteral("clicked")) {
+                        done(true);
+                        return;
+                    }
+                    if (attempt >= 25) {
+                        out << "click_failed=" << value << '\n';
+                        done(false);
+                        return;
+                    }
+                    QTimer::singleShot(400, &loop, [&, grid, attempt, done] {
+                        click(grid, attempt + 1, done);
+                    });
+                });
+        };
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:"))) {
+                                 QTimer::singleShot(600, &loop, [&, id] {
+                                     click(id, 0, [&](bool ok) {
+                                         if (!ok) {
+                                             loop.quit();
+                                         }
+                                     });
+                                 });
+                                 return;
+                             }
+                             if (!url.startsWith(origin)) {
+                                 return;
+                             }
+                             if (phase == 0) {
+                                 window.engine()->scroll(
+                                     id, 0, 700, false,
+                                     [&, id](const QJsonObject&, const QString& error) {
+                                         if (!error.isEmpty()) {
+                                             out << "scroll_error=" << error << '\n';
+                                             loop.quit();
+                                             return;
+                                         }
+                                         QTimer::singleShot(600, &loop, [&, id] {
+                                             eval(id,
+                                                  QStringLiteral("String(Math.round(window.scrollY))"),
+                                                  [&](const QString& y) {
+                                                      first_y = y;
+                                                      phase = 1;
+                                                      window.loadHome();
+                                                  });
+                                         });
+                                     });
+                                 return;
+                             }
+                             QTimer::singleShot(900, &loop, [&, id] {
+                                 eval(id, QStringLiteral("String(Math.round(window.scrollY))"),
+                                      [&](const QString& y) {
+                                          second_y = y;
+                                          loop.quit();
+                                      });
+                             });
+                         });
+        QTimer::singleShot(90000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "first_scroll_y=" << first_y << '\n';
+    out << "restored_scroll_y=" << second_y << '\n';
+    const int first = first_y.toInt();
+    const int second = second_y.toInt();
+    const bool ok = first >= 600 && std::abs(second - first) <= 60;
+    out << "scroll_restore=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
 /// Prove where-the-reader-stopped is remembered per card, and forgotten when they return to the top.
 ///
 /// The book is a file, so the check is a scratch file: a positive offset survives, a zero forgets, and two
@@ -3149,6 +3312,9 @@ int main(int argc, char* argv[]) {
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption scrollrestore(QStringLiteral("scrollrestore"),
+                                         QStringLiteral("Prove the scroll restore end to end, then exit."),
+                                         QStringLiteral("path"));
     const QCommandLineOption scrollbook(QStringLiteral("scrollbook"),
                                         QStringLiteral("Prove the scroll book, then exit."));
     const QCommandLineOption previewbudget(QStringLiteral("previewbudget"),
@@ -3193,6 +3359,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(previewrefresh);
     parser.addOption(previewbudget);
     parser.addOption(scrollbook);
+    parser.addOption(scrollrestore);
     parser.addOption(coretest);
     parser.process(app);
 
@@ -3222,6 +3389,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(scrollbook)) {
         return runScrollBookCheck();
+    }
+
+    if (parser.isSet(scrollrestore)) {
+        return runScrollRestoreCheck(parser.value(scrollrestore));
     }
 
     if (parser.isSet(mediatest)) {
