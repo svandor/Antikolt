@@ -66,7 +66,8 @@ Report ("{0} source files carry the SPDX header" -f $checked) ($missing.Count -e
 
 Write-Host '=== Markdown links ===' -ForegroundColor Cyan
 $broken = @()
-foreach ($file in Get-ChildItem -Recurse -File -Filter '*.md') {
+foreach ($file in Get-ChildItem -Recurse -File -Filter '*.md' |
+        Where-Object { $_.FullName -notmatch '[\\/](dist|build|target|node_modules)[\\/]' }) {
     $text = Get-Content -Raw -Encoding utf8 $file.FullName
     foreach ($match in [regex]::Matches($text, '\]\(([^)]+)\)')) {
         $target = $match.Groups[1].Value

@@ -92,6 +92,17 @@ bool InitializeCef(const HostConfig& config, CefRefPtr<EngineApp> app) {
 #endif
     CefSettings settings;
     CefString(&settings.browser_subprocess_path).FromString(config.exe_path);
+    // Portable layout: when the CEF runtime sits next to the host (the dist folder), say so explicitly.
+    // Without this the loader can end up with no ICU data ("Invalid file descriptor to ICU data received")
+    // even though icudtl.dat is right there — measured in the first packaged build.
+    const std::string exe_dir =
+        config.exe_path.substr(0, config.exe_path.find_last_of("\\/") == std::string::npos
+                                      ? 0
+                                      : config.exe_path.find_last_of("\\/"));
+    if (std::ifstream(exe_dir + "\\icudtl.dat").good()) {
+        CefString(&settings.resources_dir_path).FromString(exe_dir);
+        CefString(&settings.locales_dir_path).FromString(exe_dir + "\\locales");
+    }
     // CEF 158 has no `user_data_path`: the per-profile cache directory is `cache_path`, and
     // `root_cache_path` is the fallback root for request contexts that do not set their own.
     CefString(&settings.cache_path).FromString(config.user_data_path);

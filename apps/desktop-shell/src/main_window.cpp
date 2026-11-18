@@ -451,6 +451,7 @@ QString MainWindow::homePageUrl() {
     }
     const QString appDir = QCoreApplication::applicationDirPath();
     const QStringList candidates = {
+        appDir + QStringLiteral("/home/index.html"),
         appDir + QStringLiteral("/../home/index.html"),
         appDir + QStringLiteral("/../../../home/index.html"),
         QDir::currentPath() + QStringLiteral("/home/index.html"),

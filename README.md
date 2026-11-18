@@ -34,6 +34,9 @@
 pwsh -File scripts/build.ps1                     # shell + motorház
 cargo build -p antikolt-core-service            # a mag (az előnézethez és a panelhez kell)
 .\build\apps\desktop-shell\antikolt-shell.exe    # a böngésző
+
+# vagy: hordozható mappa + asztali parancsikon (nem telepítő)
+pwsh -File scripts/dist.ps1
 ```
 
 Indítás után nyomd meg a **„Motor indítása"** gombot: megjelenik a kártyarács, és egy kártyára kattintva
