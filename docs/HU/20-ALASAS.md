@@ -83,6 +83,38 @@ Ez a **valóban ingyenes út az aláíráshoz**: MSIX-csomagnál a Store a minő
 kell (egyszeri díj), és a Store-feltételeknek megfelelő csomag. A hordozható mappa alternatívája, nem
 kiegészítője: a Store-ból telepített MSIX más élmény, mint a „mappa + parancsikon".
 
+## A SignPath nem csak Windows — és miért nem helyettesíti a Store
+
+A SignPath dokumentációja szerint a támogatott formátumok **platformtól függetlenek** (<https://docs.signpath.io/artifact-configuration/reference>):
+
+| Formátum | Windows | Linux | Egyéb |
+|---|---|---|---|
+| Authenticode (`.exe`, `.dll`, `.msi`, `.msix` …) | ✅ | — | — |
+| NuGet, OPC/VSIX, Office-makrók | ✅ | — | — |
+| Java (`jar`), Android (`apk`) | — | — | ✅ |
+| **RPM** | — | ✅ | — |
+| DEB (`debsigs`) | — | ✅ | — |
+| Konténer (Notation/Cosign), XML/JSON, letacholt GPG/CMS/S/MIME | ✅ | ✅ | ✅ |
+
+**Fontos a tier-korlát:** a dokumentáció az egyes direktíváknál jelzi, melyik csomagban elérhetők. Az
+`<rpm-sign>`, `<jar-sign>`, `<create-apk-signature>`, `<jsf-sign>` ott **„Open Source Code Signing"** jelöléssel
+szerepel (ez a mi utunk), a `<debsigs-sign>` viszont csak „Semantic Code Signing" jelöléssel — tehát egy
+Linuxos `.deb` aláírása **nem biztos**, hogy az ingyenes OSS-tierben van. Ezt a SignPath-nál kell
+megerősíteni, nem szabad feltételezni.
+
+### Miért van értelme a Store mellett is?
+
+Mert **más artefaktumot** írnak alá:
+
+- **Store (MSIX)**: a Microsoft írja alá azt a csomagot, amit **a Store-ból** telepítenek. A mi hordozható
+  exénket, illetve a saját oldalunkról letölthető kiadást **nem** írja alá. Cserébe ingyenes és
+  figyelmeztetésmentes — de a Store szabályai és a beküldés/ellenőrzés is hozzátartozik.
+- **SignPath**: a **saját** kiadásainkat írja alá (hordozható `.exe`, későbbi `.msi`/`.exe` telepítő, Linux
+  RPM). Ez az egyetlen ingyenes út, ami azt írja alá, ami **ma a termék** (a mappa + parancsikon).
+
+Vagyis nem „helyette", hanem **két csatorna**: Store a Store-ból telepítőknek, SignPath a saját
+letöltésnek. Egyik sem fedi le a másikat.
+
 ## Összefoglaló táblázat (Microsoft saját összehasonlítása, 2026)
 
 | Út | Költség | SmartScreen | Elérhető-e nekünk (HU)? |
