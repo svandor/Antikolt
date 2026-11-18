@@ -21,13 +21,33 @@
 | `crates/antikolt-ipc` | 20 üzenet, hossz-előtagos keretezés, verzió- és hibakezelés, képesség-lekérdezés — [specifikáció](proto/README.md) |
 | `crates/antikolt-core` | azonosítók, óra, öt erőforrás-profil, kártya-életciklus-gép, `keep`/`sweep`/`wipe` munkamenet-politika, pillanatkép-manifest, migrációk |
 | `apps/desktop-shell` | Qt 6 ablak, vezérlősáv, négy téma, `--selftest` — **lefordul és fut** |
-| `apps/engine-host` | **protokoll-szerver** a CEF felett: `hello`/`welcome`, `create_surface`, `navigate`, `destroy_surface`, `shutdown` + load/title/surface események |
+| `apps/engine-host` | **protokoll-szerver** a CEF felett: `hello`/`welcome`, `create_surface`, `navigate`, `destroy_surface`, `snapshot`, `capture`, `clear_origin_data`, `metrics`, `set_media`, `scroll`, `set_zoom`, `bridge_reply`, `shutdown` |
 | `crates/antikolt-ipc` + `antikolt-probe` | stdio-kliens (`EngineLink`) és end-to-end próba — `--freeze` móddal a teljes fagyasztási ciklus |
 | `perf/measure-freeze.ps1` | fagyasztás-mérés: **mennyi RAM-ot ad vissza** a kártya lemezre mentése |
 | `perf/measure-engine.ps1` | memóriamérő: a motor folyamatfájának privát memóriája, markdown + JSON riport |
 | `home/` | a kezdőlap: `<antikolt-card>`, virtualizált rács, négy téma, keresés, billentyűzet — böngészőben önállóan is megnyitható |
-| Shell ↔ motor összekötés | **még nincs** — a következő szelet (IPC + fagyasztás) |
+| Shell ↔ motor | **kész és mérve**: IPC, fagyasztás/hibernálás, előnézet, memória-mérés, oldal-téma, nagyítás, görgetés — `scripts/verify.ps1` 27 öntesztje |
 
+## Kipróbálás (Windows, ma)
+
+```powershell
+pwsh -File scripts/build.ps1                     # shell + motorház
+cargo build -p antikolt-core-service            # a mag (az előnézethez és a panelhez kell)
+.\build\apps\desktop-shell\antikolt-shell.exe    # a böngésző
+```
+
+Indítás után nyomd meg a **„Motor indítása"** gombot: megjelenik a kártyarács, és egy kártyára kattintva
+megnyílik az oldal. Ami kipróbálható:
+
+- **kártyák**: nyitás, bezárás (haza), pin, jegyzet (a kártyán, helyben szerkeszthető), előnézet-kép;
+- **vezérlősáv**: négy téma, oldal-téma (auto/sötét/világos), nagyítás (`−` / `🔍 100%` / `+`), munkamenet-panel;
+- **munkamenet-panel**: a napló sorai, „mennyi veszne el" (`3 süti · 5.0 kB`), a 24 órás szabály állítása
+  (óra + app-zárnál törlés) és a **Takarítás most** gomb;
+- **olvasóhely**: a kártyát elhagyva és újranyitva ugyanott folytatja (`scroll.json`).
+
+**Őszinte korlátok:** egyszerre **egy** élő kártya van (I1, ez a memória-ígéret); a fejlesztői build
+`--no-sandbox`-szal fut; az előnézet best-effort (egy elakadt felvétel kimaradhat); Linux/Wayland (F7), a
+széf/passkey és a csomagolás (F8) még nincs.
 ## Fejlesztés
 
 Előfeltételek: **Rust 1.80+**, **Qt 6** és **CEF** a `D:\Tools` alatt (telepítés:
