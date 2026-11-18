@@ -135,10 +135,12 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > **A scroll-pozíció kártyánként kész** (39. szelet, `scroll_book.h` + `scroll.json`): `--scrollbook`
 > bizonyítja a könyvet (`scroll_a=640`, `scroll_b_after_top=120`, `scroll_reloaded=120`), a bekötést pedig
 > `--opentest`/`--scrollzoomtest` fedi.
-> **Ami hátra van:** (a) end-to-end ellenőrzés a visszaállításra — **konkrétan tudott, hogyan**: a 39. szelet
-> kísérlete `first_scroll_y=700`-at mért, de a második visszatérésnél `no-card`-ot kapott, mert a kártyalista
-> *lökése* később érkezik, mint az időzítő; a következő próbának **polloznia** kell
-> (`document.querySelectorAll('antikolt-card').length > 0`, 400 ms-onként, max 10 s), nem várnia.
+> **Ami hátra van:** (a) end-to-end ellenőrzés a visszaállításra. Két kísérlet után a **mérési kép pontos**:
+> az első fázis mindig működik (`first_scroll_y=700`), a másodikban viszont a rácsban a kártya **nem**
+> található meg — 25×400 ms pollozás után is `no-card`, holott a DOM-ban vannak kártyák. A következő lépés
+> tehát nem a teszt időzítése, hanem a **második push vizsgálata**: kap-e a másodszor betöltött rácslap
+> kártyalistát (a `pushCardsToGrid` lefut-e, és a lap `antikoltAcceptCards`-a elfogadja-e a második listát).
+> Ez valódi termék-kérdés, nem teszt-kérdés — ezért a bukó ellenőrzés nincs a kapuban.
 > (b) gesztus-alapú görgetés (belső konténer).
 
 ## 5. Széf és passkey
