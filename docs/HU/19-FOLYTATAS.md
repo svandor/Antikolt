@@ -77,7 +77,12 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > tovább, a shell `bridge_reply`-vel válaszol. `PROTOCOL_VERSION` = 2, mindkét oldal ellenőrzi.
 > `--bridgetest`: `asked=ok`, `search_cards=1`, `search_first_title=Wikipedia — kezdőlap`,
 > `unknown_method=rejected`, `bridge_request=ok`.
-> **Ami hátra van:** a jegyzet-szerkesztő fókusz-visszaadása, a lap-oldali `test.hang` hook
+> **A fókusz-visszaadás mérése megtörtént, a javítás nem kész:** a lap-oldali javítással (`.card` fókuszálható,
+> `focusTheCard()` a Mentés/Mégse után) a mérés továbbra is `note_focus=none` — mert a mentés után a rács
+> **újrarendereli** a kártyát, tehát a fókusz a régi elemre kerül, ami már nincs a dokumentumban. A helyes
+> javítás: a render után, kártya-azonosító alapján visszafókuszálni. A kód ezért **nincs** a fában (nem
+> félkész), csak a mérés.
+> **Ami hátra van:** a jegyzet-szerkesztő fókusz-visszaadása (render utáni, id-alapú), a lap-oldali `test.hang` hook
 > dokumentáltsága a felhasználói doksiban (ma csak a shell README említi), és az, hogy a rács saját
 > keresése szándékosan lokális marad (a lap a teljes listát kapja).
 
