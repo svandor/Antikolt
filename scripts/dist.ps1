@@ -68,6 +68,7 @@ Copy-Item $coreExe $Destination
 
 # --- the page -------------------------------------------------------------------------------------------
 Copy-Item (Join-Path $repo 'home') (Join-Path $Destination 'home') -Recurse
+Copy-Item (Join-Path $repo 'assets\antikolt.ico') $Destination
 
 # --- CEF: the host needs its own runtime beside it ------------------------------------------------------
 # The CEF distribution keeps the *binaries* in Release\ and the *resources* (icudtl.dat, the .pak files and
@@ -121,7 +122,7 @@ if ($Shortcut) {
     $link = $wsh.CreateShortcut($linkPath)
     $link.TargetPath = $shellPath
     $link.WorkingDirectory = $Destination
-    $link.IconLocation = "$shellPath,0"
+    $link.IconLocation = (Join-Path $Destination 'antikolt.ico')
     $link.Description = 'Antikolt — memóriatakarékos kártyás böngésző'
     $link.Save()
     Write-Host "  shortcut: $linkPath"

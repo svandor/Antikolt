@@ -157,6 +157,14 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 
 **Bizonyíték:** a varrat tesztjei zölden + egy `create`/`get` kör egy teszt-RP-n (F0 S-D spike).
 
+## 5b. Ismert hiba: a `--capturetest` néha összeomlik kilépéskor
+
+Négy futásból **egy** `0xC0000005` (access violation) kóddal tért vissza, **miután minden eredményt kiírt**
+(`capture_size=ok`), tehát a hiba a **lezárásban** van, nem a felvételben. A jelenség magyarázza a korábbi
+intermittáló `verify.ps1`-bukásokat. Nem javítottam (nincs még pontos kép a lezárási sorrendről); a
+következő szelet: a `--capturetest` kilépési útja (a `QEventLoop` utáni `window.close()`, illetve a motor
+`shutdown` válaszának visszahívása egy már megszűnt objektumra).
+
 ## 6. Ismert csapdák (drágán tanultuk)
 
 | Csapda | Mit okoz | Hol van rögzítve |

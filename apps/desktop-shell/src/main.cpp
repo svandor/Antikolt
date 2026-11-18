@@ -21,6 +21,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QIcon>
 #include <QImage>
 #include <QPixmap>
 #include "previews.h"
@@ -3203,6 +3204,7 @@ int runSelfTest(bool with_engine, const QString& enginePath) {
     out << "antikolt-shell " << ANTIKOLT_VERSION << '\n';
     out << "qt=" << qVersion() << '\n';
     out << "platform=" << QGuiApplication::platformName() << '\n';
+    out << "icon=" << (QApplication::windowIcon().isNull() ? "missing" : "ok") << '\n';
     out << "os=" << QSysInfo::prettyProductName() << '\n';
 
     const QList<QScreen*> screens = QGuiApplication::screens();
@@ -3251,6 +3253,28 @@ int main(int argc, char* argv[]) {
     QApplication::setApplicationVersion(QStringLiteral(ANTIKOLT_VERSION));
     QApplication::setOrganizationName(QStringLiteral("Antikolt Project"));
     QApplication::setOrganizationDomain(QStringLiteral("antikolt.dev"));
+
+    // The window icon travels with the build: next to the exe in the portable folder, in assets/ in the repo.
+    // A missing icon is not an error - the platform falls back to its default.
+    {
+        const QString app_dir = QCoreApplication::applicationDirPath();
+        const QStringList icon_candidates = {
+            app_dir + QStringLiteral("/antikolt.ico"),
+            app_dir + QStringLiteral("/../assets/antikolt.ico"),
+            app_dir + QStringLiteral("/../../../assets/antikolt.ico"),
+            QDir::currentPath() + QStringLiteral("/assets/antikolt.ico"),
+        };
+        for (const QString& candidate : icon_candidates) {
+            if (QFileInfo::exists(candidate)) {
+                const QIcon icon(candidate);
+                if (!icon.isNull()) {
+                    QApplication::setWindowIcon(icon);
+                    qInfo("[shell] icon: %s", qUtf8Printable(QDir::cleanPath(candidate)));
+                }
+                break;
+            }
+        }
+    }
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
