@@ -59,3 +59,25 @@ A tervben használt kifejezések egységes jelentése. Ha egy dokumentum eltér 
 - Belső séma neve: `antikolt://home`.
 - Adatbázis-táblák: egyes szám, `snake_case` (`card`, `snapshot`, `site_recipe`).
 - Az élő nézet a kódban **singleton** (`LiveView`), mert az I1 invariáns ezt kívánja.
+## A lap hídja: a hívások és a teszt-horgok
+
+A rács (a `home/` lap) és a shell között a CEF `cefQuery` csatornája visz mindent (ADR-004, ADR-034). A lap
+oldalán **csak** ezek a belépési pontok léteznek — nincs más mód a gépház elérésére:
+
+| Név | Irány | Mit csinál |
+|---|---|---|
+| `window.antikoltNative.request(method, args)` | lap → shell | kérés; a shell válasza (`{ok, …}` vagy `{error}`) Promise-ként jön vissza |
+| `window.antikoltNative.open(url, title, pinned)` | lap → shell | kártya megnyitása |
+| `window.antikoltAcceptCards(list)` | shell → lap | a mag kártyalistájának átadása (csak a rács kapja) |
+| `window.antikoltGridState()` / `window.antikoltNoteState()` | shell → lap | **teszt-witnessek**: a lap modelljének állapota, hogy egy önteszt ne a DOM-ból találgasson |
+
+**Teszt-horgok (csak fejlesztéshez):**
+
+- `ANTIKOLT_BRIDGE_TEST=1` — a shell elindítja a híd öntesztjét (`--bridgetest` ugyanezt teszi).
+- `test.hang` metódus — szándékosan **nem válaszol**, hogy a shell válasz-watchdogja mérhető legyen
+  (`--timeouttest`: `answer_ms=6540`, `timeout_message=a shell nem válaszolt időben`). Éles lapon nem
+  hívódik; a shell a hívást kérés-számmal tartja, és a watchdog után egyszer válaszol.
+- `ANTIKOLT_HIBERNATE_MS` — a hibernációs idő lerövidítése (`--lifecycletest`).
+
+Ezek a horgok a **fővilágban** futnak (I5): soha nem tartalmaznak titkot, és a lap csak azt látja, amit a
+shell szándékosan átad.
