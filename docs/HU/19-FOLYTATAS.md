@@ -132,7 +132,14 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > `scroll_zoom=ok`.
 > A shell oldala is kész: toolbar `−` / `🔍 100%` / `+`, emlékezett és minden betöltésnél újra alkalmazott
 > nagyítás (`dpr_at_125=1.5625`).
-> **Ami hátra van:** scroll-pozíció visszaállítás kártyánként, gesztus-alapú görgetés.
+> **A scroll-pozíció kártyánként kész** (39. szelet, `scroll_book.h` + `scroll.json`): `--scrollbook`
+> bizonyítja a könyvet (`scroll_a=640`, `scroll_b_after_top=120`, `scroll_reloaded=120`), a bekötést pedig
+> `--opentest`/`--scrollzoomtest` fedi.
+> **Ami hátra van:** (a) end-to-end ellenőrzés a visszaállításra — **konkrétan tudott, hogyan**: a 39. szelet
+> kísérlete `first_scroll_y=700`-at mért, de a második visszatérésnél `no-card`-ot kapott, mert a kártyalista
+> *lökése* később érkezik, mint az időzítő; a következő próbának **polloznia** kell
+> (`document.querySelectorAll('antikolt-card').length > 0`, 400 ms-onként, max 10 s), nem várnia.
+> (b) gesztus-alapú görgetés (belső konténer).
 
 ## 5. Széf és passkey
 **Miért:** F4/F4b; a varrat kész (`crates/antikolt-core/src/vault.rs`, 10 teszt, ADR-031).
