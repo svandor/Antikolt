@@ -3,6 +3,34 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-041 — A háttér-előnézet rövid életű második felületet kap (2026-11-17)
+
+**Kontextus:** a 28. szelet óta a kártya-előnézet csak akkor készül, amikor a felhasználó megnyitja a
+kártyát. A rács így addig üres kereteket mutat, amíg minden kártyát meg nem nyitottak egyszer. A
+`nextPreviewCard` már eldönti, *melyik* kártya kapjon képet, de a **végrehajtás** eddig falba ütközött az
+**I1** invarianensen: „egyszerre egy élő felület" — a rács is felület.
+
+**Döntés:** a háttér-előnézet **ideiglenes munkás-felületet** kap, szigorú korlátokkal:
+
+1. **Csak akkor indul**, ha nincs élő kártya (a felhasználó a rácson van), nincs más munkás, és a napi keret
+   engedi (`previewBudgetAllows`).
+2. **Egyidejűleg egy** munkás van, saját partícióval (`persist:preview`), hogy ne keveredjen egy kártya
+   sütijeivel.
+3. **8 másodperces plafon** a betöltésre és a felvételre; utána a felület megszűnik, a kártya kimarad.
+4. **Azonnal megszűnik**, ha a felhasználó kártyát nyit (a munkás nem versenyezhet a felhasználóval).
+5. **Legfeljebb 4 MB** plusz memória a munkás élettartamára — ez a kivétel ára, és csak a rácson állva.
+
+**Miért nem alternatíva a rács felületének újrahasználata:** az megszüntetné a rácsot (a felhasználó
+visszatérne egy üres képernyőre), és megsértené a „haza" jelentését.
+
+**Következmény:** (+) a rács előnézetei maguktól feltöltődnek; (+) a felhasználó kártyája soha nem lassul
+miatta (5. pont: azonnali megszakítás); (−) az I1 **szigorúan** él, de egy dokumentált, rövid és egyidejűleg
+egy kivétellel — ezt a kódban is kényszeríteni kell (állapotgép: `idle → loading → capturing → idle`), és
+önteszttel bizonyítani.
+
+**Állapot:** a döntés megszületett; a munkás kódja **még nincs meg** (a `nextPreviewCard` és a napi keret
+kész, ezek a munkás előfeltételei). A következő szelet: `--previewworkertest`.
+
 ## ADR-040 — Aláírás: Store + SignPath, két csatorna (2026-11-17)
 
 **Kontextus:** a kiadás ma egy hordozható mappa + asztali parancsikon (`scripts/dist.ps1`), aláírás nélkül.
@@ -326,6 +354,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-038 | `scroll` = `window.scrollBy`, `set_zoom` = újratördelő device-metrics felülírás, a DPR-rel szorozva | Elfogadva |
 | ADR-039 | A munkamenet-szabályokat a felhasználó állítja (`session_rules`), a mag ellenőrzi (TTL 1 óra – 30 nap) | Elfogadva |
 | ADR-040 | Aláírás: Store + SignPath, két csatorna (Store = MSIX az MS-től, SignPath = a saját hordozható kiadás) | Elfogadva |
+| ADR-041 | A háttér-előnézet rövid életű második felületet kap (8 s, egyidejűleg egy, azonnali megszakítás) | Elfogadva |
 
 ---
 
