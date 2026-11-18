@@ -145,9 +145,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     engine_->setZoom(surface, zoom_percent_, nullptr);
                 }
                 // The grid must show the cards the core owns, so the list is pushed once the page is
-                // there to receive it. Only the home surface gets it; a real card is not a grid.
-                if (surface == home_surface_) {
+                // there to receive it. A real card is not a grid, and the *tracked* home id is not a reliable
+                // test on its own: it is cleared when a card detaches, and that detach can arrive after the
+                // next grid has already loaded (measured: the second grid showed the page's static demo
+                // cards because this push never ran). The home URL is what makes a page the grid.
+                if (surface == home_surface_ || url == homePageUrl()) {
                     live_origin_.clear();
+                    home_surface_ = surface;
                     pushCardsToGrid(surface);
                     return;
                 }
