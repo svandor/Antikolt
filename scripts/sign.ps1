@@ -38,6 +38,7 @@ param(
     [Parameter(ParameterSetName = 'Pfx')][string]$Password = $env:ANTIKOLT_PFX_PASSWORD,
     [Parameter(ParameterSetName = 'Store')][string]$Thumbprint,
     [Parameter(ParameterSetName = 'Self')][switch]$SelfSigned,
+    [Parameter(ParameterSetName = 'Verify')][switch]$VerifyOnly,
     [string[]]$Files,
     [string]$Destination = (Join-Path $PSScriptRoot '..\dist\Antikolt')
 )
@@ -89,9 +90,11 @@ switch ($PSCmdlet.ParameterSetName) {
     }
 }
 
-foreach ($file in $Files) {
+if (-not $VerifyOnly) {
+    foreach ($file in $Files) {
     & $signtool @signArgs $file
     if ($LASTEXITCODE -ne 0) { throw "signing failed for $file" }
+    }
 }
 
 Write-Host '=== Verification ===' -ForegroundColor Cyan

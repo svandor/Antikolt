@@ -169,3 +169,14 @@ Az első futás a lényeg: a script **tanúsítvány nélkül elutasít**, nem t
 mutatja, hogy ebben a **zárt fejlesztői környezetben** a felhasználói tanúsítványtár írása tiltott, tehát a
 self-signed út itt **nem volt kipróbálható** — normál Windows-fiókban működnie kell (a kód a dokumentált
 módon hívja a `New-SelfSignedCertificate`-et). Ez a korlát, nem a script hibája.
+
+## CI (a SignPath-aláírás helye) — előkészítve, de még nem futott
+
+`.github/workflows/release.yml`: tag-re (`v*`) buildek, `scripts/dist.ps1 -Release` csomagolás, feltöltés
+artefaktként, majd — ha a SignPath-jóváhagyás megvan — a SignPath PowerShell-parancsai (`Submit-SigningRequest`
+→ `Get-SignedArtifact`) aláírják az exéket, végül `scripts/sign.ps1 -VerifyOnly` **bizonyítja**, hogy az
+aláírás rajta van. Az aláírás-lépés addig kimarad, amíg a `SIGNPATH_ORGANIZATION_ID` változó nincs beállítva.
+
+**Ami bizonyított és ami nem:** a `sign.ps1 -VerifyOnly` helyben **kipróbált** (aláíratlan binárison
+`NOT SIGNED`, exit 1); maga a workflow **soha nem futott** — nincs publikus repó és SignPath-jóváhagyás.
+Ezért scaffold, nem kész funkció; az első igazi kiadás fogja igazolni.

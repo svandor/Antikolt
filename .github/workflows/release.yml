@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: MPL-2.0
+#
+# Release build of Antikolt, and the place where signing happens (ADR-040).
+#
+# Two channels, deliberately separate:
+#   * this workflow builds the portable release (the folder a person unzips and a shortcut points at) and
+#     hands the exes to SignPath, because our own downloads are what SignPath signs;
+#   * a Store MSIX is a different artefact, signed by Microsoft, and it is *not* produced here.
+#
+# The signing step is off until the SignPath application is approved (docs/HU/20-ALASAS.md). It is written
+# against SignPath's documented PowerShell cmdlets rather than guessed at, but it has never run in this
+# repository: treat it as a scaffold that must be proven on the first real release.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    # CEF and Qt must be present for the build; the tooling document explains the layout.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        shell: pwsh
+        run: |
+          pwsh -File scripts/build.ps1 -CheckOnly
+
+      - name: Rust core
+        run: cargo build --release -p antikolt-core-service
+
+      - name: Portable release
+        shell: pwsh
+        run: |
+          # The release configuration, the CEF runtime and the Qt deployment, in one folder.
+          pwsh -File scripts/dist.ps1 -Release -NoBuild -Shortcut:$false
+
+      - name: Package for verification
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\Antikolt\* -DestinationPath "Antikolt-${env:GITHUB_REF_NAME}.zip" -Force
+
+      - name: Sign with SignPath (only when the project is approved)
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        run: |
+          # SignPath signs inside their HSM: the certificate never reaches this runner (ADR-040).
+          Install-Module -Name SignPath -Force -Scope CurrentUser
+          $files = Get-ChildItem dist\Antikolt -Filter *.exe
+          foreach ($file in $files) {
+            $request = Submit-SigningRequest -OrganizationId $env:SIGNPATH_ORGANIZATION_ID `
+              -ProjectSlug $env:SIGNPATH_PROJECT_SLUG `
+              -SigningPolicySlug $env:SIGNPATH_SIGNING_POLICY_SLUG `
+              -ArtifactConfigurationSlug 'exe' `
+              -InputArtifactPath $file.FullName `
+              -WaitForCompletion
+            Get-SignedArtifact -SigningRequestId $request.Id -OutputPath $file.FullName
+          }
+          # Proving it here is cheaper than discovering it after publishing.
+          pwsh -File scripts/sign.ps1 -Files (Get-ChildItem dist\Antikolt -Filter *.exe | ForEach-Object FullName) -VerifyOnly
+
+      - name: Repackage after signing
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: pwsh
+        run: |
+          Remove-Item "Antikolt-${env:GITHUB_REF_NAME}.zip" -Force
+          Compress-Archive -Path dist\Antikolt\* -DestinationPath "Antikolt-${env:GITHUB_REF_NAME}.zip" -Force
+
+      - name: Upload the release artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: antikolt-windows
+          path: |
+            Antikolt-*.zip
+            dist/Antikolt/README.txt
+
+      - name: Attach to the draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: Antikolt-*.zip
