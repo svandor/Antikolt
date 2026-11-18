@@ -59,8 +59,8 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > nyitott originre, egyébként a kártya következő megnyitásakor), a motor `Storage.clearDataForOrigin`-nal
 > töröl. Öntesztek: `--coretest` `session_ledger=ok`, `--sessionpanel` `session_panel=ok`, `--wipetest`
 > `wipe=ok`, `--cleanuptest` `cleanup=ok` (`page_wrote=ok`, `storage_after=|`, `origin_rows=0`).
-> **Ami hátra van:** `session_rules` op + szabály-szerkesztés a panelen, `LossEstimate` kijelzés, és a
-> takarítás média-kivétele.
+> **Ami hátra van:** `LossEstimate` kijelzés a panelen, a takarítás **média-kivétele** (egy játszó kártya
+> késleltesse a törlést), és kártyánkénti (origin-szintű) felülírás — a szabály-szerkesztés **kész** (2b).
 
 **Miért:** M3 („saját napi böngésző”) fő tétele: `keep`/`sweep`/`wipe`, látható munkamenet-panellel.
 
@@ -96,9 +96,10 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > mozgatja, és a `preview_ref` mezőbe írja a nevét. `--previewtest`: `preview_load=loaded:4x3`,
 > `preview_traversal=refused`. `--previewgentest`: `preview_ref=preview-probe.png`,
 > `preview_page=loaded:1560x857`, `preview_generation=ok`.
-> A napi ≤100 korlát **tartós** (`previews/budget.json`, 38. szelet).
-> számláló ma futás-szintű), és a háttérben készített előnézetek (I1). Az árva preview-fájlok takarítása
-> **kész** (`--previewclean`, 36. szelet).
+> A napi ≤100 korlát **tartós** (`previews/budget.json`, 38. szelet, `--previewbudget`), a 7 napos frissítés
+> kész (`--previewrefresh`), az árva fájlok takarítása kész (`--previewclean`).
+> **Ami hátra van:** a **háttérben** készített előnézetek (I1: ma csak a felhasználó által megnyitott kártya
+> kap képet), és a `sha256`-alapú blob-tár (blokkolt: nincs `sha2` crate).
 
 **Miért:** F2 (rács-előnézet) — a `capture` primitív kész, a feldolgozó nincs.
 
@@ -123,7 +124,7 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > A motor `set_media` opja a `prefers-color-scheme`-et állítja (`auto`/`dark`/`light`), a shell toolbar-gombja
 > körbeforgatja és emlékszik rá (minden betöltésnél újra alkalmazza). `--mediatest`: `media_dark=dark`,
 > `media_light=light`, `site_theme=ok`.
-> **Ami hátra van:** oldalankénti kivétel, rákényszerített sötétítés (szándékosan nincs), `scroll`/`set_zoom`.
+> **Ami hátra van:** oldalankénti kivétel; rákényszerített sötétítés szándékosan nincs (`scroll`/`set_zoom` kész, 4d).
 
 ## 4d. Görgetés és nagyítás (kész, ADR-038)
 
@@ -146,7 +147,7 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 > be a 90 s-os kereten belül (a második kártyalátogatás `loadFinished`-je nem érkezik meg a mérésig), tehát a
 > következő lépés a **második kártyanyitás** útjának vizsgálata (a `openCard`/`ensureSurface` sorrend a
 > rács-visszatérés után), nem a teszt időzítése.
-> (b) gesztus-alapú görgetés (belső konténer).
+> (b) gesztus-alapú görgetés (belső konténer); (c) a 7 napos küszöb és a 100-as napi keret nem hangolható a felületről.
 
 ## 5. Széf és passkey
 **Miért:** F4/F4b; a varrat kész (`crates/antikolt-core/src/vault.rs`, 10 teszt, ADR-031).
