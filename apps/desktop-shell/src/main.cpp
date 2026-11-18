@@ -3517,5 +3517,9 @@ int main(int argc, char* argv[]) {
 
     MainWindow window;
     window.show();
+    // Started from a shortcut, the browser must be a browser: the engine comes up by itself, because asking
+    // the user to press "Motor indítása" after a double click is a developer's step, not a user's. Every
+    // self test passes an explicit flag and never reaches this line.
+    window.startEngine();
     return QApplication::exec();
 }

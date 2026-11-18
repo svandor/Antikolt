@@ -39,7 +39,7 @@ cargo build -p antikolt-core-service            # a mag (az előnézethez és a 
 pwsh -File scripts/dist.ps1
 ```
 
-Indítás után nyomd meg a **„Motor indítása"** gombot: megjelenik a kártyarács, és egy kártyára kattintva
+Indítás után **magától elindul a motor** (a „Motor indítása" gomb csak akkor kell, ha leállt), megjelenik a kártyarács, és egy kártyára kattintva
 megnyílik az oldal. Ami kipróbálható:
 
 - **kártyák**: nyitás, bezárás (haza), pin, jegyzet (a kártyán, helyben szerkeszthető), előnézet-kép;
