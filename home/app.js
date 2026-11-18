@@ -150,6 +150,9 @@ function hashHue(text) {
   return Math.abs(hash) % 360;
 }
 
+/** The card the keyboard should return to after the list re-renders (note save/cancel). */
+let pendingFocusId = null;
+
 const STATUS = {
   signed_in: { icon: "🔒", label: "bejelentkezve" },
   expiring: { icon: "⏳", label: "hamarosan lejár" },
@@ -250,7 +253,10 @@ class AntikoltCard extends HTMLElement {
     // this stays cheap. The signature lives on the *host*: a `ShadowRoot` is a `DocumentFragment`,
     // not an `HTMLElement`, so it has no `dataset` — reading it threw on every single card, which
     // left the grid full of empty elements and only looked like "a page that renders nothing".
-    const signature = `${card.id}|${card.title}|${card.size}|${card.status}|${card.pinned}|${themeHost}`;
+    // The note is part of the visible card, and leaving it out was a real defect: an edited note stayed
+    // stale on screen until something else changed the card. It is also what lets render() run after a
+    // save, which is where the focus is restored.
+    const signature = `${card.id}|${card.title}|${card.size}|${card.status}|${card.pinned}|${card.notes}|${themeHost}`;
     if (this.dataset.signature === signature) return;
     this.dataset.signature = signature;
 
@@ -264,6 +270,18 @@ class AntikoltCard extends HTMLElement {
     article.setAttribute("role", "listitem");
     article.setAttribute("aria-label", `${card.title} — ${card.domain} — ${status.label}`);
     article.dataset.cardId = card.id;
+    if (pendingFocusId && card.id === pendingFocusId) {
+      // A note save re-renders the list — and the core's push re-renders it *again* — so the focus must be
+      // re-applied on every rebuild until the list has settled; clearing it on the first one lost the race
+      // (measured: activeElement was null after the push).
+      requestAnimationFrame(() => {
+        if (article.isConnected) article.focus();
+      });
+      const wanted = pendingFocusId;
+      setTimeout(() => {
+        if (pendingFocusId === wanted) pendingFocusId = null;
+      }, 2000);
+    }
 
     const preview = document.createElement("div");
     preview.className = "card-preview";
@@ -354,6 +372,7 @@ class AntikoltCard extends HTMLElement {
       event.preventDefault();
       event.stopPropagation();
       editor.hidden = true;
+      pendingFocusId = this.card?.id ?? null;
       this.dispatchEvent(
         new CustomEvent("antikolt-note", {
           detail: { id: this.card?.id, notes: textarea.value },
@@ -367,6 +386,8 @@ class AntikoltCard extends HTMLElement {
       event.stopPropagation();
       textarea.value = this.card?.notes || "";
       editor.hidden = true;
+      // Nothing re-renders on cancel, so the card is still there to take the focus back.
+      this.querySelector(".card")?.focus();
     });
     editor.append(textarea, save, cancel);
     noteButton.addEventListener("click", (event) => {

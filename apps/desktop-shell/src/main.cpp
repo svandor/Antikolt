@@ -2125,6 +2125,7 @@ int runNoteCheck(const QString& enginePath) {
     window.startEngine();
 
     QString card_id;
+    QString focus_class;
     QJsonObject state;
     {
         QEventLoop loop;
@@ -2162,6 +2163,20 @@ int runNoteCheck(const QString& enginePath) {
                                              return;
                                          }
                                          card_id = value.mid(6);
+                                          window.engine()->evaluate(
+                                              id,
+                                              QStringLiteral(
+                                                  "(function(){var h=document.querySelector('antikolt-card');"
+                                                  "var a=h&&h.shadowRoot&&h.shadowRoot.activeElement;"
+                                                  "return a?(a.className||'focused'):'none';})()"),
+                                              [&](const QJsonObject& focus_reply,
+                                                  const QString& focus_error) {
+                                                  focus_class = focus_error.isEmpty()
+                                                                    ? focus_reply
+                                                                          .value(QStringLiteral("value"))
+                                                                          .toString()
+                                                                    : focus_error;
+                                              });
                                          QTimer::singleShot(1200, &loop, [&, id] {
                                              window.engine()->evaluate(
                                                  id,
@@ -2217,6 +2232,7 @@ int runNoteCheck(const QString& enginePath) {
 
     out << "note_id=" << card_id << '\n';
     out << "note_page=" << state.value(QStringLiteral("notes")).toString() << '\n';
+    out << "note_focus=" << focus_class << '\n';
     out << "note_model=" << state.value(QStringLiteral("cardNotes")).toString() << '\n';
     out << "note_core=" << stored_notes << '\n';
     out << "note_error=" << state.value(QStringLiteral("error")).toString() << '\n';
