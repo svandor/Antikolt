@@ -82,7 +82,10 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > **újrarendereli** a kártyát, tehát a fókusz a régi elemre kerül, ami már nincs a dokumentumban. A helyes
 > javítás: a render után, kártya-azonosító alapján visszafókuszálni. A kód ezért **nincs** a fában (nem
 > félkész), csak a mérés.
-> A jegyzet-szerkesztő fókusz-visszaadása **implementálva** (render utáni, id-alapú), de a **mérés** a teszt-ablak fókusz-hiánya miatt nem lehetséges: `note_focus=` próba marad, állítás nélkül (43. szelet).\n> **Ami hátra van:** a lap-oldali `test.hang` hook
+> A jegyzet-szerkesztő fókusz-visszaadása **implementálva** (render utáni, id-alapú), de a **mérés** a teszt-ablak fókusz-hiánya miatt nem lehetséges: `note_focus=` próba marad, állítás nélkül (43. szelet).\n> **A rendered jegyzet mérése** is hátra van: a `--notetest` próbája a mentés pillanatában fut, amikor a
+> kártya még nem renderelődött újra (`note_rendered=none`); a próbát a **state-válasz után** kell futtatni
+> (a `note_page` már a 1200 ms-os várakozás után olvas). A kód ezért nincs a fában.
+> **Ami hátra van:** a lap-oldali `test.hang` hook
 > dokumentáltsága a felhasználói doksiban (ma csak a shell README említi), és az, hogy a rács saját
 > keresése szándékosan lokális marad (a lap a teljes listát kapja).
 
