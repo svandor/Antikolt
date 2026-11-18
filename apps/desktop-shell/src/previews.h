@@ -158,4 +158,23 @@ inline bool previewBudgetAllows(const QString& budget_path, const QString& today
     return previewUsedToday(budget_path, today) < daily_max;
 }
 
+/// Where the background preview worker is (ADR-041). The name of each state is the whole protocol: a worker
+/// that is capturing must be destroyed before another may start, and any state but Idle must abort when the
+/// user opens a card.
+enum class PreviewWorker { Idle, Loading, Capturing };
+
+/// May a worker start now? ADR-041's four conditions, in one place so the window cannot forget one.
+///
+/// `has_live_card` is the invariant that matters (I1): a worker may only run while the user is on the grid.
+inline bool previewWorkerCanStart(PreviewWorker state, bool has_live_card, bool budget_ok,
+                                  bool has_candidate) {
+    return state == PreviewWorker::Idle && !has_live_card && budget_ok && has_candidate;
+}
+
+/// Must the running worker be abandoned right now? The user opened a card: the preview is never worth making
+/// them wait (ADR-041, limitation 4).
+inline bool previewWorkerMustAbort(PreviewWorker state, bool has_live_card) {
+    return state != PreviewWorker::Idle && has_live_card;
+}
 }  // namespace antikolt
+

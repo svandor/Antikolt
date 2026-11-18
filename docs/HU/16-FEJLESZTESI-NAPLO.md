@@ -16,6 +16,37 @@ workerek; `loses_login`), és a panel hatodik oszlopa ezt írja ki: `7 süti · 
 panel_row=https://example.org | expired | sweep | 7 | lejárt | 7 süti · 5.0 kB
 session_panel=ok
 ```
+## 2026-11-17 (ötvenkettedik szelet) — ADR-041 őrei, bizonyítva
+
+A háttér-előnézet munkásának első darabja az a **négy feltétel**, ami nélkül nem indulhat, és az a szabály,
+ami szerint azonnal meg kell szakadnia. Mindkettő a `previews.h`-ban van, egy helyen, hogy a ablak ne
+felejthessen el egyet sem:
+
+- `previewWorkerCanStart(state, has_live_card, budget_ok, has_candidate)` — csak `Idle` állapotban, **kártya
+  nélkül** (a felhasználó a rácson van), kerettel és jelölttel;
+- `previewWorkerMustAbort(state, has_live_card)` — a futó munkás **azonnal** megszakad, ha kártya nyílik.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --previewqueue
+queue_first=no-preview
+queue_second=stale
+queue_none=empty
+queue_guards=ok
+preview_queue=ok        (exit 0)
+```
+
+A `queue_guards` sor öt esetet bizonyít: indulás a rácson; **nem** indul kártya fölött; **nem** indul keret
+nélkül; **nem** indul második munkás; és a futó munkás megszakad, amikor kártya nyílik.
+
+Egy hiba a saját munkámban: az első beszúrás a `namespace antikolt` **záró kapcsos zárójele utánra** került
+(`C2039`), ezért a fordító nem találta; a blokk most a névtéren belül van.
+
+### Ami még hátra van
+
+- a munkás **végrehajtása** (felület létrehozása `persist:preview` partícióval, 8 s plafon, felvétel,
+  `preview_ref` írása, megszűntetés) — a következő szelet, `--previewworkertest`-tel.
 ## 2026-11-17 (ötvenegyedik szelet) — ki kapjon háttér-előnézetet: a döntés
 
 A háttér-előnézet (I1) két részre bontható: **melyik kártya** kapjon képet, és **mikor** szabad egyáltalán

@@ -2648,8 +2648,28 @@ int runPreviewQueueCheck() {
     const QString none = antikolt::nextPreviewCard(fresh_only, dir, now_ms, max_age_ms);
     out << "queue_none=" << (none.isEmpty() ? QStringLiteral("empty") : none) << '\n';
     QDir(dir).removeRecursively();
+    // ADR-041 guards: the worker may start only on the grid, with budget and a candidate - and it must
+    // abandon the moment the user opens a card. Proven here because it is cheap to prove.
+    const bool start_on_grid = antikolt::previewWorkerCanStart(antikolt::PreviewWorker::Idle, false, true,
+                                                                 !first.isEmpty());
+    const bool no_start_over_card = !antikolt::previewWorkerCanStart(
+        antikolt::PreviewWorker::Idle, true, true, !first.isEmpty());
+    const bool no_start_over_budget = !antikolt::previewWorkerCanStart(
+        antikolt::PreviewWorker::Idle, false, false, !first.isEmpty());
+    const bool no_double_worker = !antikolt::previewWorkerCanStart(
+        antikolt::PreviewWorker::Capturing, false, true, !first.isEmpty());
+    const bool aborts_when_opened =
+        antikolt::previewWorkerMustAbort(antikolt::PreviewWorker::Loading, true) &&
+        !antikolt::previewWorkerMustAbort(antikolt::PreviewWorker::Idle, true);
+    out << "queue_guards="
+        << ((start_on_grid && no_start_over_card && no_start_over_budget && no_double_worker &&
+             aborts_when_opened)
+                ? "ok"
+                : "FAILED")
+        << '\n';
     const bool ok = first == QStringLiteral("no-preview") && second == QStringLiteral("stale") &&
-                    none.isEmpty();
+                    none.isEmpty() && start_on_grid && no_start_over_card && no_start_over_budget &&
+                    no_double_worker && aborts_when_opened;
     out << "preview_queue=" << (ok ? "ok" : "FAILED") << '\n';
     out.flush();
     return ok ? 0 : 1;
