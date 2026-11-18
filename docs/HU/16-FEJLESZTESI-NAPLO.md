@@ -32,9 +32,20 @@ A bekötést a meglévő kártyanyitó tesztek fedik (`--opentest`, `--scrollzoo
 megnyílik és görgethető a visszaállítás mellett); **önálló end-to-end teszt** a visszaállításra még nincs —
 ez a következő szelet.
 
+### Kísérlet az end-to-end tesztre — negatív eredménnyel
+
+Megírtam a kétfázisú tesztet (nyit → görget 700-ra → haza → újranyit → olvas). Az első fázis **mérhetően
+működik**: `first_scroll_y=700`. A második fázisban azonban a rács újratöltése után a lap DOM-jában nem
+találta a kártyát (`clicked_phase1=no-card`), hiába vártam 2,5 másodpercet — vagyis a kártyalista
+*ráfestése* a második visszatéréskor később érkezik, mint a teszt kattintana. A tesztet **nem** hagytam a
+Kapuban: kivettem a kódból, mert egy bizonytalanul bukó ellenőrzés rosszabb, mint egy hiányzó. A tanulság a
+következő szelet kiindulópontja: a rács-kártyalista betöltésére **eseményt** kell várni (a lap jelezze, hogy
+megkapta a listát), nem időzítőre.
+
 ### Ami még nyitott
 
-- End-to-end teszt: kártya megnyitása → görgetés → haza → újranyitás → ugyanott folytatja.
+- End-to-end teszt a visszaállításra (a fenti negatív eredmény miatt: a rács „kártyalista megérkezett"
+  jelzésére várva).
 - Kártyánkénti munkamenet-felülírás, `LossEstimate`, memória-büdzsé (F6).
 ## 2026-11-17 (harmincnyolcadik szelet) — az előnézet-gyártás napi büdzséje tartós
 
