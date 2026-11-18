@@ -3,6 +3,29 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (negyvenegyedik szelet) — mennyi veszne el: `SessionSize`
+
+A `LossEstimate` már létezett, de az a **súrlódást** írja le (jelszó, TOTP, captcha) — nem az **mennyiséget**.
+A panelhez mindkettő kell: „3 süti" és „újra be kell jelentkezned" két különböző rossz. Ezért a ledger sora
+most `SessionSize`-ot ad (`size()`: sütik, bájt, service workerek) és `loses_login()`-t; minden szám a sor
+saját mezőiből jön, semmi becslés.
+
+Az első próbálkozás **duplikálta** a `LossEstimate`-et (ugyanaz a név, más mezők) — a fordító `E0428`-mal
+állította meg, és ez helyes volt: egy típus, egy jelentés. A végleges név `SessionSize`, mert más kérdésre
+válaszol.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+cargo test -p antikolt-core
+test session::tests::session_size_counts_what_a_wipe_removes ... ok
+test result: ok. 78 passed; 0 failed
+```
+
+### Ami még nyitott
+
+- A panel **kijelzése** (`LossEstimate` + `SessionSize` a sorokban) — a mag oldala kész, a huzal és a
+  felület következik.
 ## 2026-11-17 (negyvenedik szelet) — a hely visszaadása, end to end (három hiba)
 
 Az előző három kísérlet a mérésnél akadt el. Most a teszt **átment**, és közben **három valódi hibát**

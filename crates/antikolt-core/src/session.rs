@@ -287,10 +287,36 @@ pub struct SessionLedgerEntry {
     pub keep_alive: bool,
 }
 
+/// The measured size of one row — what a cleanup would actually delete.
+///
+/// This is *not* `LossEstimate`: that one describes the friction of losing a login (password, TOTP, captcha),
+/// while this one is the amount. Both are shown, because "3 cookies" and "you will need your password" are
+/// different kinds of bad. Nothing here is guessed: the numbers come from the ledger's own fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionSize {
+    pub cookies: u32,
+    pub bytes: u64,
+    pub service_workers: u32,
+}
+
 impl SessionLedgerEntry {
     /// The RAM this session costs *right now*, which is the number that matters.
     pub fn current_ram_bytes(&self) -> u64 {
         self.live_ram_bytes.unwrap_or(0)
+    }
+
+    /// The measured size of this row: what a cleanup would remove.
+    pub fn size(&self) -> SessionSize {
+        SessionSize {
+            cookies: self.cookie_count,
+            bytes: self.disk_bytes(),
+            service_workers: self.service_worker_count,
+        }
+    }
+
+    /// `true` when the row holds a login, so a wipe means signing in again on that origin.
+    pub fn loses_login(&self) -> bool {
+        self.state == LoginState::LoggedIn
     }
 
     pub fn disk_bytes(&self) -> u64 {
@@ -326,6 +352,37 @@ pub enum LedgerError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn session_size_counts_what_a_wipe_removes() {
+        let entry = SessionLedgerEntry {
+            container_id: "c-private".into(),
+            origin: "https://example.org".into(),
+            state: LoginState::LoggedIn,
+            policy: SessionPolicy::Wipe,
+            cookie_count: 7,
+            cookie_bytes: 1024,
+            storage_bytes: 4096,
+            service_worker_count: 2,
+            last_seen_ms: Some(1_700_000_000_000),
+            last_verified_ms: None,
+            live_ram_bytes: None,
+            keep_alive: false,
+        };
+        let size = entry.size();
+        assert_eq!(size.cookies, 7);
+        assert_eq!(size.bytes, 5120);
+        assert_eq!(size.service_workers, 2);
+        assert!(entry.loses_login(), "a logged-in row loses its login");
+
+        let mut signed_out = entry.clone();
+        signed_out.state = LoginState::LoggedOut;
+        signed_out.live_ram_bytes = Some(64 * 1024 * 1024);
+        assert!(!signed_out.loses_login());
+        // Dormant costs nothing; a live card costs what was measured.
+        assert_eq!(signed_out.current_ram_bytes(), 64 * 1024 * 1024);
+        assert_eq!(entry.current_ram_bytes(), 0);
+    }
+
     use super::*;
 
     const HOUR: u64 = 60 * 60_000;
