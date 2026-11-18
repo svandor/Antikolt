@@ -3,6 +3,38 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-040 — Aláírás: Store + SignPath, két csatorna (2026-11-17)
+
+**Kontextus:** a kiadás ma egy hordozható mappa + asztali parancsikon (`scripts/dist.ps1`), aláírás nélkül.
+Az aláírás nélküli exére a SmartScreen figyelmeztet, ami egy böngészőnél elfogadhatatlan a végfelhasználónak.
+Az ingyenes utak 2026-ban: **Microsoft Store MSIX** (a Microsoft újraaláírja a csomagot, a fejlesztői fiók
+egyéneknek ingyenes) és **SignPath Foundation** (ingyenes OV-szintű aláírás OSS-projekteknek, a kulcs az ő
+HSM-jükben). Az Azure Artifact Signing (korábban Trusted Signing, ~10 USD/hó) egyéni fejlesztőknek csak
+USA/Kanadában érhető el, EV-tanúsítvány pedig 2024 óta nem kerüli meg a SmartScreen-t — a 400+ USD/éves
+prémium ezért nem indokolt.
+
+**Döntés:** **két csatorna, nem választás.**
+
+1. **Saját letöltés (ez a termék ma):** a `dist\Antikolt` mappa exéit **SignPath** írja alá — ingyenes OSS
+   program, a feltétel nyilvános repó és CI-build. A jelentkezés akkor esedékes, amikor van reprodukálható
+   kiadás; addig self-signed tanúsítvány csak a saját gépen érvényes tesztelésre való (a Microsoft
+   összehasonlítása szerint ez másoknál **blokkolja** a telepítést).
+2. **Store-ból telepítők:** **MSIX + Microsoft Store**, ahol az aláírást a Microsoft végzi (ingyenes, nincs
+   tanúsítvány). Ez a csomag a Store-ból települ, nem a hordozható mappánkat írja alá.
+
+**Miért nem elég az egyik:** a Store nem írja alá a saját oldalról letöltött exét (a hordozható mappát és a
+parancsikont), a SignPath pedig nem tesz semmit a Store-ból telepített MSIX-szel. A kettő **különböző
+artefaktumot** fed, ezért mindkettő kell a teljes lefedettséghez.
+
+**Következmény:** (+) a saját kiadás is aláírt lesz, tanúsítvány-vásárlás nélkül; (+) a Store-út ingyenes és
+figyelmeztetésmentes a Store-felhasználóknak; (+) a tanúsítvány soha nem kerül a fejlesztő gépére (nincs
+kiszivárgó kulcs); (−) a SignPath-aláírás az ő folyamatukon megy át (CI-integráció + elbírálás), a Store-út
+pedig MSIX-csomagolást és Store-szabályokat hoz; (−) Linux DEB-aláírás az ingyenes tierben **nem biztos**
+(RPM igen, DEB csak „Semantic Code Signing" jelöléssel) — ezt a SignPath-nál meg kell erősíteni.
+
+**Részletek és lépések:** `20-ALASAS.md`. Az eszköz a repóban: `scripts/sign.ps1` (PFX / thumbprint /
+self-signed mód, és **tanúsítvány nélkül elutasít**).
+
 ## ADR-039 — A munkamenet-szabályokat a felhasználó állítja, a mag ellenőrzi (2026-11-17)
 
 **Kontextus.** A 24 órás politika eddig csak *megjeleníthető* volt: a panel mutatta a szabályokat, de
@@ -293,6 +325,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-037 | Az oldal-témát a lap dönti el: `set_media` a `prefers-color-scheme`-et állítja, nem kényszerít színt | Elfogadva |
 | ADR-038 | `scroll` = `window.scrollBy`, `set_zoom` = újratördelő device-metrics felülírás, a DPR-rel szorozva | Elfogadva |
 | ADR-039 | A munkamenet-szabályokat a felhasználó állítja (`session_rules`), a mag ellenőrzi (TTL 1 óra – 30 nap) | Elfogadva |
+| ADR-040 | Aláírás: Store + SignPath, két csatorna (Store = MSIX az MS-től, SignPath = a saját hordozható kiadás) | Elfogadva |
 
 ---
 

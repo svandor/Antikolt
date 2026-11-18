@@ -1,5 +1,7 @@
 # Aláírás — hogyan szerezzünk tanúsítványt, és mi a teendő
 
+> **A döntés rögzítve:** [ADR-040](05-DONTESEK.md) — két csatorna: **Store (MSIX, a Microsoft írja alá)** és **SignPath (a saját hordozható kiadás)**.
+
 > Ez a lap azt írja le, **milyen úton lehet ma (2026) aláírt Antikolt-exét csinálni**, mennyibe kerül, és mi a
 > teendő a repóban. A rövid válasz: **ingyenes, nyilvánosan is elfogadott kódaláíró tanúsítvány csak egy
 > úton van: a SignPath Foundation** (nyílt forrású projekteknek), és ott a kulcs nem a mi gépünkön van.

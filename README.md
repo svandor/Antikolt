@@ -26,6 +26,7 @@
 | `perf/measure-freeze.ps1` | fagyasztás-mérés: **mennyi RAM-ot ad vissza** a kártya lemezre mentése |
 | `perf/measure-engine.ps1` | memóriamérő: a motor folyamatfájának privát memóriája, markdown + JSON riport |
 | `home/` | a kezdőlap: `<antikolt-card>`, virtualizált rács, négy téma, keresés, billentyűzet — böngészőben önállóan is megnyitható |
+| **Aláírás** | **Store + SignPath** — a Store az MSIX-et írja alá (ingyenes), a SignPath a saját hordozható kiadást ([ADR-040](docs/HU/05-DONTESEK.md), [részletek](docs/HU/20-ALASAS.md)) |
 | Shell ↔ motor | **kész és mérve**: IPC, fagyasztás/hibernálás, előnézet, memória-mérés, oldal-téma, nagyítás, görgetés — `scripts/verify.ps1` 27 öntesztje |
 
 ## Kipróbálás (Windows, ma)
