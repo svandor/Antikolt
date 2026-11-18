@@ -157,13 +157,15 @@ tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a
 
 **Bizonyíték:** a varrat tesztjei zölden + egy `create`/`get` kör egy teszt-RP-n (F0 S-D spike).
 
-## 5b. Ismert hiba: a `--capturetest` néha összeomlik kilépéskor
+## 5b. Javítva: a `--capturetest` összeomlása kilépéskor
 
-Négy futásból **egy** `0xC0000005` (access violation) kóddal tért vissza, **miután minden eredményt kiírt**
-(`capture_size=ok`), tehát a hiba a **lezárásban** van, nem a felvételben. A jelenség magyarázza a korábbi
-intermittáló `verify.ps1`-bukásokat. Nem javítottam (nincs még pontos kép a lezárási sorrendről); a
-következő szelet: a `--capturetest` kilépési útja (a `QEventLoop` utáni `window.close()`, illetve a motor
-`shutdown` válaszának visszahívása egy már megszűnt objektumra).
+Négy futásból **egy** `0xC0000005` kóddal tért vissza, **miután minden eredményt kiírt** — tehát a lezárás
+volt a hibás. Ok: a `destroy_surface` kérést **tűz-és-felejtsd** módon küldte el, majd azonnal lezárta a
+csatornát (`client.shutdown()`), így a válasz egy már megszűnő klienshez érkezett.
+
+Javítás: a teszt megvárja a `destroy_surface` válaszát (max. 2 s), és csak utána zárja le a csatornát.
+**Mérés: 8/8 futás zöld** (korábban 4-ből 1 összeomlás).
+
 
 ## 6. Ismert csapdák (drágán tanultuk)
 

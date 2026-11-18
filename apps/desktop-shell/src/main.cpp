@@ -498,7 +498,13 @@ int runEmbedCheck(const QString& enginePath) {
     }
 
     if (surface != 0) {
-        client.destroySurface(surface, [](const QJsonObject&, const QString&) {});
+        // Wait for the destroy reply before shutting the transport down. Firing it and closing the pipe
+        // leaves a reply queued for a client that is about to be destructed — that is the 0xC0000005 seen
+        // after every result was printed (1 crash in 4 runs of --capturetest).
+        QEventLoop wait;
+        client.destroySurface(surface, [&wait](const QJsonObject&, const QString&) { wait.quit(); });
+        QTimer::singleShot(2000, &wait, &QEventLoop::quit);
+        wait.exec();
     }
     client.shutdown();
     window.close();
@@ -673,7 +679,13 @@ int runCaptureCheck(const QString& enginePath) {
         ++failures;
     }
     if (surface != 0) {
-        client.destroySurface(surface, [](const QJsonObject&, const QString&) {});
+        // Wait for the destroy reply before shutting the transport down. Firing it and closing the pipe
+        // leaves a reply queued for a client that is about to be destructed — that is the 0xC0000005 seen
+        // after every result was printed (1 crash in 4 runs of --capturetest).
+        QEventLoop wait;
+        client.destroySurface(surface, [&wait](const QJsonObject&, const QString&) { wait.quit(); });
+        QTimer::singleShot(2000, &wait, &QEventLoop::quit);
+        wait.exec();
     }
     client.shutdown();
     out.flush();
