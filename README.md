@@ -35,6 +35,9 @@ pwsh -File scripts/build.ps1                     # shell + motorház
 cargo build -p antikolt-core-service            # a mag (az előnézethez és a panelhez kell)
 .\build\apps\desktop-shell\antikolt-shell.exe    # a böngésző
 
+# aláírás (tanúsítvány kell hozzá — lásd docs/HU/20-ALASAS.md)
+pwsh -File scripts/sign.ps1
+
 # vagy: hordozható mappa + asztali parancsikon (nem telepítő)
 pwsh -File scripts/dist.ps1
 ```
