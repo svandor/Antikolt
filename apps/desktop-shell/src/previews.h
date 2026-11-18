@@ -76,6 +76,51 @@ inline bool previewNeedsRefresh(const QString& path, qint64 now_ms, qint64 max_a
     return (now_ms - modified_ms) > max_age_ms;
 }
 
+/// Which card's preview the background worker should make next — or an empty id if none needs one.
+///
+/// The rule the user would state: a card with no picture is more urgent than a card with an old one, and a
+/// card that is already fresh is not urgent at all. Ties go to the card that has waited longest without a
+/// preview (`last_opened_at_ms` is not a proxy for that, so the oldest preview file wins, and cards with no
+/// file at all come first, ordered by their open time).
+///
+/// Deliberately not here: whether the *browser* may run a worker right now (that is invariant I1 — one live
+/// surface — and belongs to the window), and whether today's budget allows it (previewBudgetAllows).
+inline QString nextPreviewCard(const QJsonArray& cards, const QString& previews_dir, qint64 now_ms,
+                               qint64 max_age_ms) {
+    QString best_id;
+    QString best_name;
+    int best_rank = 2;  // 0 = no preview at all, 1 = stale; a fresh card is rank 2 and never chosen
+    qint64 best_order = 0;
+    for (const QJsonValue& value : cards) {
+        const QJsonObject card = value.toObject();
+        const QString id = card.value(QStringLiteral("id")).toString();
+        const QString url = card.value(QStringLiteral("url")).toString();
+        if (id.isEmpty() || !(url.startsWith(QStringLiteral("http://")) ||
+                              url.startsWith(QStringLiteral("https://")))) {
+            continue;  // a card without a page cannot be photographed
+        }
+        const QString name = card.value(QStringLiteral("preview_ref")).toString();
+        const QString path = name.isEmpty() ? QString() : previews_dir + QLatin1Char('/') + name;
+        int rank = 1;
+        if (path.isEmpty() || !QFileInfo::exists(path)) {
+            rank = 0;
+        } else if (!previewNeedsRefresh(path, now_ms, max_age_ms)) {
+            continue;
+        }
+        const qint64 order = static_cast<qint64>(
+            card.value(QStringLiteral("last_opened_at_ms")).toDouble());
+        if (rank < best_rank || (rank == best_rank && order < best_order) ||
+            (rank == best_rank && order == best_order && best_id.isEmpty())) {
+            best_rank = rank;
+            best_order = order;
+            best_id = id;
+            best_name = name;
+        }
+    }
+    Q_UNUSED(best_name);
+    return best_id;
+}
+
 /// How many previews today's budget has already allowed.
 ///
 /// The budget is a tiny file in the profile (`{"day":"2026-11-17","count":7}`), because the counter must

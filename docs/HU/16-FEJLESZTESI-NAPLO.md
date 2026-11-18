@@ -16,6 +16,32 @@ workerek; `loses_login`), és a panel hatodik oszlopa ezt írja ki: `7 süti · 
 panel_row=https://example.org | expired | sweep | 7 | lejárt | 7 süti · 5.0 kB
 session_panel=ok
 ```
+## 2026-11-17 (ötvenegyedik szelet) — ki kapjon háttér-előnézetet: a döntés
+
+A háttér-előnézet (I1) két részre bontható: **melyik kártya** kapjon képet, és **mikor** szabad egyáltalán
+fényképezni (egy élő felület, a felhasználó nem zavarása). Az első rész tiszta döntés, és kész:
+
+`antikolt::nextPreviewCard(cards, previews_dir, now, max_age_ms)` — a sorrend, amit a felhasználó is így
+mondana: **előbb a kép nélküli**, aztán az **elavult** (7 nap), a friss nem kap új képet; a `file:`/nem-http
+kártyák kimaradnak (nincs mit lefényképezni). Azonos rangnál a régebben megnyitott kártya megy előre.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --previewqueue
+queue_first=no-preview
+queue_second=stale
+queue_none=empty
+preview_queue=ok        (exit 0)
+```
+
+A `--previewqueue` bekerült a `verify.ps1` kapujába.
+
+### Ami még hátra van
+
+- a **munkás** (második, ideiglenes felület a rácson kívül, egyidejűleg egy) — ez érinti az I1-et, ezért
+  külön döntés/ADR kell hozzá, mielőtt kód lesz belőle;
+- a háttér-indítás feltétele: ne legyen élő kártya, és a napi keret engedje (`previewBudgetAllows`).
 ## 2026-11-17 (ötvenedik szelet) — MSIX: a Store-ág csomagja
 
 Az ADR-040 két csatornát rögzít; a Store-ághoz eddig csak a döntés volt meg, csomag nem. Elkészült a

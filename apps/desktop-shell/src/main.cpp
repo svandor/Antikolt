@@ -2588,6 +2588,73 @@ int runScrollBookCheck() {
 ///
 /// The budget is a file in the profile, so the check is a scratch directory and two day strings - a counter
 /// that resets on every launch would pass a memory-only test and still be no budget at all.
+/// Prove the background preview queue: which card needs a picture next, and which does not.
+///
+/// The decision only — the worker that acts on it must respect I1 (one live surface), so it lives in the window.
+int runPreviewQueueCheck() {
+    QTextStream out(stdout);
+    const QString dir = QDir::tempPath() + QStringLiteral("/antikolt-preview-queue-") +
+                        QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir().mkpath(dir);
+    const QString fresh_path = dir + QStringLiteral("/fresh.png");
+    const QString stale_path = dir + QStringLiteral("/stale.png");
+    for (const QString& path : {fresh_path, stale_path}) {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            out << "queue_setup=FAILED\n";
+            return 1;
+        }
+        file.write("x");
+        file.close();
+    }
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    const qint64 max_age_ms = 7LL * 24 * 60 * 60 * 1000;
+    {
+        QFile stale_file(stale_path);
+        if (stale_file.open(QIODevice::ReadWrite)) {
+            stale_file.setFileTime(QDateTime::fromMSecsSinceEpoch(now_ms - 30LL * 24 * 60 * 60 * 1000),
+                                   QFileDevice::FileModificationTime);
+        }
+    }
+    const auto card = [](const QString& id, const QString& url, const QString& ref, qint64 opened) {
+        QJsonObject object;
+        object.insert(QStringLiteral("id"), id);
+        object.insert(QStringLiteral("url"), url);
+        object.insert(QStringLiteral("preview_ref"), ref);
+        object.insert(QStringLiteral("last_opened_at_ms"), static_cast<double>(opened));
+        return object;
+    };
+    QJsonArray cards;
+    cards.append(card(QStringLiteral("no-preview"), QStringLiteral("https://example.org/a"), QString(), 3000));
+    cards.append(card(QStringLiteral("stale"), QStringLiteral("https://example.org/b"),
+                      QStringLiteral("stale.png"), 1000));
+    cards.append(card(QStringLiteral("fresh"), QStringLiteral("https://example.org/c"),
+                      QStringLiteral("fresh.png"), 0));
+    cards.append(card(QStringLiteral("local"), QStringLiteral("file:///C:/x.html"), QString(), 500));
+
+    const QString first = antikolt::nextPreviewCard(cards, dir, now_ms, max_age_ms);
+    out << "queue_first=" << first << '\n';
+    QJsonArray without_first;
+    for (const QJsonValue& value : cards) {
+        if (value.toObject().value(QStringLiteral("id")).toString() != first) {
+            without_first.append(value);
+        }
+    }
+    const QString second = antikolt::nextPreviewCard(without_first, dir, now_ms, max_age_ms);
+    out << "queue_second=" << second << '\n';
+    QJsonArray fresh_only;
+    fresh_only.append(card(QStringLiteral("fresh"), QStringLiteral("https://example.org/c"),
+                           QStringLiteral("fresh.png"), 0));
+    const QString none = antikolt::nextPreviewCard(fresh_only, dir, now_ms, max_age_ms);
+    out << "queue_none=" << (none.isEmpty() ? QStringLiteral("empty") : none) << '\n';
+    QDir(dir).removeRecursively();
+    const bool ok = first == QStringLiteral("no-preview") && second == QStringLiteral("stale") &&
+                    none.isEmpty();
+    out << "preview_queue=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runPreviewBudgetCheck() {
     QTextStream out(stdout);
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
@@ -3369,6 +3436,9 @@ int main(int argc, char* argv[]) {
                                          QStringLiteral("path"));
     const QCommandLineOption scrollbook(QStringLiteral("scrollbook"),
                                         QStringLiteral("Prove the scroll book, then exit."));
+    const QCommandLineOption previewqueue(
+        QStringLiteral("previewqueue"),
+        QStringLiteral("Prove the background preview queue, then exit."));
     const QCommandLineOption previewbudget(QStringLiteral("previewbudget"),
                                          QStringLiteral("Prove the daily preview budget, then exit."));
     const QCommandLineOption previewrefresh(QStringLiteral("previewrefresh"),
@@ -3410,6 +3480,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(previewclean);
     parser.addOption(previewrefresh);
     parser.addOption(previewbudget);
+    parser.addOption(previewqueue);
     parser.addOption(scrollbook);
     parser.addOption(scrollrestore);
     parser.addOption(coretest);
@@ -3437,6 +3508,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(previewbudget)) {
         return runPreviewBudgetCheck();
+    }
+
+    if (parser.isSet(previewqueue)) {
+        return runPreviewQueueCheck();
     }
 
     if (parser.isSet(scrollbook)) {

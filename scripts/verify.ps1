@@ -147,6 +147,14 @@ if (-not $shell) {
 } else {
     & $shell --previewbudget
     Add-Result 'previewbudget' ($LASTEXITCODE -eq 0)
+
+Write-Host '=== previewqueue ===' -ForegroundColor Cyan
+if (-not (Test-Path $shell)) {
+    Add-Result 'previewqueue' $false 'missing antikolt-shell.exe'
+} else {
+    & $shell --previewqueue
+    Add-Result 'previewqueue' ($LASTEXITCODE -eq 0)
+}
 }
 Write-Host '=== previewrefresh ===' -ForegroundColor Cyan
 if (-not $shell) {
