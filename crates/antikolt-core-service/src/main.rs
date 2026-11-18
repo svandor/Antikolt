@@ -174,13 +174,34 @@ fn handle(request: &Value, store: &mut CardStore, sessions: &mut SessionStore) -
         // ---- session ledger -------------------------------------------------------------------
         // The policy itself lives in `antikolt-core::session`; these ops are the ledger's verbs, and
         // `session_due` is the evaluation the shell's cleanup round asks for (ADR-033).
-        "session_list" => (
-            ok_reply(
-                id,
-                json!({ "sessions": sessions.list(), "rules": sessions.rules() }),
-            ),
-            true,
-        ),
+        "session_list" => {
+            // Each row carries the *measured* size of what a cleanup would remove (session::SessionSize) and
+            // whether it holds a login: the panel must be able to warn before the button, not after.
+            let rows: Vec<serde_json::Value> = sessions
+                .list()
+                .into_iter()
+                .map(|entry| {
+                    let size = entry.size();
+                    let mut row = serde_json::to_value(&entry).unwrap_or_default();
+                    if let Some(object) = row.as_object_mut() {
+                        object.insert(
+                            "size".into(),
+                            json!({
+                                "cookies": size.cookies,
+                                "bytes": size.bytes,
+                                "service_workers": size.service_workers,
+                            }),
+                        );
+                        object.insert("loses_login".into(), json!(entry.loses_login()));
+                    }
+                    row
+                })
+                .collect();
+            (
+                ok_reply(id, json!({ "sessions": rows, "rules": sessions.rules() })),
+                true,
+            )
+        }
         "session_rules" => {
             let Some(rules) = request.get("rules") else {
                 return (

@@ -3020,7 +3020,7 @@ int runSessionPanelCheck(const QString& enginePath) {
     // rules the core holds (the panel is a view of the policy, not of its own memory — ADR-039).
     const bool ok = rows == 1 && summary.contains(QStringLiteral("https://example.org")) &&
                     summary.contains(QStringLiteral("lejárt")) && panel_ttl_hours == 2 &&
-                    panel_lock_wipe;
+                    panel_lock_wipe && summary.contains(QStringLiteral("süti"));
     out << "session_panel=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

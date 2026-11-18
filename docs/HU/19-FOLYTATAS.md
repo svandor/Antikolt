@@ -59,7 +59,7 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > nyitott originre, egyébként a kártya következő megnyitásakor), a motor `Storage.clearDataForOrigin`-nal
 > töröl. Öntesztek: `--coretest` `session_ledger=ok`, `--sessionpanel` `session_panel=ok`, `--wipetest`
 > `wipe=ok`, `--cleanuptest` `cleanup=ok` (`page_wrote=ok`, `storage_after=|`, `origin_rows=0`).
-> A **mennyiség** oldala kész: `SessionSize` + `loses_login()` a ledger során (41. szelet, 78 core teszt).\n> **Ami hátra van:** `LossEstimate` és `SessionSize` kijelzése a panelen, a takarítás **média-kivétele** (egy játszó kártya
+> A **mennyiség** oldala kész: `SessionSize` + `loses_login()` a ledger során (41. szelet, 78 core teszt).\n> A panel **mutatja** is: `7 süti · 5.0 kB` (+ `· belépés` bejelentkezett sornál), 42. szelet.\n> **Ami hátra van:** a takarítás **média-kivétele** (egy játszó kártya
 > késleltesse a törlést), és kártyánkénti (origin-szintű) felülírás — a szabály-szerkesztés **kész** (2b).
 
 **Miért:** M3 („saját napi böngésző”) fő tétele: `keep`/`sweep`/`wipe`, látható munkamenet-panellel.

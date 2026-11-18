@@ -3,6 +3,19 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+### A panel is mutatja is (42. szelet)
+
+A `session_list` válasz sorai most a mag által mért mennyiséget is hordozzák (`size`: sütik, bájt, service
+workerek; `loses_login`), és a panel hatodik oszlopa ezt írja ki: `7 süti · 5.0 kB`, bejelentkezett sornál
+`· belépés` toldattal. A felület nem számol semmit: a mag dönt, a shell csak megjelenít.
+
+### Bizonyíték
+
+```
+--sessionpanel
+panel_row=https://example.org | expired | sweep | 7 | lejárt | 7 süti · 5.0 kB
+session_panel=ok
+```
 ## 2026-11-17 (negyvenegyedik szelet) — mennyi veszne el: `SessionSize`
 
 A `LossEstimate` már létezett, de az a **súrlódást** írja le (jelszó, TOTP, captcha) — nem az **mennyiséget**.

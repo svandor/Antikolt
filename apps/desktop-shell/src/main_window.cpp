@@ -821,10 +821,10 @@ void MainWindow::showSessions() {
             "többi a kártya következő megnyitásakor."));
         connect(cleanup, &QPushButton::clicked, this, &MainWindow::cleanupSessions);
         layout->addWidget(cleanup);
-        sessions_table_ = new QTableWidget(0, 5, panel);
+        sessions_table_ = new QTableWidget(0, 6, panel);
         sessions_table_->setHorizontalHeaderLabels(
             {QStringLiteral("Origin"), QStringLiteral("Állapot"), QStringLiteral("Politika"),
-             QStringLiteral("Sütik"), QStringLiteral("Lejárt")});
+             QStringLiteral("Sütik"), QStringLiteral("Lejárt"), QStringLiteral("Törlésnél")});
         sessions_table_->verticalHeader()->setVisible(false);
         sessions_table_->horizontalHeader()->setStretchLastSection(true);
         sessions_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -1145,6 +1145,18 @@ void MainWindow::refreshSessions() {
                         new QTableWidgetItem(due_origins.contains(origin)
                                                  ? QStringLiteral("lejárt")
                                                  : QStringLiteral("—")));
+                    // What a cleanup would remove for this row, as the core measured it (41st slice): the
+                    // amount on one line, and the friction it costs in one word.
+                    const QJsonObject size = entry.value(QStringLiteral("size")).toObject();
+                    const double bytes = size.value(QStringLiteral("bytes")).toDouble();
+                    QString loss =
+                        QStringLiteral("%1 süti · %2 kB")
+                            .arg(size.value(QStringLiteral("cookies")).toInt())
+                            .arg(QString::number(bytes / 1024.0, 'f', 1));
+                    if (entry.value(QStringLiteral("loses_login")).toBool()) {
+                        loss += QStringLiteral(" · belépés");
+                    }
+                    sessions_table_->setItem(row, 5, new QTableWidgetItem(loss));
                     ++row;
                 }
                 sessions_table_->resizeColumnsToContents();
