@@ -2356,6 +2356,52 @@ int runPinCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the daily budget persists: it counts, it refuses, and a new day starts at zero.
+///
+/// The budget is a file in the profile, so the check is a scratch directory and two day strings - a counter
+/// that resets on every launch would pass a memory-only test and still be no budget at all.
+int runPreviewBudgetCheck() {
+    QTextStream out(stdout);
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                        QStringLiteral("/preview-budget-selftest");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    const QString path = dir + QStringLiteral("/budget.json");
+    const QString today = QStringLiteral("2026-11-17");
+    const QString other_day = QStringLiteral("2026-11-16");
+
+    const int at_start = antikolt::previewUsedToday(path, today);
+    QStringList marks;
+    for (int i = 0; i < 3; ++i) {
+        marks << QString::number(i);
+        antikolt::previewConsumeBudget(path, today);
+    }
+    const int after_three = antikolt::previewUsedToday(path, today);
+    const bool allows_at_three = antikolt::previewBudgetAllows(path, today, 5);
+    for (int i = 0; i < 2; ++i) {
+        antikolt::previewConsumeBudget(path, today);
+    }
+    const int after_five = antikolt::previewUsedToday(path, today);
+    const bool refuses_at_five = !antikolt::previewBudgetAllows(path, today, 5);
+    // A counter from another day is not today's counter.
+    const int other = antikolt::previewUsedToday(path, other_day);
+    // A fresh file (no budget yet) allows the first one.
+    const bool fresh_allows =
+        antikolt::previewBudgetAllows(dir + QStringLiteral("/none.json"), today, 1);
+
+    out << "budget_start=" << at_start << '\n';
+    out << "budget_after_three=" << after_three << '\n';
+    out << "budget_after_five=" << after_five << '\n';
+    out << "budget_allows_at_three=" << (allows_at_three ? "true" : "false") << '\n';
+    out << "budget_refuses_at_five=" << (refuses_at_five ? "true" : "false") << '\n';
+    out << "budget_other_day=" << other << '\n';
+    out << "budget_fresh_allows=" << (fresh_allows ? "true" : "false") << '\n';
+    const bool ok = at_start == 0 && after_three == 3 && after_five == 5 && allows_at_three &&
+                    refuses_at_five && other == 0 && fresh_allows;
+    out << "preview_budget=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
 /// Prove the refresh policy: a preview is regenerated when it is missing or older than the limit.
 ///
 /// The policy is a decision about a file and a clock, so the check is a scratch directory and two clocks -
@@ -3067,6 +3113,8 @@ int main(int argc, char* argv[]) {
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption previewbudget(QStringLiteral("previewbudget"),
+                                         QStringLiteral("Prove the daily preview budget, then exit."));
     const QCommandLineOption previewrefresh(QStringLiteral("previewrefresh"),
                                           QStringLiteral("Prove the preview refresh policy, then exit."));
     const QCommandLineOption previewclean(QStringLiteral("previewclean"),
@@ -3105,6 +3153,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(rulestest);
     parser.addOption(previewclean);
     parser.addOption(previewrefresh);
+    parser.addOption(previewbudget);
     parser.addOption(coretest);
     parser.process(app);
 
@@ -3126,6 +3175,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(previewrefresh)) {
         return runPreviewRefreshCheck();
+    }
+
+    if (parser.isSet(previewbudget)) {
+        return runPreviewBudgetCheck();
     }
 
     if (parser.isSet(mediatest)) {

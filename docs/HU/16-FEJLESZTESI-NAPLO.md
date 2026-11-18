@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-17 (harmincnyolcadik szelet) — az előnézet-gyártás napi büdzséje tartós
+
+A ≤100/nap korlát eddig futás-szintű számláló volt: újraindítás után nulláról kezdett, tehát nem korlát.
+Most a büdzsé a profilban él (`previews/budget.json`: `{"day":"…","count":N}`), a nap az egész állapot — nincs
+tárolt óra-aritmetika —, és egy másik napról származó számláló **nullának** olvasódik. A szabály a
+`previews.h`-ban: `previewUsedToday`, `previewConsumeBudget`, `previewBudgetAllows`; a shell a felvétel előtt
+kérdez, a sikeres mentés után számol. Egy elutasított előnézet nem hiba: a kártya megtartja, amije volt.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-shell --previewbudget
+budget_start=0
+budget_after_three=3
+budget_after_five=5
+budget_allows_at_three=true
+budget_refuses_at_five=true
+budget_other_day=0        ← a tegnapi számláló nem a mai
+budget_fresh_allows=true
+preview_budget=ok      (exit code 0)
+```
+
+### Ami még nyitott
+
+- A **háttérben** készített előnézetek (I1): ma csak a felhasználó által megnyitott kártya kap képet.
+- A 7 napos frissítési küszöb és a 100-as napi keret **nem** hangolható a felületről.
 ## 2026-11-17 (harminchetedik szelet) — az előnézet elavul, és akkor újra készül
 
 Az előnézet eddig **egyszer** készült: a kártya képe soha nem frissült. Most a kora dönt: ha a fájl nem

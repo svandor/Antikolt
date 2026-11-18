@@ -96,7 +96,7 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > mozgatja, és a `preview_ref` mezőbe írja a nevét. `--previewtest`: `preview_load=loaded:4x3`,
 > `preview_traversal=refused`. `--previewgentest`: `preview_ref=preview-probe.png`,
 > `preview_page=loaded:1560x857`, `preview_generation=ok`.
-> **Ami hátra van:** a **napi ≤100** tartós korlát (a
+> A napi ≤100 korlát **tartós** (`previews/budget.json`, 38. szelet).
 > számláló ma futás-szintű), és a háttérben készített előnézetek (I1). Az árva preview-fájlok takarítása
 > **kész** (`--previewclean`, 36. szelet).
 

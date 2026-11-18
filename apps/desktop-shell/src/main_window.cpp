@@ -61,6 +61,9 @@ constexpr int kPreviewAttempts = 2;
 /// How old a preview may be before the next visit refreshes it (ADR-035 follow-up).
 constexpr qint64 kPreviewMaxAgeMs = 7LL * 24 * 60 * 60 * 1000;
 
+/// The hard ceiling on previews per day, persisted in the profile (a budget that resets on launch is not one).
+constexpr int kPreviewDailyMax = 100;
+
 /// The origin of a URL (`scheme://host[:port]`), or "" when the scheme has no storable origin.
 ///
 /// The session ledger is keyed by origin, and a wipe must name the same string the browser uses: a
@@ -910,6 +913,15 @@ void MainWindow::producePreview(qint64 surface) {
                                            kPreviewMaxAgeMs)) {
             return;  // fresh enough; the shell is not a screenshot loop
         }
+        // The daily budget outlives this run (a file in the profile), because a limit that resets on every
+        // launch is not a limit. A refused preview is not an error: the card keeps whatever it had.
+        const QString budget = engine_profile_ + QStringLiteral("/previews/budget.json");
+        const QString today = QDate::currentDate().toString(Qt::ISODate);
+        if (!antikolt::previewBudgetAllows(budget, today, kPreviewDailyMax)) {
+            qInfo("[shell] preview: daily budget spent (%d)", kPreviewDailyMax);
+            return;
+        }
+        const auto count_budget = [budget, today] { antikolt::previewConsumeBudget(budget, today); };
         // The record learns the name; the grid shows the picture the next time it loads, because the push
         // carries the record and the engine serves the file (ADR-035).
         const auto remember = [this, record, name](const QString&) {
@@ -930,10 +942,10 @@ void MainWindow::producePreview(qint64 surface) {
         // after the GPU process has restarted twice), so one retry is cheaper than a lost preview. The
         // engine's own request timeout bounds each attempt; after the last one the preview is skipped and
         // the status line says so — a failed preview is not a failed browser.
-        const auto capture_to = [this, surface, target, remember](auto&& self, int attempt) -> void {
+        const auto capture_to = [this, surface, target, remember, count_budget](auto&& self, int attempt) -> void {
             engine_->capture(
                 surface, QStringLiteral("png"), 80,
-                [this, target, remember, self, attempt](const QJsonObject& shot,
+                [this, target, remember, count_budget, self, attempt](const QJsonObject& shot,
                                                         const QString& shot_error) {
                     const QString written = shot.value(QStringLiteral("path")).toString();
                     if (!shot_error.isEmpty() || written.isEmpty()) {
@@ -956,6 +968,7 @@ void MainWindow::producePreview(qint64 surface) {
                         setStatus(QStringLiteral("az előnézet nem került a profilba: %1").arg(target));
                         return;
                     }
+                    count_budget();
                     qInfo("[shell] preview: copied to %s", qUtf8Printable(target));
                     remember(target);
                 });

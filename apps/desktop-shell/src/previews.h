@@ -14,6 +14,9 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -71,6 +74,43 @@ inline bool previewNeedsRefresh(const QString& path, qint64 now_ms, qint64 max_a
         return false;
     }
     return (now_ms - modified_ms) > max_age_ms;
+}
+
+/// How many previews today's budget has already allowed.
+///
+/// The budget is a tiny file in the profile (`{"day":"2026-11-17","count":7}`), because the counter must
+/// survive a restart: a screenshot loop that resets every launch is not a budget. A counter from another day
+/// reads as zero — the day string is the whole state, so no clock arithmetic is stored.
+inline int previewUsedToday(const QString& budget_path, const QString& today) {
+    QFile file(budget_path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return 0;
+    }
+    const QJsonObject state = QJsonDocument::fromJson(file.readAll()).object();
+    if (state.value(QStringLiteral("day")).toString() != today) {
+        return 0;
+    }
+    return state.value(QStringLiteral("count")).toInt();
+}
+
+/// Count one preview that this day's budget allowed, replacing the file atomically.
+inline void previewConsumeBudget(const QString& budget_path, const QString& today) {
+    const QJsonObject state{{QStringLiteral("day"), today},
+                            {QStringLiteral("count"), previewUsedToday(budget_path, today) + 1}};
+    const QString temporary = budget_path + QStringLiteral(".tmp");
+    QFile file(temporary);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return;
+    }
+    file.write(QJsonDocument(state).toJson(QJsonDocument::Compact));
+    file.close();
+    QFile::remove(budget_path);
+    QFile::rename(temporary, budget_path);
+}
+
+/// Whether today's budget still allows one more preview.
+inline bool previewBudgetAllows(const QString& budget_path, const QString& today, int daily_max) {
+    return previewUsedToday(budget_path, today) < daily_max;
 }
 
 }  // namespace antikolt

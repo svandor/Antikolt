@@ -103,7 +103,8 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   `previews` directory, the home page loads it as `antikolt://blob/probe.png`, and the page's own witness
   must report `naturalWidth × naturalHeight`. A second request for `..%2Fhost.cpp` must be *refused* — a
   card's data may not read another file through the browser.
-- `--previewrefresh` — the preview refresh policy: a missing file must be regenerated, a fresh one must not,
+- `--previewbudget` — the daily budget persists: a scratch `budget.json` counts three previews, refuses at
+  five, and a file written for another day reads as zero (a counter that resets on launch is not a budget).- `--previewrefresh` — the preview refresh policy: a missing file must be regenerated, a fresh one must not,
   a 30 day old one must, and a file whose timestamp is in the future must not turn every open into a
   screenshot.- `--previewclean` — the preview janitor: `previews/` is swept for files the core no longer references, while
   the referenced image and a non-preview file survive, and a missing directory is not an error.- `--rulestest` — the session rules can be changed over the wire (ADR-039): a 2 hour policy is stored and
