@@ -41,6 +41,20 @@ Store), vagy **fizetsz** egy szolgáltatásért (Azure Trusted Signing, Certum, 
 5. **SmartScreen**: az aláírás megmutatja a kiadót, de a *reputáció* idővel épül. Az első hetekben még
    figyelmeztethet; ezt nem lehet megvenni, csak kivárni (és minél több letöltéssel erősödik).
 
+## Mikor jelentkezz? (a sorrend, amit érdemes követni)
+
+A SignPath **kiadásokat ír alá a saját folyamatában**, ezért a jelentkezés akkor a leghasznosabb, amikor már
+van **kiadható, reprodukálható build** és (lehetőleg) publikus repó + CI. Addig a helyes út:
+
+1. **most** — fejlesztés és teszt **aláírás nélkül vagy self-signed** tanúsítvánnyal (a saját gépeden), mert a
+   self-signed úgysem ad bizalmat idegen gépen;
+2. **amikor van release** — SignPath jelentkezés (ingyenes, OSS), a SignPath-os aláírás beépítése a CI-be;
+3. **párhuzamosan** — ha az MSIX/Store út is szóba jön, a Store-fiók (ma **ingyenes egyéni fejlesztőknek**),
+   mert ott az aláírást a Microsoft végzi (lásd 4. pont).
+
+Korábban jelentkezni nem tilos, de a SignPath a build-folyamatról és a kiadásokról kérdez — üres kézzel
+lassabb az elbírálás.
+
 ## 2. Ingyenes, de nem nyilvános: saját (self-signed) tanúsítvány
 
 Ez **nem** ad SmartScreen-bizalmat, csak a saját gépeiden működik (és azokon is csak akkor, ha a
@@ -55,18 +69,31 @@ A script létrehoz egy `CN=Antikolt test (NOT TRUSTED)` tanúsítványt a felhas
 `dist\Antikolt\*.exe` fájlokat, és **ellenőrzi** az aláírást (`signtool verify /pa`). A neve is figyelmeztet:
 ez nem megoldás a kiadásra.
 
-## 3. Olcsó, valódi: Azure Trusted Signing (kb. 10 USD/hó)
+## 3. Olcsó, valódi: Azure Artifact Signing (korábban Trusted Signing, kb. 10 USD/hó)
 
 - <https://learn.microsoft.com/azure/trusted-signing/> — felhős HSM, nincs USB-token, CI-ből hívható.
+- **Fontos korlát:** szervezeteknek USA / Kanada / EU / UK; **egyéni fejlesztőknek csak USA és Kanada**. Magyar egyéni fejlesztőként tehát ez az út *nem* elérhető (cég kellene hozzá), az OV-tanúsítvány vagy a Store marad.
 - Ellentétben a régi helyzettel: **egyéni fejlesztő is igényelhet** (identitás-ellenőrzéssel; cégnél
   legalább 3 éves, ellenőrizhető cégadatok kellenek, és a szolgáltatás régiókhoz kötött).
 - Ez a legolcsóbb **valódi** (nyilvánosan elfogadott) út, ha nem akarunk a SignPath folyamatára várni.
 
 ## 4. Microsoft Store (MSIX) — aláírás nélkül is „aláírt"
 
-Ha MSIX-csomagot adunk ki a Store-on keresztül, a **Microsoft írja alá** a csomagot. Ehhez fejlesztői fiók
+Ez a **valóban ingyenes út az aláíráshoz**: MSIX-csomagnál a Store a minősítés után **automatikusan újraaláírja** a csomagot, tanúsítványt nem kell venni; a fejlesztői fiók 2025 óta **egyéni fejlesztőknek ingyenes** (`storedeveloper.microsoft.com`). Ha viszont **MSI/EXE telepítőt** adunk be a Store-ba, azt magunknak kell aláírni (Microsoft Trusted Root CA-hoz láncolt tanúsítvánnyal). Ez a hordozható mappánkat **nem** írja alá. Ha MSIX-csomagot adunk ki a Store-on keresztül, a **Microsoft írja alá** a csomagot. Ehhez fejlesztői fiók
 kell (egyszeri díj), és a Store-feltételeknek megfelelő csomag. A hordozható mappa alternatívája, nem
 kiegészítője: a Store-ból telepített MSIX más élmény, mint a „mappa + parancsikon".
+
+## Összefoglaló táblázat (Microsoft saját összehasonlítása, 2026)
+
+| Út | Költség | SmartScreen | Elérhető-e nekünk (HU)? |
+|---|---|---|---|
+| **Store, MSIX** (a Microsoft írja alá) | **ingyenes** (fiók is, egyéni fejlesztőknek) | ✅ nincs figyelmeztetés | igen, MSIX-csomag kell |
+| Store, MSI/EXE telepítő | saját tanúsítvány kell hozzá | ✅ (telepítéskor) | csak tanúsítvánnyal |
+| **SignPath Foundation** (OSS) | **ingyenes** | ⚠️ reputáció épül | igen (publikus repó + CI) |
+| Azure Artifact Signing | ~9.99 USD/hó | ⚠️ reputáció épül | **egyéninek nem** (csak US/CA); cégként EU-ban igen |
+| OV tanúsítvány (DigiCert, Sectigo…) | 150–300 USD/év | ⚠️ reputáció épül | igen (hardveres token) |
+| EV tanúsítvány | 400+ USD/év | ⚠️ **2024 óta nem kerüli meg** a SmartScreen-t | igen, de nem éri meg ezért |
+| Self-signed | ingyenes | ❌ blokkolja a telepítést másoknál | csak fejlesztéshez |
 
 ## Mi a teendő most az Antikolt repóban
 
