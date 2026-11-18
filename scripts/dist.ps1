@@ -32,12 +32,21 @@
 param(
     [string]$Destination = (Join-Path $PSScriptRoot '..\dist\Antikolt'),
     [switch]$Shortcut = $true,
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$Release
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..')
-$build = Join-Path $repo 'build'
+if ($Release) {
+    # A Release configuration: no debug info, optimised C++.  It is a separate build directory so the
+    # developer's incremental Debug build (and every self test) keeps working untouched.
+    $build = Join-Path $repo 'build-release'
+    $coreExeExpected = 'release'
+} else {
+    $build = Join-Path $repo 'build'
+    $coreExeExpected = $null
+}
 $cefRoot = 'D:\Tools\cef\cef_binary_158.0.3+g8c29be2+chromium-158.0.8127.18_windows64_beta'
 if ($env:CEF_ROOT -and (Test-Path $env:CEF_ROOT)) { $cefRoot = $env:CEF_ROOT }
 
@@ -47,8 +56,17 @@ Write-Host "  to   : $Destination"
 Write-Host "  cef  : $cefRoot"
 
 if (-not $NoBuild) {
-    & (Join-Path $PSScriptRoot 'build.ps1')
-    if ($LASTEXITCODE -ne 0) { throw 'the build failed; nothing was assembled' }
+    if ($Release) {
+        # build.ps1 owns the toolchain (vcvars, cmake, ninja, Qt, CEF discovery) — duplicating it here is how
+        # the first attempt failed with "cmake is not recognized": this shell has no MSVC environment.
+        & (Join-Path $PSScriptRoot 'build.ps1') -Config 'Release' -BuildDir $build
+        if ($LASTEXITCODE -ne 0) { throw 'the Release build failed' }
+        & cargo build --release -p antikolt-core-service
+        if ($LASTEXITCODE -ne 0) { throw 'the Release core build failed' }
+    } else {
+        & (Join-Path $PSScriptRoot 'build.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'the build failed; nothing was assembled' }
+    }
 }
 
 # --- the three processes --------------------------------------------------------------------------------
