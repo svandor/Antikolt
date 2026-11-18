@@ -37,7 +37,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repo = Resolve-Path (Join-Path $PSScriptRoot '..')
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$Destination = [System.IO.Path]::GetFullPath($Destination)
 if ($Release) {
     # A Release configuration: no debug info, optimised C++.  It is a separate build directory so the
     # developer's incremental Debug build (and every self test) keeps working untouched.
@@ -144,6 +145,18 @@ if ($Shortcut) {
     $link.Description = 'Antikolt — memóriatakarékos kártyás böngésző'
     $link.Save()
     Write-Host "  shortcut: $linkPath"
+
+    # Start menu too: a portable build still deserves a place where people look for programs. It is the same
+    # .lnk, so deleting the folder and both links is still the whole uninstall.
+    $programs = [Environment]::GetFolderPath('Programs')
+    $startLink = Join-Path $programs 'Antikolt.lnk'
+    $start = $wsh.CreateShortcut($startLink)
+    $start.TargetPath = $shellPath
+    $start.WorkingDirectory = $Destination
+    $start.IconLocation = (Join-Path $Destination 'antikolt.ico')
+    $start.Description = 'Antikolt — memóriatakarékos kártyás böngésző'
+    $start.Save()
+    Write-Host "  start menu: $startLink"
 }
 
 $size = [math]::Round((Get-ChildItem $Destination -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
