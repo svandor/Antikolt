@@ -38,7 +38,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Konténerek | `--containertest` | színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, használt konténer törlése **áthelyezéssel** |
 | Munkaterületek | `--workspacetest` | fül-sor a mag `workspaces.json`-jából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó |
 | Címkék | `--tagtest` | címke a kártyán, mag-normalizálás (trim/dedup/12×32), kereshető |
-| Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), és a `cards.delete`-tel eltűnik; a teszt kitakarít maga után |
+| Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), átnevezés a cím-szerkesztő `Enter`-jével (`wrote_by=gesture`), webcím-átírás, tükör-ellenőrzés (`db_status=ok … verified=yes`), törlés; a teszt kitakarít maga után |
 | Profil-költöztetés | `--profiletest` | export → import friss profilba → visszaolvasás **fájlból**; ismeretlen séma elutasítva |
 | Munkamenetek | `--sessionpanel`, `--scrollbook`, `--wipetest`, `--cleanuptest` | látszik, mi van életben, mennyi RAM/lemez; `keep`/`sweep`/`wipe` végrehajtás |
 | Előnézet | `--preview*` | a háttér-worker szabályai (ADR-041) és az ütemező mérve |

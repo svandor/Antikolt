@@ -752,6 +752,29 @@ antikolt-card {
   flex: none;
 }
 
+/* The two-step delete's `×` (ADR-068): quiet until armed, then it says so in words and in colour, because the
+   second click is the one that destroys data. */
+.badge.remove {
+  margin-left: 0;
+  padding: 0 3px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+.badge.remove:hover, .badge.remove:focus-visible {
+  color: #c0392b;
+}
+.badge.remove[data-armed="1"] {
+  color: #fff;
+  background: #c0392b;
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 1px 4px;
+}
+
 /* Sizes: L is used in the pinned row only, which is not virtualised. */
 .card[data-size="s"] .card-preview {
   aspect-ratio: 16 / 9;

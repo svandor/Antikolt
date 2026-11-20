@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-20 (nyolcvanötödik szelet) — kétlépéses törlés (implementálva, de NEM mérve)
+
+A kártya törlése eddig egy kattintás volt — miközben a kártya nagy kattintási felület, amire a felhasználó azért
+kattint, hogy megnyissa. Most (ADR-068) a meta-sor `×`-e **előbb felold** (`Biztos?`, piros), és csak az öt
+másodpercen belüli második kattintás töröl; utána az feloldás magától lejár.
+
+Az implementáció kész: `requestDelete()` a lapon, `armedDelete` állapot, a gomb `data-armed` jelölése, CSS, valamint
+a `--addcardtest` új lépése (`delete_armed`).
+
+### A mérés viszont elbukott a környezeten — és ezt kimondom
+
+```
+antikolt-shell --addcardtest …  → (nincs kimenet), 200 s után TIMEOUT
+stderr: GPU process exited unexpectedly: exit_code=-2147483645
+        GPU state invalid after WaitForGetOffsetInRange
+ANTIKOLT_ENGINE_DISABLE_GPU=1 mellett is → nincs kimenet, TIMEOUT
+```
+
+A környezet CEF GPU-folyamata minden ablakos futásnál elhal, tehát **a kétlépéses törlés gesztusa
+`not-measurable`**, nem zöld. Amit mérni tudtam:
+
+```
+pwsh -File scripts/check-repo.ps1 → ALL CHECKS PASSED
+  ok  home/app.js parses      (a lap szintaxisa jó)
+  ok  cargo fmt / clippy -D warnings / cargo test (78 + 21 + 2 + 1 + 15)
+  ok  every relative link resolves, SPDX, nincs commitolt build/titok
+```
+
+Ez a statikus igazság, nem a viselkedés bizonyítéka. A `21-ALLAPOT.md` és az ADR-068 is így rögzíti; a következő
+mérés tiszta GPU-állapot mellett (újraindítás után) esedékes, és ha akkor zöld, a napló kap egy újabb szeletet.
+
 ## 2026-11-20 (nyolcvannegyedik szelet) — a számok a méréshez igazítva (37 önteszt, nem 41)
 
 A publikálás után előkerestem a dokumentumokban szereplő **számokat**, és összevetettem a kapu tényleges kimenetével.

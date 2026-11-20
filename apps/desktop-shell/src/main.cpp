@@ -6988,6 +6988,12 @@ int runWorkspaceCheck(const QString& enginePath) {
         /// three witnesses: the page's model, the grid's DOM count and the core record read by a fresh client. It
         /// cleans up after itself (the card it creates is deleted through the page's own delete path), because a check
         /// that leaves cards behind is a check the user has to clean up.
+        /// Prove the editable home page's first loop: a card can be created in the page and removed again (ADR-061).
+        ///
+        /// The check drives the product's own gestures — the `＋` button, the inline form, `Enter` — and then compares
+        /// three witnesses: the page's model, the grid's DOM count and the core record read by a fresh client. It
+        /// cleans up after itself (the card it creates is deleted through the page's own delete path), because a check
+        /// that leaves cards behind is a check the user has to clean up.
         int runAddCardCheck(const QString& enginePath) {
             QTextStream out(stdout);
             int failures = 0;
@@ -7340,21 +7346,47 @@ int runWorkspaceCheck(const QString& enginePath) {
                 ++failures;
             }
 
-            // Removal through the page's own path, so the profile is left as it was found.
-            const QString removed = evaluate_text(
+            // Removal through the product's gesture (ADR-068): one `×` only arms, the second deletes.
+            const QString first_click = evaluate_text(
                 client, home_surface,
-                QStringLiteral("(() => { window.__cardDeleted = null;"
-                               " window.antikoltDeleteCard('%1')"
-                               ".then(() => { window.__cardDeleted = 'ok'; })"
-                               ".catch((e) => { window.__cardDeleted = 'error:' + "
-                               "String((e && e.message) || e); }); return 'sent'; })()")
+                QStringLiteral("(() => { const host = [...document.querySelectorAll('antikolt-card')]"
+                               ".find((h) => h.card && h.card.id === '%1');"
+                               " if (!host) { return 'no-card'; }"
+                               " const button = host.shadowRoot.querySelector('.badge.remove');"
+                               " if (!button) { return 'no-button'; }"
+                               " button.click(); return 'clicked'; })()")
                     .arg(new_id));
-            Q_UNUSED(removed);
-            QString removed_answer;
+            settle(700);
+            const QJsonObject armed_state = evaluate_json(
+                client, home_surface, QStringLiteral("JSON.stringify(window.antikoltArmedDelete())"));
+            const bool armed_ok = first_click == QStringLiteral("clicked") &&
+                                  armed_state.value(QStringLiteral("id")).toString() == new_id;
+            out << "delete_armed=" << (armed_ok ? "ok" : "FAILED") << " click=" << first_click
+                << " armed=\"" << armed_state.value(QStringLiteral("id")).toString() << "\"\n";
+            if (!armed_ok) {
+                ++failures;
+            }
+
+            // The second click on the same `×` completes the delete.
+            const QString second_click = evaluate_text(
+                client, home_surface,
+                QStringLiteral("(() => { const host = [...document.querySelectorAll('antikolt-card')]"
+                               ".find((h) => h.card && h.card.id === '%1');"
+                               " if (!host) { return 'no-card'; }"
+                               " const button = host.shadowRoot.querySelector('.badge.remove');"
+                               " if (!button) { return 'no-button'; }"
+                               " button.click(); return 'clicked'; })()")
+                    .arg(new_id));
+            Q_UNUSED(second_click);
+            settle(1800);
+            QString removed_answer = QStringLiteral("present");
             for (int attempt = 0; attempt < 40; ++attempt) {
-                removed_answer = evaluate_text(client, home_surface,
-                                               QStringLiteral("window.__cardDeleted ?? ''"));
-                if (!removed_answer.isEmpty()) {
+                removed_answer = evaluate_text(
+                    client, home_surface,
+                    QStringLiteral("[...document.querySelectorAll('antikolt-card')]"
+                                   ".some((h) => h.card && h.card.id === '%1') ? 'present' : 'gone'")
+                        .arg(new_id));
+                if (removed_answer == QStringLiteral("gone")) {
                     break;
                 }
                 settle(150);
@@ -7362,9 +7394,9 @@ int runWorkspaceCheck(const QString& enginePath) {
             settle(600);
             const QStringList cleaned = core_cards();
             bool gone = !cleaned.contains(new_id);
-            const bool delete_ok = removed_answer == QStringLiteral("ok") && gone &&
+            const bool delete_ok = removed_answer == QStringLiteral("gone") && gone &&
                                    cleaned.size() == before.size();
-            out << "delete_card=" << (delete_ok ? "ok" : "FAILED") << " answer=" << removed_answer
+            out << "delete_card=" << (delete_ok ? "ok" : "FAILED") << " page=" << removed_answer
                 << " remaining=" << cleaned.size() << " expected=" << before.size() << '\n';
             if (!delete_ok) {
                 ++failures;

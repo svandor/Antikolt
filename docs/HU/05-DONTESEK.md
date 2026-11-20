@@ -3,6 +3,26 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-068 — A törlés két lépés: előbb felold, aztán töröl (2026-11-19)
+
+**Kontextus:** a `cards.delete` (ADR-061) egy kattintásra törölt. A kártya viszont **nagy kattintási felület**,
+amire a felhasználó azért kattint, hogy megnyissa — egy `×` ezen belül egyetlen téves kattintással adatot visz el.
+
+**Döntés:** a kártya meta-sorában egy `×` van, és a törlés **két lépés**:
+
+1. az első kattintás **feloldja** a kártyát: a gomb szövege `Biztos?`, piros háttérrel, és a lap-oldali állapot
+   (`armedDelete = {id, at}`) ezt mutatja;
+2. az **öt másodpercen belüli** második kattintás töröl (`cards.delete`, a mag válasza után rajzol);
+3. öt másodperc után a feloldás **magától lejár**, mert egy percre feloldva hagyott kártya csapda a következő téves
+   kattintásnak.
+
+**Következmény:** (+) egy téves kattintás nem visz el kártyát; (+) a megerősítés **nem dialógus**, tehát nem ütközik
+a CEF `prompt`-problémával (ADR-053) és elvileg mérhető; (−) **ez a viselkedés mérés nélkül maradt**: a szelet
+végén a környezet CEF GPU-folyamata minden ablakos futásnál elhalt (`GPU state invalid …`,
+`exit_code=-2147483645`), és `ANTIKOLT_ENGINE_DISABLE_GPU=1` mellett sem indult el a lap — így a `--addcardtest`
+kétlépéses törlés-lépése **`not-measurable`**, nem zöld. A statikus ellenőrzések (JS-parse, Rust-tesztek, linkek)
+zöldek, de az nem bizonyítja a gesztust.
+
 ## ADR-067 — Az adatbázis a store sorrendjében adja a kártyákat (2026-11-19)
 
 **Kontextus:** a JSON-store Rustban rendezett (`last_opened_at_ms` szerint csökkenő, majd cím). Miután a rács listája
@@ -982,6 +1002,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-065 | A rács listája a SQLite-ból jön (write-through: tükrözés a lista előtt); a JSON marad az író, a hibás eset hangos | Elfogadva |
 | ADR-066 | A tükör soronként követi az írásokat (`mirror_card`/`mirror_delete`), a lista már csak olvas; több-kártyás op külön tükröz | Elfogadva |
 | ADR-067 | Az adatbázis a store sorrendjében adja a kártyákat (`ORDER BY last_opened_at_ms DESC, LOWER(title)`), teszt védi | Elfogadva |
+| ADR-068 | Kétlépéses törlés a kártyán (`×` → `Biztos?` → törlés 5 s-en belül); a viselkedés mérése a CEF GPU-hiba miatt `not-measurable` | Elfogadva |
 
 ---
 

@@ -616,7 +616,31 @@ class AntikoltCard extends HTMLElement {
       if (!editor.hidden) textarea.focus();
     });
 
-    meta.append(dot, containerSelect, workspaceSelect, domain, noteButton, badge);
+    // Deleting is two-step on purpose (ADR-068): a single click on a `×` inside a card the user clicks to *open* is
+    // how a page loses a card by accident. The first click arms the card (the button says "Biztos?"), the second
+    // within five seconds deletes it; anything else disarms.
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "badge remove";
+    removeButton.textContent = this.armedDelete?.id === card.id ? "Biztos?" : "×";
+    removeButton.dataset.armed = this.armedDelete?.id === card.id ? "1" : "0";
+    removeButton.title =
+      this.armedDelete?.id === card.id
+        ? "Kattints újra a törléshez (5 másodpercig)"
+        : "Kártya törlése (két kattintás)";
+    removeButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.dispatchEvent(
+        new CustomEvent("antikolt-card-delete", {
+          detail: { id: this.card?.id },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    });
+
+    meta.append(dot, containerSelect, workspaceSelect, domain, noteButton, badge, removeButton);
     body.append(title, meta);
     // Tags (ADR-055): the chips a user typed, plus the inline way to add one. No dialog and no separate screen:
     // a tag is a word, and typing it where it belongs is the whole interaction.
@@ -792,6 +816,8 @@ class HomePage {
     // The add-card editor (ADR-061): the same shape — an inline form, no dialog, and an error place of its own.
     this.cardAdd = null;
     this.lastCardError = "";
+    // The armed `×` of the two-step delete (ADR-068): `{id, at}` while a card waits for its second click.
+    this.armedDelete = null;
   }
 
 
@@ -1113,6 +1139,9 @@ class HomePage {
     document.addEventListener("antikolt-card-title", (event) =>
       this.setCardTitle(event.detail?.id, event.detail?.title),
     );
+    document.addEventListener("antikolt-card-delete", (event) =>
+      this.requestDelete(event.detail?.id),
+    );
     window.addEventListener("antikolt-card-title", (event) =>
       this.setCardTitle(event.detail?.id, event.detail?.title),
     );
@@ -1318,6 +1347,38 @@ class HomePage {
     } catch (error) {
       this.lastCardError = String(error?.message ?? error);
     }
+  }
+
+  /**
+   * The two-step delete (ADR-068): the first `×` arms the card, the second deletes it.
+   *
+   * A card is a big click target that *opens* a page, and the `×` sits inside it. One stray click must not destroy
+   * anything, so the first click only arms — and the arm expires by itself, because a card left armed for a minute
+   * is a trap for the next stray click.
+   */
+  requestDelete(id) {
+    if (!id) {
+      return;
+    }
+    const at = Date.now();
+    if (this.armedDelete?.id === id && at - this.armedDelete.at < 5000) {
+      this.armedDelete = null;
+      this.deleteCard(id);
+      return;
+    }
+    this.armedDelete = { id, at };
+    this.lastCardError = "";
+    this.renderWorkspaces();
+    // The grid draws the armed state from the model, so re-render the visible window.
+    this.windowEl.dataset.signature = "";
+    this.applyFilter();
+    window.setTimeout(() => {
+      if (this.armedDelete?.id === id) {
+        this.armedDelete = null;
+        this.windowEl.dataset.signature = "";
+        this.applyFilter();
+      }
+    }, 5000);
   }
 
   /** Remove one card (`cards.delete`), after the core accepted it (ADR-061). */
@@ -2250,6 +2311,9 @@ window.antikoltMoveToWorkspace = (cardId, workspaceId) => page.setWorkspace(card
 
 // The card's remove path, the same one a menu item will call (ADR-061).
 window.antikoltDeleteCard = (cardId) => page.deleteCard(cardId);
+
+// The two-step delete's own witness (ADR-068): what is armed and what the grid holds.
+window.antikoltArmedDelete = () => page.armedDelete ?? null;
 
 // The rename path direct (ADR-062), so a caller (a test, or a future menu item) does not have to fake a double click.
 window.antikoltRenameCard = (cardId, title) => page.setCardTitle(cardId, title);
