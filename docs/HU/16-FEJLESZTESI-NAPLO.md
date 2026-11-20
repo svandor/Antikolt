@@ -3,6 +3,33 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-20 (nyolcvannyolcadik szelet) — a fagyás nem fagyás: a gép lassult le
+
+A nyolcvanhetedik szelet után visszatettem egy **életjel-órát** (2 másodperces tick a stderr-re) és kilépő/ belépő
+markereket az `eval` hívásokra. Az eredmény átírja a diagnózist:
+
+```
+[selftest] tick  × 244        (≈ 488 s alatt — az eseményciklus VÉGIG fut)
+[selftest] eval_enter × 25 / eval_exit × 24   (a hívások válaszolnak, csak lassan)
+```
+
+**Tehát a fő szál nem blokkolódik**: nincs beágyazott blokkoló hívás, nincs néma fagyás. A CEF GPU-crash loop
+(másodpercenként újrainduló GPU-folyamat) **elszívja a CPU-t**, ezért egy 40 másodperces teszt több percig tart, és
+a 150 másodperces watchdog korán lezárta — a korábbi „fagyás" **a watchdog hibája volt, nem a kódé**.
+
+### Amit ez a szelet ad
+
+- A diagnózis pontossá vált: **nincs blokkoló hívás** a híd írásában, az eseménykezelésben és az `eval`-ben; a
+  lassulás oka a GPU-crash loop.
+- A 600 másodperces watchdog-változat és a tick-markerek **nem maradtak be** (a tick-marker bevezetése elrontotta a
+  fájlt, ezért `git checkout`-tal visszaállt a commitolt állapot — a tanulság: soronkénti szöveg-átírás C++-on
+  ugyanaz a csapda, mint a PowerShell-splice).
+
+### Ami nyitva maradt
+
+A mérés **másik gépen** (vagy működő CEF GPU-val) esedékes: ott a 37 önteszt ~1 perc alatt lefut, és a kétlépéses
+törlés (ADR-068) is bizonyítottá válik. Ezen a gépen a lassulás a GPU-crash loop miatt marad.
+
 ## 2026-11-20 (nyolcvanhetedik szelet) — a fagyás helye kimérve (nem a híd írása)
 
 A nyolcvanhatodik szelet watchdogja megmondta, *hogy* fagyunk; ez a szelet azt mérte meg, **hol**. Két
