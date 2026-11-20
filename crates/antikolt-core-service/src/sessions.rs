@@ -187,6 +187,20 @@ impl SessionStore {
         due
     }
 
+    /// Replace the whole ledger, for an import (`profile_import`, ADR-059): rows and rules arrive together, because
+    /// an imported profile's cleanup policy is part of the profile.
+    pub fn replace_all(
+        &mut self,
+        entries: Vec<SessionLedgerEntry>,
+        rules: SessionRules,
+    ) -> Result<usize, SessionError> {
+        self.file.entries = entries;
+        self.file.rules = rules;
+        let count = self.file.entries.len();
+        self.save()?;
+        Ok(count)
+    }
+
     /// The atomic write: a crash leaves the previous ledger, never a mixture of two.
     fn save(&self) -> Result<(), SessionError> {
         let text = serde_json::to_string_pretty(&self.file)?;

@@ -71,7 +71,7 @@ gracefully when a capability is missing, and must never assume one:
 |---|---|---|---|
 | `hello` | core → engine | `protocol`, `engine` | `welcome` |
 | `ping` | both | — | `reply` |
-| `create_surface` | core → engine | `config` (`partition`, `viewport`, `proxy`, `is_primary`, `parent_window`) | `reply` (`{surface}`) |
+| `create_surface` | core → engine | `config` (`partition`, `viewport`, `proxy`, `is_primary`, `parent_window`, `hidden`) | `reply` (`{surface}`) |
 | `destroy_surface` | core → engine | `surface` | `reply` |
 | `navigate` | core → engine | `surface`, `url`, `opts` | `reply` |
 | `set_bounds` | core → engine | `surface`, `bounds` (`x`, `y`, `width`, `height`) | `reply` (`{applied}`) |
@@ -81,6 +81,7 @@ gracefully when a capability is missing, and must never assume one:
 | `scroll` | core → engine | `surface`, `x`, `y`, `animate` | `reply` (`{ok: true, x, y}`) |
 | `set_zoom` | core → engine | `surface`, `factor_percent` (25..500) | `reply` (`{factor_percent}`) |
 | `set_media` | core → engine | `surface`, `media` (`auto`\|`dark`\|`light`) | `reply` (`{media: "dark"}`) |
+| `set_forced_dark` | core → engine | `surface`, `mode` (`off`\|`invert`\|`dim`\|`warm`; the old `enabled` boolean still works) | `reply` (`{ok: true, mode}`) |
 | `capture` | core → engine | `surface`, `format`, `quality` (default 80) | `reply` (`{bytes, width, height}` plus `path`, `format`, `surface`) |
 | `snapshot` | core → engine | `surface` | `reply` (`{mhtml_bytes, integrity}`) |
 | `metrics` | core → engine | `surface` | `reply` (`{dom_nodes, js_heap_bytes, engine_working_set_bytes}`) |
@@ -213,6 +214,8 @@ live surface waits for this event.
 | `capture` | implemented through DevTools (`Page.captureScreenshot`; PNG/JPEG/WebP, `quality`) |
 | `clear_origin_data` | implemented through DevTools (`Storage.clearDataForOrigin`; the plan's `indexed_db` is sent as CDP's `indexeddb`) |
 | `scroll`, `set_zoom` | **implemented** (ADR-038): `window.scrollBy` and a device-metrics override that reflows |
+| `set_media` | **implemented** (ADR-037): `Emulation.setEmulatedMedia`, pages that support the query follow it |
+| `set_forced_dark` | **implemented** (ADR-044/ADR-045): one named style element; the mode is the filter applied, `off` removes it again |
 
 `capture`'s reply carries more than the minimum `{bytes, width, height}` the table above promises: it also
 names the written file (`path`), the encoding (`format`) and the surface. `width`/`height` are read from
@@ -236,6 +239,12 @@ not take the browser down.
 - **I1:** at most one surface with `is_primary: true` may exist. A second request is answered with
   `engine_busy`, never silently accepted. The only exception is a transient authentication popup,
   which is a *window*, not a card (`docs/HU/02` §8.5).
+- **I1, measured exception (ADR-041/ADR-042):** the engine host holds at most **two** surfaces — the
+  grid/card surface and one short-lived background preview worker. A third `create_surface` is answered
+  with `engine_busy` (`at most two surfaces at a time`). Every surface-scoped op acts on the surface it
+  *names*: an unknown or already destroyed id is answered with `surface_not_found` and is never served by
+  another surface. `hidden: true` in the config keeps a surface's window invisible (the shell's process
+  flag `--hidden` does the same for every surface of that host).
 - **I2:** `snapshot` must be awaited and completed before `destroy_surface`; a destroyed surface
   cannot be snapshotted.
 - **I5:** no message carries a secret towards a `main` world `eval`. Credential filling happens only

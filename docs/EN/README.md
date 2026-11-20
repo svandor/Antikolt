@@ -1,9 +1,26 @@
 # Antikolt — English summary
 
 **Antikolt** is a card-based, container-based, low-RAM desktop browser for Windows 11 (first) and
-Fedora/Nobara + KDE Wayland (later). Open source, MPL-2.0. Status: **design phase (v0)** — this repo
-currently contains the design document, no runnable code yet. The authoritative plan is in Hungarian
-under [`docs/HU/`](../HU/); this page is the condensed English version.
+Fedora/Nobara + KDE Wayland (later). Open source, **MPL-2.0** ([`LICENSE`](../../LICENSE)).
+Status: **v0.8 — runnable, measured**. The repo is not a design document any more: it builds two native
+binaries (a Qt 6 shell and a CEF engine host) and a Rust core, and a gate proves the behaviour.
+
+The authoritative plan, the decision log (ADR-001…ADR-067) and the development log are Hungarian under
+[`docs/HU/`](../HU/); this page is the condensed English version, and
+[`docs/HU/21-ALLAPOT.md`](../HU/21-ALLAPOT.md) is the measured "where the product stands" page.
+
+## What is proven today
+
+| Area | How it is measured |
+|---|---|
+| Grid and hibernation | `--gridscaletest`: 503 cards, **13** rendered DOM elements, 20 ms to first paint; leaving a card returns **61 MB** of RAM and restores it offline (`scrollY=600`, `fields=18`) |
+| Search | `--searchtest`, `--tagtest`: accent-insensitive across title, URL, note, tag and captured page text |
+| Containers | `--containertest`: colour dot, per-card selector, legend + filter, table in the core, create/rename/delete, delete-with-move |
+| Workspaces | `--workspacetest`: the tab row is the core's table, a card's workspace is a stored field, tab lifecycle (`＋`, double click, `×`) |
+| Cards | `--addcardtest`: add a card with the `＋` form, rename the title and the URL in place, delete — each read back from the core |
+| Portable profile | `--profiletest`: export the profile to one versioned JSON bundle and import it into a fresh profile, from the page itself |
+| Storage | Rust tests + `db_status`: the SQLite mirror (`user_version=2`, WAL) is verified row by row, and the grid already reads its list from it |
+| Gate | `scripts/verify.ps1`: **41 self tests** + `check-repo` (SPDX, links, JS parse, `cargo fmt`, `clippy -D warnings`, 78 + 21 + 2 + 1 + 15 Rust tests) |
 
 ## The idea
 
@@ -87,9 +104,16 @@ site, so it improves over time.
 | [`HU/14-KODALAS.md`](../HU/14-KODALAS.md) | Code signing: SmartScreen reality, free OSS options, Ed25519 update signing |
 | [`HU/15-HOZZAJARULAS.md`](../HU/15-HOZZAJARULAS.md) | Contribution model (DCO, no CLA) and security governance (protected areas, fuzzing, disclosure) |
 | [`HU/16-FEJLESZTESI-NAPLO.md`](../HU/16-FEJLESZTESI-NAPLO.md) | Development log: what is built, how it was verified, what blocks |
+| [`HU/17-ESZKOZLANC.md`](../HU/17-ESZKOZLANC.md) | Toolchain: Qt 6, CEF, MSVC, and the four traps that cost the most time |
+| [`HU/18-F0-JELENTES.md`](../HU/18-F0-JELENTES.md) | The F0 measurement: what is measured, how much, what it means, with reservations |
+| [`HU/19-FOLYTATAS.md`](../HU/19-FOLYTATAS.md) | Continuation plan: what is done, what comes next |
+| [`HU/20-ALASAS.md`](../HU/20-ALASAS.md) | Code signing: Store and SignPath, costs, and the exact steps in the repo |
+| [`HU/21-ALLAPOT.md`](../HU/21-ALLAPOT.md) | **Measured status**: what works and with which evidence, what is open, what needs a human |
 | [`../proto/README.md`](../../proto/README.md) | Wire protocol v1 between the core and the engine host |
 | [`forras/`](../forras/) | The original plan this work started from (ODT + text) and the raw research notes |
 
 ## Licensing note
 
-MPL-2.0. Qt is LGPL-3, so it must be **dynamically linked** and replaceable by the user; CEF is BSD.
+MPL-2.0 ([`LICENSE`](../../LICENSE)). Qt is LGPL-3, so it must be **dynamically linked** and replaceable by the user;
+CEF is BSD. Third-party components and the AI-assisted development disclosure are listed in
+[`NOTICE`](../../NOTICE); the maintainer is Varga Sándor (`@svandor`), see [`AUTHORS`](../../AUTHORS).

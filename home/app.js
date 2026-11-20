@@ -15,8 +15,8 @@ const GAP = 16;
 const CARD_MIN_WIDTH = 220;
 const OVERSCAN_ROWS = 2;
 
-// Container and workspace groupings belong to the page, not to the mock: the shell sends the core's
-// cards with a container id, and both data sources must render with the same colours and tabs.
+// The containers the product ships with. The core seeds the same four (ADR-052) and its table replaces this one
+// at start-up; the constant stays as the fallback for a page opened without a core (a plain browser).
 const PAGE_CONTAINERS = [
   { id: "c-work", name: "Munka", color: "#2F6FEB" },
   { id: "c-private", name: "Magán", color: "#2E9E5B" },
@@ -24,18 +24,43 @@ const PAGE_CONTAINERS = [
   { id: "c-dev", name: "Fejlesztés", color: "#8E44AD" },
 ];
 
+// The table the page draws from. It starts as the shipped default and is replaced by the core's table at
+// start-up (ADR-052): a rename or a new container lives in the core, and the page only draws what it is told.
+let pageContainers = PAGE_CONTAINERS;
+// The workspaces the product ships with. Like the containers, the core seeds the same three and its table
+// replaces this one at start-up (ADR-056); the constant is the fallback for a page opened without a core.
 const PAGE_WORKSPACES = [
   { id: "w-home", name: "Otthon" },
   { id: "w-work", name: "Munka" },
   { id: "w-read", name: "Olvasnivaló" },
 ];
 
+// The table the tab row draws from. It starts as the shipped default and is replaced by the core's table, or by
+// the shell's push — whichever arrives first.
+let pageWorkspaces = PAGE_WORKSPACES;
+
+/** A new card's id: a 26-character ULID-shaped string, so the core's ordering stays lexicographic by creation. */
+function newCardId() {
+  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  const stamp = Date.now();
+  let out = "";
+  // 10 characters of time (base32 of milliseconds), 16 of randomness: unique enough for a personal card list, and a
+  // shape the store already uses for its seed cards.
+  for (let shift = 45; shift >= 0; shift -= 5) {
+    out += alphabet[(Math.floor(stamp / 2 ** shift) & 31) % 32];
+  }
+  for (let index = 0; index < 16; index += 1) {
+    out += alphabet[Math.floor(Math.random() * 32)];
+  }
+  return out.slice(0, 26);
+}
+
 /** The bridge contract. Every method here must exist in the real shell's injection. */
 function createMockBridge() {
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
 
-  const containers = PAGE_CONTAINERS;
+  const containers = pageContainers;
   const workspaces = PAGE_WORKSPACES;
 
   const raw = [
@@ -87,7 +112,9 @@ function createMockBridge() {
       previewRef: null,
       luminance,
       lastOpenedAt: now - index * day * 0.4,
-      workspaceId: index > 20 ? "w-work" : index > 12 ? "w-read" : "w-home",
+      // The sample cards a browser-only page shows: the workspace is part of the sample data, stated as such,
+      // instead of being derived from the card's position in the list.
+      workspaceId: workspaces[index % workspaces.length].id,
     };
   });
 
@@ -170,9 +197,9 @@ const STATUS = {
 function pageCardFromCore(row, index) {
   const containerId = String(row.container ?? "");
   const container =
-    PAGE_CONTAINERS.find((entry) => entry.id === containerId) ??
-    PAGE_CONTAINERS.find((entry) => entry.name === containerId) ??
-    PAGE_CONTAINERS[1];
+    pageContainers.find((entry) => entry.id === containerId) ??
+    pageContainers.find((entry) => entry.name === containerId) ??
+    pageContainers[1];
   const statuses = ["signed_in", "expiring", "signed_out", "unknown"];
   const pinned = Boolean(row.pinned);
   return {
@@ -192,18 +219,47 @@ function pageCardFromCore(row, index) {
     previewRef: String(row.preview_ref ?? "") || null,
     luminance: 0,
     lastOpenedAt: Number(row.last_opened_at_ms) || 0,
-    workspaceId: index > 12 ? "w-read" : "w-home",
+    // The page's own text, captured when the card was frozen (ADR-049). Empty for a card that was never frozen;
+    // the search treats it as one more field to look at, never as a preview of the article.
+    pageText: String(row.page_text ?? ""),
+    // Free-form tags the user typed (ADR-055). The search has always promised "címke"; this is the field that
+    // makes the promise true, and it travels to the core with every write.
+    tags: Array.isArray(row.tags) ? row.tags.map((tag) => String(tag)).filter(Boolean) : [],
+    // The workspace is a stored field (ADR-056), not an index the page invents: `index > 12 ? "w-read" : "w-home"`
+    // put every thirteenth card into "Olvasnivaló" whether the user asked for it or not. An empty field means the
+    // first workspace — what every card written before the table existed means.
+    workspaceId: String(row.workspace ?? "") || (PAGE_WORKSPACES[0]?.id ?? "w-home"),
   };
 }
 
-/** The page's own search rule (title, URL, note, tag). */
-function matchesTerm(card, term) {
-  const query = String(term || "").toLowerCase();
-  if (!query) return true;
-  return [card.title, card.url, card.notes, ...(card.tags || [])]
-    .join(" ")
+/** The fold a Hungarian search is expected to do: `Kávé` is found by typing `kave`.
+ *
+ * Two steps, both standard: lowercase, then strip the diacritics through Unicode decomposition (`ő` becomes
+ * `o` + a combining double acute, which is removed with the rest of the combining marks). The handful of letters
+ * that do *not* decompose (`ł`, `ø`, `đ`, `ß`) get an explicit map, because a search box that works for Hungarian
+ * and fails for a Polish author's name is a bug waiting for the first issue report.
+ */
+function foldSearch(text) {
+  return String(text || "")
     .toLowerCase()
-    .includes(query);
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ł/g, "l")
+    .replace(/ø/g, "o")
+    .replace(/đ/g, "d")
+    .replace(/ß/g, "ss");
+}
+
+/** The page's own search rule (title, URL, note, tag, and the captured page text) — accent-insensitive, because
+ * typing `kave` is what a Hungarian user actually does. The page text comes from the freeze (`card_page_text`,
+ * ADR-049): a card that was never frozen has none, so this is a bonus field, not a promise about every card.
+ */
+function matchesTerm(card, term) {
+  const query = foldSearch(term).trim();
+  if (!query) return true;
+  return foldSearch(
+    [card.title, card.url, card.notes, card.pageText, ...(card.tags || [])].join(" "),
+  ).includes(query);
 }
 
 /// Where `cards.open` finds the URL and title it hands to the shell. The list the page shows is the
@@ -271,16 +327,12 @@ class AntikoltCard extends HTMLElement {
     article.setAttribute("aria-label", `${card.title} — ${card.domain} — ${status.label}`);
     article.dataset.cardId = card.id;
     if (pendingFocusId && card.id === pendingFocusId) {
-      // A note save re-renders the list — and the core's push re-renders it *again* — so the focus must be
-      // re-applied on every rebuild until the list has settled; clearing it on the first one lost the race
-      // (measured: activeElement was null after the push).
+      // A note save re-renders the list — and the core's push re-renders it *again* — so the focus is re-applied on
+      // every rebuild until the user does something else (the save handler releases the id on the next pointer or
+      // key event). A timeout here was the bug: it could expire before the push, and the focus then fell to `body`.
       requestAnimationFrame(() => {
         if (article.isConnected) article.focus();
       });
-      const wanted = pendingFocusId;
-      setTimeout(() => {
-        if (pendingFocusId === wanted) pendingFocusId = null;
-      }, 2000);
     }
 
     const preview = document.createElement("div");
@@ -309,6 +361,56 @@ class AntikoltCard extends HTMLElement {
     const title = document.createElement("div");
     title.className = "card-title";
     title.textContent = card.title || card.domain;
+    // Renaming in place (ADR-062): a double click turns the title into an input, Enter saves, Esc cancels — the same
+    // gesture the container legend and the workspace tabs already use, and no dialog (ADR-053).
+    title.title = "Dupla kattintás: átnevezés";
+    title.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "card-title-input";
+      input.value = card.title || "";
+      input.setAttribute("aria-label", "A kártya címe");
+      const finish = (value, save) => {
+        const next = String(value ?? "").trim();
+        const wanted = save && next && next !== card.title;
+        // The write happens *before* the DOM is put back: restoring the title first made the browser fire `blur`,
+        // whose own `finish("", false)` ran re-entrantly and could throw before the save — the editor then looked
+        // like it silently did nothing (ADR-062, measured by `--addcardtest`'s `wrote_by`/`editor` pair).
+        if (wanted) {
+          const detail = { id: this.card?.id, title: next };
+          window.__lastRename = JSON.stringify(detail);
+          if (typeof window.antikoltRenameCard === "function") {
+            window.antikoltRenameCard(detail.id, detail.title);
+          } else {
+            this.dispatchEvent(
+              new CustomEvent("antikolt-card-title", { detail, bubbles: true, composed: true }),
+            );
+          }
+        }
+        try {
+          if (input.parentNode) {
+            input.replaceWith(title);
+          }
+        } catch (error) {
+          console.warn("a címszerkesztő nem tudta visszaállítani a címet", error);
+        }
+      };
+      input.addEventListener("keydown", (keyEvent) => {
+        if (keyEvent.key === "Enter") {
+          keyEvent.preventDefault();
+          finish(input.value, true);
+        } else if (keyEvent.key === "Escape") {
+          keyEvent.preventDefault();
+          finish("", false);
+        }
+      });
+      input.addEventListener("blur", () => finish("", false));
+      title.replaceWith(input);
+      input.focus();
+      input.select();
+    });
 
     const meta = document.createElement("div");
     meta.className = "card-meta";
@@ -318,9 +420,114 @@ class AntikoltCard extends HTMLElement {
     dot.style.background = card.container?.color ?? "var(--text-muted)";
     dot.title = card.container?.name ?? "";
 
+    // The card↔container binding is switchable from the card itself (roadmap M2). A native `<select>` keeps it
+    // keyboard- and screen-reader-friendly, and it shows the container's name, not just a colour — a dot alone
+    // cannot be read out. The write goes through the shell like every other write, so the grid shows only what
+    // the core accepted.
+    const containerSelect = document.createElement("select");
+    containerSelect.className = "container-select";
+    containerSelect.setAttribute("aria-label", "Konténer");
+    containerSelect.title = card.container?.name ?? "";
+    for (const entry of pageContainers) {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.name;
+      if (card.container && entry.id === card.container.id) {
+        option.selected = true;
+      }
+      containerSelect.append(option);
+    }
+    containerSelect.addEventListener("change", (event) => {
+      event.stopPropagation();
+      this.dispatchEvent(
+        new CustomEvent("antikolt-container", {
+          detail: { id: this.card?.id, container: containerSelect.value },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    });
+
+    // The workspace is a second, narrower selector next to the container (ADR-058). Two selects look busy, but the
+    // alternative — a card that can only change workspace through a drag gesture that does not exist yet — would
+    // be a setting the user cannot reach. Both are plain `<select>`s, so keyboard and screen readers already work.
+    const workspaceSelect = document.createElement("select");
+    workspaceSelect.className = "workspace-select";
+    workspaceSelect.setAttribute("aria-label", "Munkaterület");
+    workspaceSelect.title = "Munkaterület";
+    for (const entry of pageWorkspaces) {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.name;
+      if (entry.id === card.workspaceId) {
+        option.selected = true;
+      }
+      workspaceSelect.append(option);
+    }
+    workspaceSelect.addEventListener("change", (event) => {
+      event.stopPropagation();
+      this.dispatchEvent(
+        new CustomEvent("antikolt-workspace", {
+          detail: { id: this.card?.id, workspace: workspaceSelect.value },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    });
+
     const domain = document.createElement("span");
     domain.className = "card-domain";
     domain.textContent = card.domain;
+    // The URL is editable the same way the title is (ADR-063): a double click opens the address, Enter saves it. The
+    // card's *target* is the one field where a typo is silent — the card keeps opening the old page — so it is worth
+    // the same in-place editor.
+    domain.title = "Dupla kattintás: webcím szerkesztése";
+    domain.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "card-domain-input";
+      input.value = card.url || "";
+      input.setAttribute("aria-label", "A kártya webcíme");
+      const restore = () => {
+        try {
+          if (input.parentNode) {
+            input.replaceWith(domain);
+          }
+        } catch (error) {
+          console.warn("a webcím-szerkesztő nem tudta visszaállítani a mezőt", error);
+        }
+      };
+      const finish = (value, save) => {
+        const typed = String(value ?? "").trim();
+        const wanted = save && typed && typed !== card.url;
+        // Write first, restore second — the same order the title editor had to learn (ADR-062): restoring the node
+        // fires `blur`, and a re-entrant cancel must not swallow the save the user asked for.
+        if (wanted) {
+          const next = /^https?:\/\//i.test(typed) ? typed : `https://${typed}`;
+          const detail = { id: this.card?.id, url: next };
+          window.__lastUrlEdit = JSON.stringify(detail);
+          if (typeof window.antikoltCardUrl === "function") {
+            window.antikoltCardUrl(detail.id, detail.url);
+          }
+        }
+        restore();
+      };
+      input.addEventListener("keydown", (keyEvent) => {
+        if (keyEvent.key === "Enter") {
+          keyEvent.preventDefault();
+          finish(input.value, true);
+        } else if (keyEvent.key === "Escape") {
+          keyEvent.preventDefault();
+          finish("", false);
+        }
+      });
+      input.addEventListener("blur", () => finish("", false));
+      domain.replaceWith(input);
+      input.focus();
+      input.select();
+    });
 
     const badge = document.createElement("button");
     badge.type = "button";
@@ -373,6 +580,17 @@ class AntikoltCard extends HTMLElement {
       event.stopPropagation();
       editor.hidden = true;
       pendingFocusId = this.card?.id ?? null;
+      // The id is kept until the *user* does something else, not until a timeout: the list is rebuilt twice on a
+      // save (the page's own render, then the core's push), and the push can arrive later than any guessed delay.
+      // A timeout that expired first left the focus on `body` (measured: `note_focus=not-host:BODY`), which is
+      // exactly the accessibility promise this feature is about.
+      const release = () => {
+        pendingFocusId = null;
+        document.removeEventListener("pointerdown", release, true);
+        document.removeEventListener("keydown", release, true);
+      };
+      document.addEventListener("pointerdown", release, true);
+      document.addEventListener("keydown", release, true);
       this.dispatchEvent(
         new CustomEvent("antikolt-note", {
           detail: { id: this.card?.id, notes: textarea.value },
@@ -398,8 +616,78 @@ class AntikoltCard extends HTMLElement {
       if (!editor.hidden) textarea.focus();
     });
 
-    meta.append(dot, domain, noteButton, badge);
+    meta.append(dot, containerSelect, workspaceSelect, domain, noteButton, badge);
     body.append(title, meta);
+    // Tags (ADR-055): the chips a user typed, plus the inline way to add one. No dialog and no separate screen:
+    // a tag is a word, and typing it where it belongs is the whole interaction.
+    const tagsRow = document.createElement("div");
+    tagsRow.className = "card-tags";
+    for (const tag of card.tags ?? []) {
+      const chip = document.createElement("span");
+      chip.className = "tag";
+      chip.dataset.tag = tag;
+      const text = document.createElement("span");
+      text.textContent = tag;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "tag-remove";
+      remove.setAttribute("aria-label", `${tag} címke törlése`);
+      remove.textContent = "×";
+      remove.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.dispatchEvent(
+          new CustomEvent("antikolt-tags", {
+            detail: { id: this.card?.id, tags: (this.card?.tags ?? []).filter((entry) => entry !== tag) },
+            bubbles: true,
+            composed: true,
+          }),
+        );
+      });
+      chip.append(text, remove);
+      tagsRow.append(chip);
+    }
+    const addTag = document.createElement("button");
+    addTag.type = "button";
+    addTag.className = "tag-add";
+    addTag.textContent = "＋címke";
+    addTag.title = "Címke hozzáadása";
+    addTag.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "tag-input";
+      input.setAttribute("aria-label", "Új címke");
+      input.placeholder = "címke";
+      const finish = (value, keep) => {
+        const tags = keep
+          ? [...(this.card?.tags ?? []), String(value ?? "").trim()].filter(Boolean)
+          : this.card?.tags ?? [];
+        this.dispatchEvent(
+          new CustomEvent("antikolt-tags", {
+            detail: { id: this.card?.id, tags },
+            bubbles: true,
+            composed: true,
+          }),
+        );
+      };
+      input.addEventListener("keydown", (keyEvent) => {
+        if (keyEvent.key === "Enter") {
+          keyEvent.preventDefault();
+          finish(input.value, true);
+        } else if (keyEvent.key === "Escape") {
+          keyEvent.preventDefault();
+          finish("", false);
+        }
+      });
+      input.addEventListener("blur", () => finish("", false));
+      addTag.replaceWith(input);
+      input.focus();
+    });
+    tagsRow.append(addTag);
+    body.append(tagsRow);
+
 
     if (card.notes) {
       const notes = document.createElement("div");
@@ -486,12 +774,54 @@ class HomePage {
     this.searchEl = document.getElementById("search");
     this.pinnedSection = document.getElementById("pinned-section");
     this.pinnedRow = document.getElementById("pinned");
+    this.legendEl = document.getElementById("container-legend");
+    // The container filter is a *view* state: it is not stored, because a filter the user forgot about is a
+    // trap ("where are my cards?"). A fresh start shows everything.
+    this.containerFilter = null;
+    // Set when the core refuses a delete because cards still live in the container: the legend then offers the
+    // move instead of a dead end (ADR-054).
+    this.containerMove = null;
+    this.lastContainerError = "";
+    // The last tag write, for the witness a self test reads (ADR-055).
+    this.lastTags = null;
+    // The last workspace write (ADR-056), same reason.
+    this.lastWorkspace = null;
+    // The workspace editor and its error: an inline form on the tab row, never a dialog (ADR-053/ADR-057).
+    this.workspaceEdit = null;
+    this.lastWorkspaceError = "";
+    // The add-card editor (ADR-061): the same shape — an inline form, no dialog, and an error place of its own.
+    this.cardAdd = null;
+    this.lastCardError = "";
   }
 
+
   async start() {
-    this.workspaces = await this.bridge.workspaces.list();
+    // The tab row comes from the core too (ADR-056). A core that does not answer leaves the shipped table, but a
+    // core that answers with nothing is a lie to act on: the first workspace is then the fallback, not "no tabs".
+    try {
+      const table = await this.bridge.workspaces.list();
+      if (Array.isArray(table) && table.length) {
+        pageWorkspaces = table;
+      }
+    } catch (error) {
+      console.warn("a munkaterület-tábla nem jött át", error);
+    }
+    this.workspaces = pageWorkspaces;
     this.activeWorkspace = this.workspaces[0]?.id ?? null;
     this.renderWorkspaces();
+
+    // The container table comes from the core (ADR-052), before the cards are mapped: a card's colour and name
+    // are looked up through it. A core that does not answer leaves the shipped default in place, because a grid
+    // without colours is worse than a grid with the wrong palette.
+    try {
+      const table = await this.bridge.containers.list();
+      if (Array.isArray(table) && table.length) {
+        pageContainers = table;
+      }
+    } catch (error) {
+      console.warn("a konténer-tábla nem jött át", error);
+    }
+    this.containers = pageContainers;
 
     // A push from the shell may already have arrived (it is sent when the page finishes loading), so
     // the pushed list wins over whatever the bridge would hand out.
@@ -524,6 +854,39 @@ class HomePage {
     this.cardSource = "core";
     this.applyFilter();
     this.refreshSystem().catch(() => {});
+  }
+
+  /**
+   * The core's container table arrived (ADR-052): re-map the cards through it and redraw.
+   *
+   * The mapping is not idempotent by accident: a card's container becomes an *object* (colour + name), so a new
+   * table must rebuild the models, not just the legend. The core's own records are kept untouched, because they
+   * only carry the id.
+   */
+  acceptContainers() {
+    if (this.coreCards) {
+      this.allCards = this.coreCards.map(pageCardFromCore);
+      this.cards = this.allCards.slice();
+      cardLookup.rows = this.allCards;
+    }
+    this.applyFilter();
+  }
+
+  /**
+   * The core's workspace table arrived (ADR-056): redraw the tabs and re-map the cards through it.
+   *
+   * The card's workspace comes from its record, so a new table does not change an assignment — but the tab labels
+   * and the active tab must follow the table, or a renamed workspace would keep its old name in the row.
+   */
+  acceptWorkspaces() {
+    this.workspaces = pageWorkspaces;
+    this.renderWorkspaces();
+    if (this.coreCards) {
+      this.allCards = this.coreCards.map(pageCardFromCore);
+      this.cards = this.allCards.slice();
+      cardLookup.rows = this.allCards;
+    }
+    this.applyFilter();
   }
 
   /**
@@ -573,11 +936,113 @@ class HomePage {
   }
 
   /**
+   * Move one card to another workspace through the shell (`cards.upsert`), then re-render from the answer
+   * (ADR-056). Same rule as the container switch: the grid shows what the core accepted, and the view's
+   * `workspaceId` follows the answer, not the request.
+   */
+  async setWorkspace(id, workspaceId) {
+    if (!id || !workspaceId) return;
+    const model = this.allCards.find((card) => card.id === id);
+    const record = this.coreRowById?.get(id);
+    if (!model || !record) {
+      this.lastWorkspace = { id, workspace: "", error: "nincs mag-rekord ehhez a kártyához" };
+      return;
+    }
+    if (typeof this.bridge?.cards?.upsert !== "function") {
+      this.lastWorkspace = { id, workspace: "", error: "a híd nem tud írni (nincs motor)" };
+      return;
+    }
+    const next = { ...record, workspace: String(workspaceId) };
+    try {
+      const answer = await this.bridge.cards.upsert(next);
+      const saved = answer?.card ?? next;
+      const stored = this.coreRowById.get(id);
+      if (stored) stored.workspace = String(saved.workspace ?? "");
+      model.workspaceId = String(saved.workspace ?? "") || model.workspaceId;
+      this.lastWorkspace = { id, workspace: model.workspaceId, error: "" };
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+    } catch (error) {
+      this.lastWorkspace = { id, workspace: "", error: String(error?.message ?? error) };
+      throw error;
+    }
+  }
+
+  /**
+   * Move one card to another container through the shell (`cards.upsert`), then re-render from the answer.
+   *
+   * Same rule as the pin and the note: the grid shows what the core accepted. The *view* keeps a container
+   * object (colour and name for the dot), while the record carries the id, so the answer is translated back
+   * through the same table the cards were read with.
+   */
+  async setContainer(id, containerId) {
+    if (!id || !containerId) return;
+    const model = this.allCards.find((card) => card.id === id);
+    const record = this.coreRowById?.get(id);
+    if (!model || !record) {
+      this.lastContainer = { id, container: "", error: "nincs mag-rekord ehhez a kártyához" };
+      return;
+    }
+    if (typeof this.bridge?.cards?.upsert !== "function") {
+      this.lastContainer = { id, container: "", error: "a híd nem tud írni (nincs motor)" };
+      return;
+    }
+    const next = { ...record, container: String(containerId) };
+    try {
+      const answer = await this.bridge.cards.upsert(next);
+      const saved = answer?.card ?? next;
+      const stored = this.coreRowById.get(id);
+      if (stored) stored.container = String(saved.container ?? "");
+      model.container =
+        pageContainers.find((entry) => entry.id === String(saved.container ?? "")) ??
+        model.container;
+      this.lastContainer = { id, container: String(saved.container ?? ""), error: "" };
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+    } catch (error) {
+      this.lastContainer = { id, container: "", error: String(error?.message ?? error) };
+    }
+  }
+
+  /**
    * Save one card's note through the shell (`cards.upsert`), then re-render from the answer.
    *
    * Same rule as the pin: the grid shows what the core accepted, so a failed write cannot leave the card
    * claiming a note the store does not hold.
    */
+  /**
+   * Save one card's tags through the shell (`cards.upsert`), then re-render from the answer (ADR-055).
+   *
+   * Same rule as the pin and the note: the grid shows what the core accepted. The core normalises the list
+   * (trim, de-duplicate, cap), so the answer — not the typed text — is what the chip row shows.
+   */
+  async setTags(id, tags) {
+    if (!id) return;
+    const model = this.allCards.find((card) => card.id === id);
+    const record = this.coreRowById?.get(id);
+    if (!model || !record) {
+      this.lastTags = { id, tags: [], error: "nincs mag-rekord ehhez a kártyához" };
+      return;
+    }
+    if (typeof this.bridge?.cards?.upsert !== "function") {
+      this.lastTags = { id, tags: [], error: "a híd nem tud írni (nincs motor)" };
+      return;
+    }
+    const next = { ...record, tags: Array.isArray(tags) ? tags : [] };
+    try {
+      const answer = await this.bridge.cards.upsert(next);
+      const saved = answer?.card ?? next;
+      const stored = this.coreRowById.get(id);
+      if (stored) stored.tags = Array.isArray(saved.tags) ? saved.tags : [];
+      model.tags = Array.isArray(saved.tags) ? saved.tags : [];
+      this.lastTags = { id, tags: model.tags, error: "" };
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+    } catch (error) {
+      this.lastTags = { id, tags: [], error: String(error?.message ?? error) };
+    }
+  }
+
   async setNote(id, notes) {
     if (!id) return;
     const model = this.allCards.find((card) => card.id === id);
@@ -639,6 +1104,21 @@ class HomePage {
     document.addEventListener("antikolt-note", (event) =>
       this.setNote(event.detail?.id, event.detail?.notes),
     );
+    document.addEventListener("antikolt-container", (event) =>
+      this.setContainer(event.detail?.id, event.detail?.container),
+    );
+    document.addEventListener("antikolt-tags", (event) =>
+      this.setTags(event.detail?.id, event.detail?.tags),
+    );
+    document.addEventListener("antikolt-card-title", (event) =>
+      this.setCardTitle(event.detail?.id, event.detail?.title),
+    );
+    window.addEventListener("antikolt-card-title", (event) =>
+      this.setCardTitle(event.detail?.id, event.detail?.title),
+    );
+    document.addEventListener("antikolt-workspace", (event) =>
+      this.setWorkspace(event.detail?.id, event.detail?.workspace),
+    );
 
     // Delegated on the document on purpose: the pinned row lives outside `#viewport`, so a listener
     // bound there never saw a click on a pinned card — the most prominent cards were inert. One
@@ -657,12 +1137,227 @@ class HomePage {
     this.renderWindow();
   }
 
+  /**
+   * The add-card editor (ADR-061): a URL and an optional title, in an inline form above the grid.
+   *
+   * The card is written through the same `cards.upsert` every other change uses, into the active workspace and the
+   * first container — the two facts a new card has to have, and the two a form cannot ask without a third field.
+   */
+  beginCardAdd() {
+    this.cardAdd = { url: "", title: "" };
+    this.lastCardError = "";
+    this.renderCardAdd();
+  }
+
+  renderCardAdd() {
+    const host = document.getElementById("card-add-form");
+    if (!host) return;
+    host.replaceChildren();
+    if (!this.cardAdd) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    const form = document.createElement("form");
+    form.className = "card-add-form";
+    const url = document.createElement("input");
+    url.type = "text";
+    url.className = "card-add-url";
+    url.placeholder = "https://…";
+    url.setAttribute("aria-label", "A kártya webcíme");
+    const title = document.createElement("input");
+    title.type = "text";
+    title.className = "card-add-title";
+    title.placeholder = "Cím (elhagyható — a webcím lesz a cím)";
+    title.setAttribute("aria-label", "A kártya címe");
+    const hint = document.createElement("span");
+    hint.className = "card-add-hint";
+    hint.textContent = "Enter: mentés · Esc: mégse";
+    form.append(url, title, hint);
+    if (this.lastCardError) {
+      const problem = document.createElement("span");
+      problem.className = "card-add-error";
+      problem.setAttribute("role", "status");
+      problem.textContent = this.lastCardError;
+      form.append(problem);
+    }
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      this.commitCardAdd(url.value, title.value);
+    });
+    form.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.cardAdd = null;
+        this.renderCardAdd();
+      }
+    });
+    host.append(form);
+    requestAnimationFrame(() => url.focus());
+  }
+
+  /** Save the typed card. The URL is the only required field; a title falls back to the host. */
+  async commitCardAdd(rawUrl, rawTitle) {
+    const url = String(rawUrl ?? "").trim();
+    const title = String(rawTitle ?? "").trim();
+    if (!url) {
+      this.cardAdd = null;
+      this.renderCardAdd();
+      return;
+    }
+    const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const domain = normalized.replace(/^https?:\/\//i, "").split("/")[0];
+    const model = {
+      id: newCardId(),
+      title: title || domain,
+      url: normalized,
+      domain,
+      containerId: pageContainers[0]?.id ?? "",
+      workspaceId: this.activeWorkspace ?? pageWorkspaces[0]?.id ?? "",
+      tags: [],
+      pinned: false,
+      notes: "",
+    };
+    const record = {
+      id: model.id,
+      title: model.title,
+      url: model.url,
+      container: model.containerId,
+      status: "unknown",
+      pinned: false,
+      notes: "",
+      preview_ref: "",
+      last_opened_at_ms: 0,
+      page_text: "",
+      tags: [],
+      workspace: model.workspaceId,
+    };
+    if (typeof this.bridge?.cards?.upsert !== "function") {
+      this.lastCardError = "a híd nem tud írni (nincs motor)";
+      this.renderCardAdd();
+      return;
+    }
+    try {
+      const answer = await this.bridge.cards.upsert(record);
+      const saved = answer?.card ?? record;
+      this.cardAdd = null;
+      this.lastCardError = "";
+      this.coreRowById.set(saved.id, saved);
+      this.coreCards.push(saved);
+      this.allCards = this.coreCards.map(pageCardFromCore);
+      this.cards = this.allCards.slice();
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+      this.renderCardAdd();
+    } catch (error) {
+      this.lastCardError = String(error?.message ?? error);
+      this.renderCardAdd();
+    }
+  }
+
+  /**
+   * Rename one card through the shell (`cards.upsert`), then re-render from the answer (ADR-062).
+   *
+   * The record travels whole — the title is one field of it — so the core keeps the container, the tags, the note and
+   * the capture, and the grid draws what came back.
+   */
+  async setCardTitle(id, title) {
+    const wanted = String(title ?? "").trim();
+    const model = this.allCards.find((card) => card.id === id);
+    const record = this.coreRowById?.get(id);
+    if (!model || !record || !wanted) {
+      this.lastCardError = "nincs mit átnevezni";
+      return;
+    }
+    if (typeof this.bridge?.cards?.upsert !== "function") {
+      this.lastCardError = "a híd nem tud írni (nincs motor)";
+      return;
+    }
+    try {
+      const answer = await this.bridge.cards.upsert({ ...record, title: wanted });
+      const saved = answer?.card ?? record;
+      this.coreRowById.set(id, saved);
+      this.coreCards = this.coreCards.map((row) => (row.id === id ? saved : row));
+      this.allCards = this.coreCards.map(pageCardFromCore);
+      this.cards = this.allCards.slice();
+      this.lastCardError = "";
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+    } catch (error) {
+      this.lastCardError = String(error?.message ?? error);
+    }
+  }
+
+  /**
+   * Change one card's URL through the shell (`cards.upsert`), then re-render from the answer (ADR-063).
+   *
+   * The domain the card shows is derived from the URL everywhere else (the add form does the same), so this only
+   * writes the URL and lets `pageCardFromCore` recompute the rest from the core's answer.
+   */
+  async setCardUrl(id, url) {
+    const wanted = String(url ?? "").trim();
+    const record = this.coreRowById?.get(id);
+    if (!record || !wanted) {
+      this.lastCardError = "nincs mit átírni";
+      return;
+    }
+    if (typeof this.bridge?.cards?.upsert !== "function") {
+      this.lastCardError = "a híd nem tud írni (nincs motor)";
+      return;
+    }
+    try {
+      const answer = await this.bridge.cards.upsert({ ...record, url: wanted });
+      const saved = answer?.card ?? record;
+      this.coreRowById.set(id, saved);
+      this.coreCards = this.coreCards.map((row) => (row.id === id ? saved : row));
+      this.allCards = this.coreCards.map(pageCardFromCore);
+      this.cards = this.allCards.slice();
+      this.lastCardError = "";
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+    } catch (error) {
+      this.lastCardError = String(error?.message ?? error);
+    }
+  }
+
+  /** Remove one card (`cards.delete`), after the core accepted it (ADR-061). */
+  async deleteCard(id) {
+    if (!id || typeof this.bridge?.cards?.delete !== "function") {
+      this.lastCardError = "a híd nem tud írni (nincs motor)";
+      return;
+    }
+    try {
+      await this.bridge.cards.delete(id);
+      this.coreRowById.delete(id);
+      this.coreCards = this.coreCards.filter((row) => row.id !== id);
+      this.allCards = this.coreCards.map(pageCardFromCore);
+      this.cards = this.allCards.slice();
+      this.windowEl.dataset.signature = "";
+      this.applyFilter();
+    } catch (error) {
+      this.lastCardError = String(error?.message ?? error);
+    }
+  }
+
   renderWorkspaces() {
     const nav = document.getElementById("workspaces");
+    this.workspacesEl = nav;
     nav.replaceChildren();
+    // The add-card button lives outside the tab row (it is not a tab), but it is wired here because the render is
+    // the one place that knows the page is ready (ADR-061).
+    const addCard = document.getElementById("card-add");
+    if (addCard && !addCard.dataset.wired) {
+      addCard.dataset.wired = "1";
+      addCard.addEventListener("click", () => this.beginCardAdd());
+    }
     for (const workspace of this.workspaces) {
+      const tab = document.createElement("span");
+      tab.className = "ws-tab";
+      tab.dataset.workspace = workspace.id;
       const button = document.createElement("button");
       button.type = "button";
+      button.className = "ws-pick";
+      button.dataset.workspace = workspace.id;
       button.setAttribute("role", "tab");
       button.setAttribute("aria-selected", String(workspace.id === this.activeWorkspace));
       button.textContent = workspace.name;
@@ -671,15 +1366,423 @@ class HomePage {
         this.renderWorkspaces();
         this.applyFilter();
       });
-      nav.append(button);
+      // Rename: double click on the tab, the same way the container legend works (ADR-053/ADR-057).
+      button.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        this.beginWorkspaceEdit({ mode: "rename", id: workspace.id, name: workspace.name });
+      });
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "ws-remove";
+      remove.dataset.workspace = workspace.id;
+      remove.setAttribute("aria-label", `${workspace.name} törlése`);
+      remove.title = "Munkaterület törlése (csak ha üres)";
+      remove.textContent = "×";
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.deleteWorkspace(workspace.id);
+      });
+      tab.append(button, remove);
+      nav.append(tab);
     }
+    // The editor is one element for both jobs (add and rename): two inputs would be two places to keep in sync.
+    if (this.workspaceEdit) {
+      const form = document.createElement("form");
+      form.className = "ws-editor";
+      form.noValidate = true;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "ws-input";
+      input.value = this.workspaceEdit.name ?? "";
+      input.placeholder = this.workspaceEdit.mode === "add" ? "Új munkaterület" : "Munkaterület neve";
+      input.setAttribute("aria-label", input.placeholder);
+      const confirm = document.createElement("span");
+      confirm.className = "ws-editor-hint";
+      confirm.textContent = "Enter: mentés · Esc: mégse";
+      form.append(input, confirm);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        this.commitWorkspaceEdit(input.value);
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          this.workspaceEdit = null;
+          this.renderWorkspaces();
+        }
+      });
+      nav.append(form);
+      requestAnimationFrame(() => input.focus());
+    } else {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "ws-add";
+      add.setAttribute("aria-label", "Új munkaterület");
+      add.title = "Új munkaterület";
+      add.textContent = "＋";
+      add.addEventListener("click", () => this.beginWorkspaceEdit({ mode: "add", name: "" }));
+      nav.append(add);
+    }
+    if (this.lastWorkspaceError) {
+      const problem = document.createElement("span");
+      problem.className = "ws-error";
+      problem.setAttribute("role", "status");
+      problem.textContent = this.lastWorkspaceError;
+      nav.append(problem);
+    }
+  }
+
+  beginWorkspaceEdit(edit) {
+    this.workspaceEdit = edit;
+    this.lastWorkspaceError = "";
+    this.renderWorkspaces();
+  }
+
+  /// `w-` + a slug of the name, so a new workspace gets an id a person could type. A clash gets a suffix.
+  newWorkspaceId(name) {
+    const base =
+      "w-" +
+      (name
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 24) || "munkaterulet");
+    let candidate = base;
+    let suffix = 2;
+    while (pageWorkspaces.some((entry) => entry.id === candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  /// Write the table change through the shell, then redraw what the core answered (ADR-056/ADR-057).
+  async commitWorkspaceEdit(rawName) {
+    const name = String(rawName ?? "").trim();
+    const edit = this.workspaceEdit;
+    if (!edit || !name) {
+      this.workspaceEdit = null;
+      this.renderWorkspaces();
+      return;
+    }
+    if (typeof this.bridge?.workspaces?.upsert !== "function") {
+      this.lastWorkspaceError = "a híd nem tud írni (nincs motor)";
+      this.workspaceEdit = null;
+      this.renderWorkspaces();
+      return;
+    }
+    const id = edit.mode === "rename" ? edit.id : this.newWorkspaceId(name);
+    try {
+      await this.bridge.workspaces.upsert({ id, name });
+      this.workspaceEdit = null;
+      this.lastWorkspaceError = "";
+      await this.reloadWorkspaces();
+    } catch (error) {
+      this.lastWorkspaceError = String(error?.message ?? error);
+      this.workspaceEdit = null;
+      this.renderWorkspaces();
+    }
+  }
+
+  async deleteWorkspace(id) {
+    if (typeof this.bridge?.workspaces?.delete !== "function") {
+      this.lastWorkspaceError = "a híd nem tud írni (nincs motor)";
+      this.renderWorkspaces();
+      return;
+    }
+    try {
+      await this.bridge.workspaces.delete(id);
+      this.lastWorkspaceError = "";
+      await this.reloadWorkspaces();
+    } catch (error) {
+      // The core refuses a workspace that still holds cards with `in_use`: the message is the product's words.
+      this.lastWorkspaceError = String(error?.message ?? error);
+      this.renderWorkspaces();
+    }
+  }
+
+  /// Re-read the table from the core after a write, so the tabs are the core's answer and not an assumption.
+  async reloadWorkspaces() {
+    try {
+      const table = await this.bridge.workspaces.list();
+      if (Array.isArray(table) && table.length) {
+        pageWorkspaces = table;
+      }
+    } catch (error) {
+      console.warn("a munkaterület-tábla újratöltése nem sikerült", error);
+    }
+    if (!pageWorkspaces.some((entry) => entry.id === this.activeWorkspace)) {
+      this.activeWorkspace = pageWorkspaces[0]?.id ?? null;
+    }
+    this.acceptWorkspaces();
+  }
+
+  /** The container legend: a coloured chip per container with the number of cards the current search shows.
+   *
+   *  The chips are also the filter. A chip is a button with `aria-pressed`, so the state is announced, and only
+   *  one container can be active at a time — a second click on the same chip clears it. The counts follow the
+   *  search, not the whole store: a legend that claims "3 cards" while the search hides two of them is a legend
+   *  that lies.
+   */
+  renderContainerLegend() {
+    if (!this.legendEl) return;
+    const visible = this.cards.filter((card) => !this.activeWorkspace || card.workspaceId === this.activeWorkspace);
+    this.legendEl.replaceChildren();
+    for (const container of pageContainers) {
+      const count = visible.filter(
+        (card) => card.container?.id === container.id && matchesTerm(card, this.searchTerm),
+      ).length;
+      const chip = document.createElement("span");
+      chip.className = "legend-chip";
+      chip.dataset.container = container.id;
+      chip.setAttribute("role", "group");
+      chip.title = `${container.name} — ${count} kártya`;
+      const pick = document.createElement("button");
+      pick.type = "button";
+      pick.className = "legend-pick";
+      pick.dataset.container = container.id;
+      pick.setAttribute("aria-pressed", this.containerFilter === container.id ? "true" : "false");
+      pick.title = this.containerFilter === container.id ? "Szűrő törlése" : `${container.name} szűrése`;
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      dot.style.background = container.color;
+      const label = document.createElement("span");
+      label.textContent = `${container.name} ${count}`;
+      pick.append(dot, label);
+      pick.addEventListener("click", () => {
+        this.containerFilter = this.containerFilter === container.id ? null : container.id;
+        this.applyFilter();
+      });
+      // Rename: double click on the label (or Enter on the pick while holding Alt is too obscure — a double click
+      // is the desktop gesture people try). The input that appears is the same one the add button uses.
+      pick.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        this.beginContainerEdit({ mode: "rename", id: container.id, name: container.name });
+      });
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "legend-remove";
+      remove.dataset.container = container.id;
+      remove.setAttribute("aria-label", `${container.name} törlése`);
+      remove.title = "Konténer törlése (csak ha üres)";
+      remove.textContent = "×";
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.deleteContainer(container.id);
+      });
+      chip.append(pick, remove);
+      this.legendEl.append(chip);
+    }
+    // The editor is one element for both jobs (add and rename): two inputs would be two places to keep in sync.
+    if (this.containerEdit) {
+      const form = document.createElement("form");
+      form.className = "legend-editor";
+      form.noValidate = true;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "legend-input";
+      input.dataset.containerEdit = this.containerEdit.mode;
+      input.value = this.containerEdit.name ?? "";
+      input.placeholder = this.containerEdit.mode === "add" ? "Új konténer neve" : "Konténer neve";
+      input.setAttribute("aria-label", input.placeholder);
+      const confirm = document.createElement("span");
+      confirm.className = "legend-editor-hint";
+      confirm.textContent = "Enter: mentés · Esc: mégse";
+      form.append(input, confirm);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        this.commitContainerEdit(input.value);
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          this.containerEdit = null;
+          this.renderContainerLegend();
+        }
+      });
+      this.legendEl.append(form);
+      // Focus without stealing it from the grid's keyboard handler: the input is the only place the user can type
+      // while it is open.
+      requestAnimationFrame(() => input.focus());
+    } else {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "legend-add";
+      add.setAttribute("aria-label", "Új konténer");
+      add.title = "Új konténer";
+      add.textContent = "＋ konténer";
+      add.addEventListener("click", () => this.beginContainerEdit({ mode: "add", name: "" }));
+      this.legendEl.append(add);
+    }
+    if (this.containerMove) {
+      // The refusal is not a dead end: the row says where the cards can go, and one click moves them and deletes
+      // the container (ADR-054). The options are the *other* containers, because moving a group into itself is
+      // not a move.
+      const move = document.createElement("span");
+      move.className = "legend-move";
+      const text = document.createElement("span");
+      text.className = "legend-error";
+      text.textContent = this.containerMove.error;
+      const select = document.createElement("select");
+      select.className = "legend-move-target";
+      select.setAttribute("aria-label", "Kártyák új konténere");
+      for (const container of pageContainers) {
+        if (container.id === this.containerMove.id) continue;
+        const option = document.createElement("option");
+        option.value = container.id;
+        option.textContent = container.name;
+        select.append(option);
+      }
+      const confirm = document.createElement("button");
+      confirm.type = "button";
+      confirm.className = "legend-move-confirm";
+      confirm.textContent = "Áthelyezés és törlés";
+      confirm.addEventListener("click", () =>
+        this.moveAndDeleteContainer(this.containerMove.id, select.value),
+      );
+      move.append(text, select, confirm);
+      this.legendEl.append(move);
+    }
+    if (this.lastContainerError) {
+      const problem = document.createElement("span");
+      problem.className = "legend-error";
+      problem.setAttribute("role", "status");
+      problem.textContent = this.lastContainerError;
+      this.legendEl.append(problem);
+    }
+  }
+
+  beginContainerEdit(edit) {
+    this.containerEdit = edit;
+    this.lastContainerError = "";
+    this.renderContainerLegend();
+  }
+
+  /// Write the container table change through the shell (ADR-052), then draw what the core answered.
+  async commitContainerEdit(rawName) {
+    const name = String(rawName ?? "").trim();
+    const edit = this.containerEdit;
+    if (!edit || !name) {
+      this.containerEdit = null;
+      this.renderContainerLegend();
+      return;
+    }
+    if (typeof this.bridge?.containers?.upsert !== "function") {
+      this.lastContainerError = "a híd nem tud írni (nincs motor)";
+      this.containerEdit = null;
+      this.renderContainerLegend();
+      return;
+    }
+    const id = edit.mode === "rename" ? edit.id : this.newContainerId(name);
+    try {
+      const saved = await this.bridge.containers.upsert({ id, name, color: "" });
+      this.containerEdit = null;
+      this.lastContainerError = "";
+      await this.reloadContainers(saved);
+    } catch (error) {
+      this.lastContainerError = String(error?.message ?? error);
+      this.containerEdit = null;
+      this.renderContainerLegend();
+    }
+  }
+
+  /// `c-` + a slug of the name, so a new container gets an id a person could type. A clash gets a suffix.
+  newContainerId(name) {
+    const base =
+      "c-" +
+      (name
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 24) || "kontener");
+    let candidate = base;
+    let suffix = 2;
+    while (pageContainers.some((entry) => entry.id === candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  async deleteContainer(id) {
+    if (typeof this.bridge?.containers?.delete !== "function") {
+      this.lastContainerError = "a híd nem tud írni (nincs motor)";
+      this.renderContainerLegend();
+      return;
+    }
+    try {
+      await this.bridge.containers.delete(id);
+      this.lastContainerError = "";
+      this.containerMove = null;
+      if (this.containerFilter === id) {
+        this.containerFilter = null;
+      }
+      await this.reloadContainers();
+    } catch (error) {
+      const message = String(error?.message ?? error);
+      // A container that still holds cards cannot be deleted (ADR-052/054). Instead of only showing the refusal,
+      // the legend offers the way out: pick where the cards go, and the same click completes the delete.
+      if (message.includes("kártya")) {
+        this.containerMove = { id, error: message };
+        this.lastContainerError = "";
+      } else {
+        this.lastContainerError = message;
+      }
+      this.renderContainerLegend();
+    }
+  }
+
+  /// Move this container's cards into another one and delete it (ADR-054), through the shell.
+  async moveAndDeleteContainer(id, moveTo) {
+    if (typeof this.bridge?.containers?.delete !== "function" || !moveTo) {
+      return;
+    }
+    try {
+      await this.bridge.containers.delete(id, moveTo);
+      this.containerMove = null;
+      this.lastContainerError = "";
+      if (this.containerFilter === id) {
+        this.containerFilter = null;
+      }
+      await this.reloadContainers();
+    } catch (error) {
+      this.lastContainerError = String(error?.message ?? error);
+      this.containerMove = null;
+      this.renderContainerLegend();
+    }
+  }
+
+  /// Re-read the table from the core after a write, so the legend is the core's answer and not an assumption.
+  async reloadContainers(preferred) {
+    try {
+      const table = await this.bridge.containers.list();
+      if (Array.isArray(table) && table.length) {
+        pageContainers = table;
+        this.containers = table;
+      }
+    } catch (error) {
+      console.warn("a konténer-tábla újratöltése nem sikerült", error);
+    }
+    if (preferred && preferred.id && pageContainers.some((entry) => entry.id === preferred.id)) {
+      this.containers = pageContainers;
+    }
+    this.acceptContainers();
   }
 
   applyFilter() {
     const byWorkspace = this.cards.filter(
       (card) => !this.activeWorkspace || card.workspaceId === this.activeWorkspace,
     );
-    this.filtered = byWorkspace;
+    // The container legend filters too, and it is applied *after* the search so the legend's own counts can be
+    // computed from the same pair of rules (search first, then the chosen container).
+    this.filtered = this.containerFilter
+      ? byWorkspace.filter((card) => card.container?.id === this.containerFilter)
+      : byWorkspace;
+    this.renderContainerLegend();
 
     const pinned = this.filtered.filter((card) => card.pinned);
     this.renderPinned(pinned);
@@ -692,6 +1795,11 @@ class HomePage {
     const total = this.filtered.length;
     this.countEl.textContent = total ? `${total} kártya` : "";
     this.emptyEl.hidden = total !== 0;
+    // The empty state names what was searched for: "nothing" is a statement about the *query*, and the user is
+    // about to change it.
+    this.emptyEl.textContent = this.searchTerm
+      ? `Nincs találat erre: „${this.searchTerm}”. Próbálj kevesebb szót, vagy töröld a keresést.`
+      : "Nincs a keresésnek megfelelő kártya.";
     this.windowEl.hidden = total === 0;
   }
 
@@ -776,6 +1884,15 @@ class HomePage {
     if (this.focusedIndex >= startIndex && this.focusedIndex < endIndex) {
       const focused = this.windowEl.querySelector(`antikolt-card[data-index="${this.focusedIndex}"]`);
       focused?.shadowRoot?.querySelector(".card")?.focus({ preventScroll: true });
+    }
+    // A note save asks for the focus back on the card it happened on. The per-element hook (`pendingFocusId`)
+    // waits for an animation frame, which a background or occluded window may never deliver — so the grid also
+    // restores the focus *synchronously* here, right after the rebuild, where the element is already connected.
+    if (pendingFocusId) {
+      const host = [...this.windowEl.querySelectorAll("antikolt-card")].find(
+        (element) => element.card?.id === pendingFocusId,
+      );
+      host?.shadowRoot?.querySelector(".card")?.focus({ preventScroll: true });
     }
   }
 
@@ -953,6 +2070,107 @@ function withNativeOpen(mock) {
         }
         return native.cards.upsert(card);
       },
+      delete: async (id) => {
+        const native = nativeBridge();
+        if (!native?.cards?.delete) {
+          throw new Error("a híd nem tud törölni (nincs motor)");
+        }
+        return native.cards.delete(id);
+      },
+    },
+    workspaces: {
+      ...mock.workspaces,
+      // The tab row lives in the core (ADR-056); a plain browser gets the shipped default from the mock.
+      list: async () => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          return mock.workspaces.list();
+        }
+        try {
+          const answer = await native.request("workspaces.list", {});
+          const table = Array.isArray(answer?.workspaces) ? answer.workspaces : [];
+          return table.length ? table : mock.workspaces.list();
+        } catch (error) {
+          console.warn("workspaces.list failed", error);
+          return mock.workspaces.list();
+        }
+      },
+      upsert: async (workspace) => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          throw new Error("a híd nem tud írni (nincs motor)");
+        }
+        const answer = await native.request("workspaces.upsert", { workspace });
+        return answer?.workspace;
+      },
+      delete: async (id) => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          throw new Error("a híd nem tud írni (nincs motor)");
+        }
+        return native.request("workspaces.delete", { id });
+      },
+    },
+    // The database mirror (ADR-064): the page asks the shell, the shell asks the core.
+    db: {
+      status: async (sync) => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          throw new Error("a híd nem tud kérdezni (nincs motor)");
+        }
+        return native.request("db.status", { sync: Boolean(sync) });
+      },
+    },
+    // The portable bundle (ADR-059). The path is the caller's: the page's button will own the dialog, so this stays
+    // a plain request and the shell never blocks a page on native UI.
+    profile: {
+      export: async (path) => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          throw new Error("a híd nem tud írni (nincs motor)");
+        }
+        return native.request("profile.export", { path: String(path) });
+      },
+      import: async (path) => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          throw new Error("a híd nem tud írni (nincs motor)");
+        }
+        return native.request("profile.import", { path: String(path) });
+      },
+    },
+    containers: {
+      ...mock.containers,
+      // The table lives in the core (ADR-052); a plain browser gets the shipped default from the mock.
+      list: async () => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          return mock.containers.list();
+        }
+        try {
+          const answer = await native.request("containers.list", {});
+          const list = Array.isArray(answer?.containers) ? answer.containers : [];
+          return list.length ? list : mock.containers.list();
+        } catch (error) {
+          console.warn("containers.list failed", error);
+          return mock.containers.list();
+        }
+      },
+      upsert: async (container) => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          throw new Error("a híd nem tud írni (nincs motor)");
+        }
+        const answer = await native.request("containers.upsert", { container });
+        return answer?.container;
+      },
+      delete: async (id, moveTo) => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          throw new Error("a híd nem tud írni (nincs motor)");
+        }
+        return native.request("containers.delete", moveTo ? { id, moveTo } : { id });
+      },
     },
     system: {
       ...mock.system,
@@ -992,6 +2210,69 @@ window.antikoltAcceptCards = (payload) => {
   return rows.length;
 };
 
+// The core's container table, pushed with the cards (ADR-052). It is a push, not a request, because the bridge
+// script is installed on load *end* — which can be later than this deferred script — and a legend drawn from the
+// fallback table while the core had a different one is exactly the bug this push removes.
+window.antikoltAcceptContainers = (payload) => {
+  const parsed = typeof payload === "string" ? JSON.parse(payload) : payload;
+  const list = Array.isArray(parsed?.containers) ? parsed.containers : [];
+  if (list.length) {
+    pageContainers = list;
+    page.containers = list;
+    // The cards were mapped through the old table: map them again, so the dot colours and the selector options
+    // are the ones the core just described.
+    page.acceptContainers();
+  }
+  return list.length;
+};
+
+// The core's workspace table, pushed with the cards (ADR-056). Like the containers it is a push, not a request:
+// the bridge script is installed on load *end*, which can be later than this deferred script.
+window.antikoltAcceptWorkspaces = (payload) => {
+  const parsed = typeof payload === "string" ? JSON.parse(payload) : payload;
+  const list = Array.isArray(parsed?.workspaces) ? parsed.workspaces : [];
+  if (list.length) {
+    pageWorkspaces = list;
+    page.workspaces = list;
+    // The active tab may have vanished with the old table: fall back to the first one instead of showing an empty
+    // grid for a tab that no longer exists.
+    if (!list.some((entry) => entry.id === page.activeWorkspace)) {
+      page.activeWorkspace = list[0].id;
+    }
+    page.acceptWorkspaces();
+  }
+  return list.length;
+};
+
+// The product's own path for a workspace change, for the self test: the same call the (not yet built) drag or
+// menu will make. No dialog, no separate screen (ADR-053/ADR-056).
+window.antikoltMoveToWorkspace = (cardId, workspaceId) => page.setWorkspace(cardId, workspaceId);
+
+// The card's remove path, the same one a menu item will call (ADR-061).
+window.antikoltDeleteCard = (cardId) => page.deleteCard(cardId);
+
+// The rename path direct (ADR-062), so a caller (a test, or a future menu item) does not have to fake a double click.
+window.antikoltRenameCard = (cardId, title) => page.setCardTitle(cardId, title);
+
+// The URL's own door (ADR-063), the same shape.
+window.antikoltCardUrl = (cardId, url) => page.setCardUrl(cardId, url);
+
+// The database mirror's door (ADR-064), for the self test and for a future "where is my data" panel.
+window.antikoltDbStatus = (sync) => page.bridge.db.status(sync);
+
+// The add-card form's own witness (ADR-061): what the last add/delete did, and what the grid now holds.
+window.antikoltCardState = () => ({
+  adding: Boolean(page.cardAdd),
+  error: page.lastCardError ?? "",
+  count: page.cards.length,
+  cards: page.cards.map((card) => ({ id: card.id, title: card.title, workspace: card.workspaceId })),
+});
+
+// The bundle's page-side door (ADR-059), for the self test and for the button that will call it: the path is the
+// caller's, so no native dialog is involved here.
+window.antikoltProfileWrite = (path) => page.bridge.profile.export(path);
+window.antikoltProfileRead = (path) => page.bridge.profile.import(path);
+
 // What the grid actually shows: the page-side witness a self test reads instead of guessing from a
 // screenshot or from the shell's own bookkeeping.
 window.antikoltGridState = () => ({
@@ -1004,6 +2285,19 @@ window.antikoltGridState = () => ({
   titles: page.cards.map((card) => card.title),
 });
 
+// The search witness: what the box contains, what the grid shows for it, and what the empty state says. The fold
+// is exposed too, so a self test can prove the accent rule directly instead of inferring it from a card list.
+window.antikoltSearchFold = (text) => foldSearch(text);
+window.antikoltSearchState = () => ({
+  term: page.searchTerm,
+  count: page.cards.length,
+  filtered: page.filtered.length,
+  titles: page.cards.map((card) => card.title),
+  countText: page.countEl.textContent,
+  emptyHidden: page.emptyEl.hidden,
+  emptyText: page.emptyEl.textContent,
+});
+
 // The pin witness: what the last pin did, and the pinned titles as the grid now shows them.
 window.antikoltPinState = () => ({
   source: page.cardSource,
@@ -1014,6 +2308,58 @@ window.antikoltPinState = () => ({
   lastError: page.lastPin?.error ?? "",
 });
 
+// The core's container table as the page draws it (ADR-052): a self test must be able to see a reload.
+// The tag witness (ADR-055): what the last tag write did, and the tags the grid now shows per card.
+window.antikoltTagState = () => ({
+  lastId: page.lastTags?.id ?? "",
+  lastTags: page.lastTags?.tags ?? [],
+  lastError: page.lastTags?.error ?? "",
+  cards: page.cards.map((card) => ({ id: card.id, tags: card.tags ?? [] })),
+});
+
+window.antikoltContainerTable = () => pageContainers.map((entry) => `${entry.id}:${entry.name}`);
+
+// The workspace witness (ADR-056): the table the tab row draws, the active tab, and the workspace of each card.
+window.antikoltWorkspaceState = () => ({
+  table: pageWorkspaces.map((entry) => `${entry.id}:${entry.name}`),
+  active: page.activeWorkspace ?? "",
+  lastId: page.lastWorkspace?.id ?? "",
+  lastWorkspace: page.lastWorkspace?.workspace ?? "",
+  lastError: page.lastWorkspace?.error ?? "",
+  editing: page.workspaceEdit ? page.workspaceEdit.mode : "",
+  uiError: page.lastWorkspaceError ?? "",
+  tabs: [...(page.workspacesEl?.querySelectorAll("[role='tab']") ?? [])].map((tab) => ({
+    id: tab.dataset.workspace ?? "",
+    label: (tab.querySelector(".ws-pick")?.textContent ?? tab.textContent ?? "").trim(),
+    selected: tab.getAttribute("aria-selected") === "true",
+    removable: Boolean(tab.querySelector(".ws-remove")),
+  })),
+  cards: page.cards.map((card) => `${card.id}:${card.workspaceId}`),
+  filtered: page.filtered.length,
+});
+
+// The container witness: what the last switch did, and the container each shown card now belongs to (id map).
+window.antikoltContainerState = () => ({
+  lastId: page.lastContainer?.id ?? "",
+  lastContainer: page.lastContainer?.container ?? "",
+  lastError: page.lastContainer?.error ?? "",
+  cards: page.cards.map((card) => `${card.id}:${card.container?.id ?? ""}`),
+  // The legend is a filter (ADR-051): what is pressed, and what the grid shows because of it.
+  filter: page.containerFilter ?? "",
+  filtered: page.filtered.length,
+  total: page.cards.length,
+  legend: [...(page.legendEl?.querySelectorAll(".legend-chip") ?? [])].map((chip) => ({
+    id: chip.dataset.container ?? "",
+    pressed: chip.querySelector(".legend-pick")?.getAttribute("aria-pressed") === "true",
+    label: (chip.querySelector(".legend-pick")?.textContent ?? chip.textContent ?? "").trim(),
+    removable: Boolean(chip.querySelector(".legend-remove")),
+  })),
+  // The last failed table write (a container that still holds cards, for instance): the user must see the core's
+  // own words, and a test must be able to read them.
+  lastError: page.lastContainerError ?? "",
+  move: page.containerMove ? { id: page.containerMove.id ?? "", error: page.containerMove.error ?? "" } : null,
+  editing: page.containerEdit ? page.containerEdit.mode : "",
+});
 // The note witness: the last saved note, and the grid's own copy of it (they must agree).
 window.antikoltNoteState = () => ({
   source: page.cardSource,

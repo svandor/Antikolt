@@ -38,6 +38,29 @@ public:
     /// Create or replace one card (`card_upsert`): the whole record travels, so a pin, a note or a new
     /// card is one call. The core validates it and answers with the saved card.
     void cardUpsert(const QJsonObject& card, ReplyHandler handler = {});
+    /// Store the page's text captured when a card was frozen (`card_page_text`, ADR-049).
+    ///
+    /// A separate op on purpose: the shell does not own the whole card record, so it must not send one it only
+    /// half knows — a pin would otherwise overwrite the container or the note it never read.
+    /// The container table (ADR-052). The page draws the legend and the card's selector from it, so a rename in
+    /// the core is what the next reload shows.
+    void containersList(ReplyHandler handler);
+    void containerUpsert(const QJsonObject& container, ReplyHandler handler = {});
+    void containerDelete(const QString& containerId, const QString& moveTo = QString(),
+                         ReplyHandler handler = {});
+    /// The workspace table (ADR-056): the tabs the grid shows, and the fact that a card's workspace is a stored
+    /// field rather than an index the page invents.
+    void workspacesList(ReplyHandler handler);
+    void workspaceUpsert(const QJsonObject& workspace, ReplyHandler handler = {});
+    void workspaceDelete(const QString& workspaceId, ReplyHandler handler = {});
+    /// The portable bundle (ADR-059): the user's data in one file, so a profile can move between machines.
+    void profileExport(const QString& path, ReplyHandler handler = {});
+    void profileImport(const QString& path, ReplyHandler handler = {});
+    /// The database mirror (ADR-064): `sync` writes the JSON stores into the SQLite file and checks the first card.
+    void dbStatus(bool sync, ReplyHandler handler = {});
+    void cardPageText(const QString& cardId, const QString& text, ReplyHandler handler = {});
+    /// Remove one card (ADR-061). The page's add/delete loop needs it, and so does a user who mistyped a URL.
+    void cardDelete(const QString& cardId, ReplyHandler handler = {});
     /// The session ledger and its policy (`docs/HU/10-MUNKAMENET.md`).
     ///
     /// `sessionDue` is the evaluation, not a guess: the core decides which rows are due and hands back

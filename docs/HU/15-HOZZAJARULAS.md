@@ -99,6 +99,12 @@ Ez a gyakorlat védi a projektet (proveniencia) és a közreműködőt (nem kell
   védett területek + automatizált kapuk + a maintainer felelőssége.
 - **Nincs „security through obscurity"** — a kód nyílt, a fenyegetésmodell is nyílt (`02` 14. fejezet).
 - **Nincs csendes változtatás** a biztonsági viselkedésen — minden ilyen ADR-t kap.
+- **Nincs indokolatlan plusz ablak, és nem marad életben egy sem.** Egy böngészőnek egy látható ablaka van; a
+  motor- és magfolyamatok rejtett csöveken beszélnek, a tálcaikon jelzés és nem ablak, a program pedig eldobja
+  azt a konzolablakot, amit a Windows a shortcut-indításhoz ad neki (`DropOwnConsoleWindow`). Ez a felhasználó
+  kifejezett szabálya (2026-11-18), és **review-kérdés** minden olyan változtatásnál, ami folyamatot vagy
+  ablakot hoz létre: miért kell, és miért nem lehet ugyanaz ablak nélkül. A mérés: `--traytest`,
+  `--themetest`, valamint egy valódi indítás ablakainak megszámolása.
 
 ## 5. A következő lépés
 

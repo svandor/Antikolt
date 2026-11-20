@@ -3,6 +3,603 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-067 — Az adatbázis a store sorrendjében adja a kártyákat (2026-11-19)
+
+**Kontextus:** a JSON-store Rustban rendezett (`last_opened_at_ms` szerint csökkenő, majd cím). Miután a rács listája
+az adatbázisból jön (ADR-065), a rendezés nélküli `SELECT` **beszúrási sorrendet** adott — a rács csendben
+abbahagyta volna az átrendezést egy kártya megnyitásakor. Ez pontosan az a fajta néma viselkedésváltozás, amit egy
+store-csere nem okozhat.
+
+**Döntés:** `ORDER BY last_opened_at_ms DESC, LOWER(title) ASC` az `all_cards()`-ban, és egy Rust-teszt
+(`the_database_returns_the_stores_order_not_the_insertion_order`), amely **szándékosan fordított beszúrási
+sorrenddel** ír be két kártyát, és elvárja a store sorrendjét. Ha valaki kiveszi az `ORDER BY`-t, a teszt elbukik.
+
+**Következmény:** (+) a rács sorrendje a váltás után is ugyanaz, mint előtte, és ezt teszt védi; (−) a rendezés most
+két helyen él (Rust-store és SQL) — a JSON-store kivezetésekor az SQL marad az egyetlen.
+
+## ADR-066 — A tükör soronként követi az írásokat; a lista már csak olvas (2026-11-19)
+
+**Kontextus:** az ADR-065 a lista-kérésnél írta újra a teljes tükröt — helyes, de O(n) írás kérésenként.
+
+**Döntés:**
+
+1. **Minden kártya-írás frissíti a saját sorát** (`mirror_card`), a törlés törli (`mirror_delete`); a lista csak
+   olvas.
+2. **Egy op, ami több kártyát ír, mindegyiket tükrözi** — a `container_delete` `move_to`-s ága különben néma
+   elavulást okoz: a darabszám egyezik, tehát semmilyen önjavítás nem indul, és a rács a régi konténert mutatja.
+   Ezt a `--containertest` fogta meg (`container_move_delete=FAILED … card_in=c-proba`).
+3. **Önjavítás csak darabszám-eltérésnél**, és akkor is **hangosan** (`[core] db_list_out_of_step … — rebuilding`).
+
+**Következmény:** (+) a lista-kérés olvasás, nem írás; (+) a több-kártyás műveletek tükrözése explicit és mérve;
+(−) a JSON-store még mindig az író, tehát a két írás szinkronját kézzel kell tartani — ezt szünteti meg a következő
+szelet (írás a SQLite-ba, JSON mint export).
+
+## ADR-065 — A rács listája az adatbázisból jön (a csere második fele) (2026-11-19)
+
+**Kontextus:** az ADR-064 megteremtette a tükröt, de a rács továbbra is a JSON-fájlból olvasott. A csere értelme az
+olvasás: amíg a lista a JSON-ból jön, a séma, az indexek és a lekérdezések nem jelentenek semmit.
+
+**Döntés:** a `cards_list` op **előbb tükröz, aztán olvas** (write-through):
+
+1. a JSON-store továbbra is az **író** (a `card_upsert`/`card_open`/`card_page_text`/`card_delete` oda írnak),
+2. a lista kérésekor a mag a JSON-listát beírja az adatbázisba (`Db::mirror`, tranzakciós csere), majd **az
+   adatbázisból** olvassa vissza a kártyákat,
+3. ha a darabszám nem egyezik (tehát a tükör nem lehet jó), a mag **nem szolgál ki bizonytalan adatot**: a JSON-listát
+   adja vissza, és `[core] db_list_mismatch` sorral jelzi a stderr-en. Ugyanígy, ha az adatbázis nem nyílik meg.
+
+**Következmény:** (+) a rács ma már az adatbázisból olvas, és a váltás nem kockáztat adatvesztést, mert az írás
+helye nem változott; (+) a hibás esetek **hangosak** (stderr), nem csendes visszaesés; (−) a tükrözés minden
+lista-kérésnél O(n) írás, ami 5 000 kártyánál pazarlás — tudatos köztes állapot, amit a következő szelet szüntet meg
+azzal, hogy az **írás** is az adatbázisba megy, és a JSON csak export lesz.
+
+## ADR-064 — Az adatbázis megérkezik: SQLite-séma `0002`, tükrözéssel (2026-11-19)
+
+**Kontextus:** a négy store JSON-dokumentum, atomikus írással — olvasható és elég 10 kártyához, de **semmire nem
+tud kérdezni**. Minden „mely kártyák vannak ebben a konténerben", „mi jár le", „mennyi van ebben a
+munkaterületben" kérdés az egész listán végigmegy. 5 000 kártyánál ez a rossz válasz, és ezért szerepel a
+store-csere a munkarendben.
+
+**Döntés:**
+
+1. **`rusqlite` `bundled` funkcióval**: a SQLite a binárisba fordul, nincs rendszer-DLL függés.
+2. **A séma `PRAGMA user_version`-ben** (nem táblában): `2` a mai verzió; a `cards` tábla a JSON-rekord minden
+   mezőjét viszi (`page_text`, `workspace`, `tags` JSON-szövegként — nincs join-tábla egy 12 elemű listára).
+3. **A migráció idempotens**, és a JSON-store-ok **maradnak az igazság** egyelőre: a `db_status` op `sync: true`
+   mellett tükrözi a négy store tartalmát a fájlba, majd **visszaolvassa az első kártyát** és összehasonlítja a
+   mezőket (`verified`). A csere akkor történik meg, ha ez a tükör a valódi adaton bizonyítottan egyezik.
+4. **WAL naplózás**: olvasó ne várjon íróra, és egy összeomlás ne vigye el az utolsó tranzakciót.
+
+**Következmény:** (+) van adatbázis, migráció, kártya-round-trip és két valódi lekérdezés (munkaterület-számlálás),
+mind mérve a Rust-tesztekben; (+) a JSON-store-ok érintetlenül működnek, tehát a termék nem lett kockázatosabb;
+(−) **a csere még nem történt meg**: a shell továbbra is a JSON-fájlokat olvassa, a `db_status` op egyelőre
+mellékvágány; a tükrözés (a `sync`) csak akkor hasznos, ha valaki hívja — a shell mai útja nem hívja.
+
+## ADR-063 — A webcím is szerkeszthető a kártyán (2026-11-19)
+
+**Kontextus:** a cím (ADR-062) és a jegyzet szerkeszthető volt, a **webcím** nem — pedig a kártya *célja* az a
+mező, ahol egy elgépelés csendben megmarad: a kártya továbbra is a régi oldalt nyitja, és a felhasználó azt hiszi,
+átírta.
+
+**Döntés:** a meta-sor domainje a fogantyú — **dupla kattintás → beviteli mező → `Enter` ment, `Esc` mégse**, a
+mentés a teljes rekord `cards.upsert`-jével. A beírt cím normalizálódik (ha nincs séma, `https://` lesz), és a
+megjelenített domain a mag válaszából újraszámolódik (`pageCardFromCore`), tehát a felület sosem hazudik arról,
+hová mutat a kártya. A mentés **előbb ír, aztán állítja vissza a DOM-ot** — az a sorrend, amit a cím-szerkesztő a
+`blur` újrabelépése miatt tanult meg (ADR-062).
+
+**Következmény:** (+) a kártya minden emberi mezője (cím, webcím, jegyzet, címke, konténer, munkaterület)
+szerkeszthető a felületen; (+) a domain a mag válaszából jön, nem abból, amit a felhasználó *gépelt*; (−) a
+webcím-váltás nem nyitja újra a kártyát (a következő megnyitás a friss címet használja), és a régi oldal
+rögzített szövege (ADR-049) a régi tartalom marad, amíg a kártyát újra nem fagyasztják — ezt a napló kimondja.
+
+## ADR-062 — A kártya átnevezése helyben (2026-11-19)
+
+**Kontextus:** az ADR-061 után kártyát tenni és venni lehetett, de a **címét nem** lehetett átírni a felületen — a
+`cards.upsert` tudta, a lap nem hívta.
+
+**Döntés:**
+
+1. **Dupla kattintás a címre** → a cím helyén beviteli mező (`Enter` ment, `Esc` mégse), és a mentés ugyanazon az
+   `cards.upsert` úton megy, ami a teljes rekordot viszi (tehát a konténer, a címkék, a jegyzet és a rögzített
+   oldalszöveg nem veszik el).
+2. **A lap-oldali út nevén is elérhető** (`window.antikoltRenameCard(id, title)`), mert egy jövőbeli menüpontnak
+   nem kell dupla kattintást szimulálnia.
+3. **A szerkesztő a mentést közvetlenül a lap-úton hívja** (nem eseményen át): a kártya shadow-tartalmából indított
+   esemény nem ért el a rácsig, és egy felhasználó által gépelt változás nem függhet egy eseménytől, ami nem érkezik
+   meg. Az esemény csak tartalék egy lap nélküli környezetben.
+
+**Következmény:** (+) a cím átírása a felületen működik — a dupla kattintás megnyitja a mezőt, az `Enter` ment, és a
+mag válasza rajzolódik ki (`--addcardtest`: `wrote_by=gesture`); (+) a teljes rekord megy át, tehát nem veszhet el
+konténer, címke, jegyzet vagy oldalszöveg; (−) a szerkesztő **előbb ír, aztán állítja vissza a DOM-ot**: az első
+változat a cím visszaállításával kezdte, mire a böngésző `blur`-t küldött, annak `finish("", false)` ága
+újra belépett és elszállt, így a mentés elmaradt — ezt a mérés (`wrote_by=path`, üres `editor`) mutatta ki, és ezért
+fordult a sorrend; (−) a webcím (URL) szerkesztése továbbra sincs.
+
+## ADR-061 — A kezdőlap szerkeszthető: kártya hozzáadása és törlése a lapon (2026-11-19)
+
+**Kontextus:** a felhasználó nem tudott kártyát létrehozni a felületen — a rács a mag kártyáit mutatta, de új
+kártya csak a mag `cards.upsert`-jével kerülhetett bele. Egy böngésző, amibe nem lehet kártyát tenni, nem
+böngésző. A törlés sem létezett: a magban nem volt `card_delete`.
+
+**Döntés:**
+
+1. **`＋` gomb a fül-sor mellett**, soros űrlap a rácson (`webcím` + opcionális `cím`), `Enter` ment, `Esc` mégse.
+   A dialógus ugyanazért nincs, mint máshol (ADR-053): a CEF alatt a `prompt` csendben `null`-t adna.
+2. **Egy kártyának két dolga van, amit egy űrlap nem kérdezhet meg**: a munkaterület és a konténer. Ezért az új
+   kártya az **aktív fülre** és az **első konténerbe** kerül — ez a kettő a felhasználó számára „itt és most".
+3. **Az id ULID-alakú** (`01M7T7…`, 26 karakter), mert a store a létrehozás sorrendjét így tudja lexikografikusan
+   is; a cím, ha üres, a webcím domainje lesz.
+4. **`card_delete` a magban** (`CardStore::remove`): a törlés a hozzáadás párja, és a felületnek szüksége van rá,
+   hogy egy elgépelt webcímet ne kelljen a fájl szerkesztésével javítani.
+5. **A törlés a kártyán** a lap-úton (`antikoltDeleteCard`) megy, a mag válasza után rajzol — mint minden más írás.
+
+**Következmény:** (+) a kezdőlap „szerkeszthető" a legfontosabb értelmében: kártyát tenni és venni lehet; (+) a
+hozzáadás pontosan ugyanazon az `cards.upsert` úton megy, mint a kitűzés/jegyzet/címke/konténer, tehát a rács
+soha nem mutat olyat, amit a mag nem fogadott el; (−) a kártya **szerkesztése** (cím/webcím/jegyzet átírása a
+felületen) még nincs, csak a létrehozás és a törlés; (−) a törlés megerősítés nélkül azonnali — a
+`confirmed`-lépés egy későbbi döntés, mert a megerősítő dialógus ugyanaz a CEF-probléma.
+
+## ADR-060 — A köteg útja a hídon: az útvonalat a hívó adja, a híd nem nyit dialógust (2026-11-19)
+
+**Kontextus:** az ADR-059 a magban kész tette a költöztetést, de a lap nem érte el: sem a híd, sem a oldal nem
+tudott exportálni. A „Mentés fájlba" gomb viszont natív `QFileDialog`-ot kíván, amit a harness nem tud
+kattintani — és egy híd-kérésen belül megnyitott dialógus meg is akasztaná a lap válaszát.
+
+**Döntés:**
+
+1. **A híd `profile.export` / `profile.import` metódust kap, `path` argumentummal.** Az útvonalat **a hívó adja**;
+   a híd soha nem nyit natív felületet egy kérés közepén.
+2. **A lap-oldali belépő:** `window.antikoltProfileWrite(path)` / `window.antikoltProfileRead(path)` — ez az a
+   pont, amit a gomb (és a teszt) hív. A dialógus később *ezek elé* kerül, a híd változatlan marad.
+3. **A teszt a valódi úton mér:** `--profiletest` a két fejetlen mag-pár után egy **ablakot** nyit, a lapon
+   keresztül exportál a kötegbe, majd visszaolvassa — a választ a lap saját változójából (`window.__profWrite`)
+   olvassa, mert az `evaluate` nem várja meg a promise-t.
+
+**Következmény:** (+) a költöztetés a felületig ér, és mérhető marad (nincs dialógus a mérés útjában); (+) a
+híd szerződése nem tartalmaz felületi döntést; (−) a *gomb* és a fájlválasztó még nincs, tehát a felhasználó ma
+még nem tud kattintani — ezt a `19-FOLYTATAS.md` §12 és a `21-ALLAPOT.md` mondja ki.
+
+## ADR-059 — A profil egy hordozható JSON-kötegben utazik (`profile_export` / `profile_import`) (2026-11-19)
+
+**Kontextus:** a felhasználó adata négy külön fájlban él a profilban (`cards.json`, `containers.json`,
+`workspaces.json`, `sessions.json`). A dokumentáció „költöztetést" ígér, de nem volt rá mód: egy gépről a másikra
+vinni a profil mappáját kellett volna — kézzel, a fájlok nevének ismeretében. Ez nem felhasználói funkció.
+
+**Döntés:**
+
+1. **Egy köteg (`bundle`): `schema`, `created_at_ms`, `cards`, `containers`, `workspaces`, `sessions`, `rules`.**
+   JSON, nem zip: a négy store már JSON, a köteg kicsi, és egy szövegszerkesztővel olvasható biztonsági mentés az,
+   amiben az ember meg tud bízni.
+2. **`profile_export {path}`** a store-okból ír (atomikusan: temp + átnevezés, mint minden más írás), és
+   visszamondja, mit tett át (kártyák/konténerek/munkaterületek/munkamenetek).
+3. **`profile_import {path}` előbb validál, aztán ír.** Az ismeretlen `schema` **elutasítás** (`version_mismatch`),
+   nem találgatás — és a fájl olvasása az *első* lépés, mert egy félig sikerült import rosszabb, mint egy el sem
+   kezdett. A store-ok `replace_all`-lal cserélődnek, a kártyák ugyanazon a normalizáláson mennek át, mint egy
+   írásnál (tehát importtal sem lehet megkerülni a címke-szabályt).
+4. **A `sessions` a kötegben van**, mert a bejelentkezések és a takarítási szabály is a profil része.
+
+**Következmény:** (+) a profil egy fájllal költöztethető és menthető, és a `--profiletest` méri, hogy a friss
+profilba történő import után a *fájl* azt tartalmazza, amit az export kivitt; (+) a hibás/újabb köteg
+elutasítása kimondja, mit beszél ez a mag; (−) a köteg **titkokat is tartalmaz** (munkamenet-sorok, sütik
+metaadatai), ezért a fájl védelme a felhasználó dolga — a titkosítás egy későbbi döntés, és ezt a
+`19-FOLYTATAS.md` kimondja.
+
+## ADR-058 — A kártya munkaterülete a kártyán váltható, natív `<select>`-tel (2026-11-19)
+
+**Kontextus:** az ADR-056/057 után a munkaterület-tábla és a fül-sor életciklusa a magban élt, de egy kártya
+munkaterületét a felületen nem lehetett áttenni — csak a programozott úton (`antikoltMoveToWorkspace`). Egy
+beállítás, amit a felhasználó nem ér el, nem beállítás.
+
+**Döntés:** a kártya meta-sorában, a konténer-választó mellett egy **második, keskenyebb natív `<select>`** van
+(`.workspace-select`, `aria-label="Munkaterület"`). A váltás ugyanaz az út, mint a konténeré: `change` esemény →
+`setWorkspace` → `cards.upsert` → a mag válasza rajzol. **Miért nem fogd-és-vidd:** az drag a rács virtualizált
+DOM-jában (a kártya egy `antikolt-card` shadow-host, ami a görgetéskor újra felépül) törékeny, és a
+billentyűzettel nem használható; a `<select>` mindkettőt ingyen adja. A drag később kerülhet *mellé*.
+
+**Következmény:** (+) a munkaterület-váltás a felületen is elérhető, a konténer-váltással azonos gesztussal; (+)
+a teszt ugyanazt a választót használja, amit a felhasználó (`--workspacetest`); (−) két legördülő a meta-sorban
+zsúfoltabb, ezért a munkaterület-választó kisebb betűvel és keskenyebben jelenik meg.
+
+## ADR-057 — A munkaterület életciklusa a fül-soron, ugyanazzal a gesztussal, mint a konténereké (2026-11-19)
+
+**Kontextus:** az ADR-056 a munkaterület-táblát a magba tette, de a felületen nem lehetett munkaterületet
+létrehozni, átnevezni vagy törölni — a híd tudta, a felület nem hívta. Ugyanaz a hiány, mint a konténereknél az
+ADR-053 előtt.
+
+**Döntés:** a fül-sor ugyanazt a három gesztust kapja, ugyanabban a formában: `＋` (soros beviteli mező, `Enter`
+ment, `Esc` mégse), dupla kattintás a fülön (átnevezés), `×` (törlés). **Nincs dialógus** — a `prompt` a CEF
+alatt csendben `null`-t adna (ADR-053). Egy használt munkaterület törlése a mag `in_use` válaszát **megjeleníti**
+a fül-soron („1 kártya még ebben a munkaterületben van"), nem nyeli el. Az új id a névből származó slug
+(`w-` + ékezet nélküli alak, ütközésnél sorszám).
+
+**Következmény:** (+) a munkaterület-életciklus a felületen teljes, és minden művelet a magon megy át, amelynek
+a válaszát a fül-sor rajzolja; (+) a két tábla (konténer, munkaterület) ugyanazt a mintát követi, tehát egy
+felhasználónak egy gesztust kell megtanulnia; (−) a kártya munkaterületének *áthelyezése* még csak a programozott
+úton (`setWorkspace`) megy, fogd-és-vidd/menü nélkül.
+
+## ADR-056 — A munkaterületek is a magban élnek, és a kártya munkaterülete valódi mező (2026-11-19)
+
+**Kontextus:** a lap `pageCardFromCore`-ja a kártya *helyéből* találta ki a munkaterületet
+(`index > 12 ? "w-read" : "w-home"`). Ez nem közelítés volt, hanem hiba: minden tizenharmadik kártya némán az
+„Olvasnivaló" fülre került, akár akarta a felhasználó, akár nem — és a fül sora is a lapban élt, nem a magban.
+
+**Döntés:**
+
+1. **`workspaces.json` a magban** (`workspaces_list` / `workspace_upsert` / `workspace_delete`), az első
+   indításkor a három leszállított munkaterülettel (`w-home` Otthon, `w-work` Munka, `w-read` Olvasnivaló).
+2. **`Card.workspace: String`** (`#[serde(default)]`): a kártya munkaterülete **tárolt adat**. Az üres mező az
+   első munkaterületet jelenti — ez az, amit a tábla előtti kártyák jelentenek, és egy hiányzó mező nem
+   költöztethet kártyát olyan fülre, amit a felhasználó nem választott.
+3. **A tábla pushban megy** a lapra a kártyalistával és a konténer-táblával együtt (`antikoltAcceptWorkspaces`),
+   ugyanazért, mint a konténereknél (ADR-052): a híd szkript a load végén települ, ami később lehet, mint a lap
+   saját szkriptje.
+4. **A törlés ugyanaz a szabály**: amíg kártya van benne, `in_use` — a csendes áthelyezés tilos. Az áthelyezés a
+   kártyán keresztül megy (`cards.upsert`, `workspace` mező), a lap-út (`setWorkspace`) kész; a fogd-és-vidd
+   felület még nincs.
+
+**Következmény:** (+) a tizenharmadik kártya már nem kerül magától az Olvasnivalóba; (+) a tabok neve és sora a
+magé, tehát egy átnevezés túlél egy újratöltést; (+) a kártya munkaterülete ugyanazon az úton íródik, mint a
+konténer, a címke, a jegyzet és a kitűzés; (−) a kártya munkaterületének *felületi* mozgatása (drag/menü) még
+nincs, csak a programozott út — ezt a `19-FOLYTATAS.md` §12 mondja ki.
+
+## ADR-055 — A címkék a kártyán, a magban normalizálva (2026-11-19)
+
+**Kontextus:** a keresőmező placeholderje ősidők óta „címke"-t ígér (`Keresés — cím, webcím, jegyzet, címke,
+oldalszöveg`), a kártyarekordban viszont nem volt címke-mező: az ígéret hazugság volt. A lap `matchesTerm`-je
+mégis vizsgált egy `card.tags` tömböt, ami soha nem létezett.
+
+**Döntés:**
+
+1. **`Card.tags: Vec<String>`** a magban (`#[serde(default)]`, tehát a régi `cards.json` gond nélkül betöltődik).
+2. **A normalizálás a magé**: trim, kis-nagybetűtől független deduplikáció (az első írásmód marad), legfeljebb 12
+   címke, egyenként legfeljebb 32 karakter. A szabály a store-ban él, mert ott találkozik minden író (a lap, egy
+   későbbi importőr, a tesztek) — a lapban élő szabályt az importőr nem követné. A hosszra vágás **nem hiba**:
+   egy hosszú címke rövidítve is címke, a mentés elvesztése viszont adatvesztés.
+3. **A szerkesztés a kártyán, helyben**: a chipek mellett `＋címke` gomb nyit egy beviteli mezőt; `Enter` ment,
+   `Esc` mégse (ugyanaz a minta, mint a konténereknél — nincs JS-dialógus, ADR-053). A törlés a chip `×`-e.
+4. **A keresés ékezet nélkül is látja** (`kavezo` → `kávézó`), mert a címkék ugyanabba a haystackbe kerülnek, mint
+   a cím, a webcím, a jegyzet és az oldalszöveg.
+
+**Következmény:** (+) a kereső ígérete igaz lett, és a `matchesTerm` halott ága él; (+) a címkék ugyanazon a
+`cards.upsert` úton íródnak, mint a kitűzés és a jegyzet, tehát a rács a mag válaszát mutatja; (−) a címkék még
+nem szerepelnek a `.antikolt` exportban külön listaként (a kártyarekord részei), és nincs címke-autocomplete.
+
+## ADR-054 — A használt konténer törlése áthelyezéssel (2026-11-19)
+
+**Kontextus:** az ADR-052 óta a mag megtagadja egy olyan konténer törlését, amiben még kártya van (`in_use`).
+Ez helyes volt — nincs csendes áthelyezés —, de **zsákutca**: a felhasználó nem tudta törölni a régi
+csoportosítását.
+
+**Döntés:**
+
+1. **A `container_delete` opcionális `move_to` mezőt kap.** Ha a konténer használt és van `move_to`, a mag
+   **előbb áthelyezi** a kártyákat (egy mentésben, `CardStore::move_container`), **azután töröl**, és a válasz
+   megmondja, hány kártya vándorolt (`moved`). Ha nincs `move_to`, marad az `in_use` hiba; ha a `move_to` nem
+   létezik vagy maga a törölt konténer, `invalid_argument`/`not_found`.
+2. **A sorrend nem véletlen:** előbb az áthelyezés íródik ki, aztán a törlés. Ha a törlés elhasal, a kártyák
+   akkor is valahol vannak — nem tűnnek el.
+3. **A felület a zsákutcát feloldássá alakítja:** a `×` után, ha a mag `in_use`-t mond, a legenda egy sort nyit
+   („1 kártya még ebben a konténerben van"), benne egy választóval a **többi** konténerre és egy
+   „Áthelyezés és törlés" gombbal. Egy kattintás elvégzi mindkettőt.
+
+**Következmény:** (+) a régi csoportosítás mindig törölhető, de soha nem csendben; (+) a mag dönt, a lap csak
+felajánl; (−) a felület csak *egy* célt kínál egyszerre (nincs „mindet ide, kivéve ezt"); és a kártyák
+áthelyezése nem kérdez, amiért az `in_use` hibaüzenet továbbra is létezik a hídon.
+
+## ADR-053 — A konténer szerkesztése a helyén, dialógus nélkül (2026-11-19)
+
+**Kontextus:** az ADR-052 a táblát a magba tette, de a felületen nem lehetett új konténert létrehozni, átnevezni
+vagy törölni — a híd tudta, a felület nem hívta.
+
+**Döntés:**
+
+1. **Egy soros, helyben szerkesztő** a legenda végén: a `＋ konténer` gomb vagy egy chip dupla kattintása kiír egy
+   beviteli mezőt, `Enter` ment (a form `submit`-ja), `Esc` mégse. **Nincs `prompt`/`confirm`**: a CEF oldali
+   JS-dialógushoz a házigazdának `CefJSDialogHandler`-t kellene adnia, ami nincs — a `prompt` hívás csendben
+   `null`-t adna, és a felület „nem csinál semmit".
+2. **Az új id a névből származik** (`c-` + ékezet nélküli slug, ütközésnél sorszám), hogy egy ember is ki tudja
+   mondani; a színt a mag generálja (ADR-052).
+3. **Törlés `×`-szel**, és a mag `in_use` válasza **megjelenik** a legendában („1 kártya még ebben a
+   konténerben van") — egy csendben elnyelt hiba pont az a fajta hazugság, amit ez a projekt nem enged.
+
+**Következmény:** (+) a konténer-életciklus a felületen teljes: létrehozás, átnevezés, törlés, szűrés; (+) minden
+művelet a magon megy át, és a legenda a mag válaszát rajzolja; (−) a beviteli mező a legenda sorában jelenik meg
+(a rács egy sorral lejjebb csúszik), és nincs „mégse" gomb, csak az `Esc`/`Enter` — dokumentálva a hintben.
+
+
+## ADR-052 — A konténer-tábla a magban él, és pushban érkezik a lapra (2026-11-19)
+
+**Kontextus:** a konténerek neve és színe eddig a lapban volt (`PAGE_CONTAINERS`, egy konstans), a mag csak a
+kártyákon tárolt egy `container` id-t. Egy átnevezés így nem élt túl egy újratöltést, és a „ugyanaz" a konténer
+két rétegben két dolgot jelenthetett.
+
+**Döntés:**
+
+1. **A tábla a magé** (`containers.json`, `containers_list` / `container_upsert` / `container_delete`). A mag az
+   első indításkor a négy leszállított konténert veti el, tehát egy régi profil semmit nem veszít. A szín
+   `#RRGGBB`; ha hiányzik vagy hibás, a mag determinisztikus színt generál (ugyanaz az id → ugyanaz a szín).
+2. **A törlés nem mozgat csendben.** Amíg kártya hivatkozik egy konténerre, a `container_delete` `in_use`
+   hibával utasít: egy csendes áthelyezés az „eltűntek a kártyáim" hibaosztály.
+3. **A lap a magét rajzolja, és a tábla pushban jön** a kártyalistával együtt (`antikoltAcceptContainers`). Nem
+   a lap kérdez: a híd szkriptje a load *végén* települ, ami később lehet, mint a lap saját szkriptje — mért
+   hiba volt, hogy a legenda a fallback táblát rajzolta, miközben a magban már ott volt az ötödik konténer.
+4. **A lap konstansa csak fallback**: böngészőben, mag nélkül a négy leszállított konténer jelenik meg.
+
+**Következmény:** (+) az átnevezés és az új konténer túlél egy újratöltést, mert a magban van; (+) a szín- és
+névforrás egy helyen van, tehát a pont és a legenda nem tud széttartani; (+) a törlés nem rendez át kártyákat
+észrevétlenül; (−) a konténer *létrehozásának/átnevezésének* felületi gombja még nincs (a híd tudja, a felület
+nem hívja), és a lap fallback táblája az `app.js`-ben marad.
+
+
+## ADR-051 — A konténer-jelmagyarázat egyben a szűrő (2026-11-19)
+
+**Kontextus:** a kártyákon lévő színes pont megmutatta, melyik konténerbe tartozik egy kártya, de a színek
+jelentését semmi nem mondta meg, és a konténer szerint szűrni nem lehetett.
+
+**Döntés:**
+
+1. **Egy sor chip a rács fölött**, konténerenként: színes pont + név + **darabszám**. A szám a jelenlegi
+   keresésre vonatkozik, nem a teljes tárra — egy jelmagyarázat, ami „3 kártyát" ír, miközben a keresés elrejt
+   kettőt, hazudik.
+2. **A chip maga a szűrő**: kattintásra a rács csak az adott konténer kártyáit mutatja, újabb kattintás törli.
+   Egyszerre egy konténer lehet aktív: a kérdés, amire válaszol, az „ez melyik konténer?", nem az „ez melyik
+   három konténer metszete?".
+3. **A szűrő nézet-állapot, nem tárolt beállítás.** Új indítás mindent mutat: egy elfelejtett szűrő csapda
+   („hol vannak a kártyáim?"). A chipek `aria-pressed`-szel jelzik az állapotot, és a számok a szűréssel együtt
+   frissülnek.
+
+**Következmény:** (+) a színek jelentése látható, és a konténer szerinti szűrés egy kattintás; (+) a számok a
+kereséssel együtt mozognak, tehát nem tudnak ellentmondani a rácsnak; (−) a szűrő nem marad meg munkamenetek
+között (tudatos), és a konténer *tábla* továbbra is a lapban él, nem a magban — új konténer létrehozása és a
+tábla magba költöztetése nyitott.
+
+## ADR-050 — A konténer-váltás a kártyáról, natív `<select>`-tel (2026-11-19)
+
+**Kontextus:** a konténerek eddig csak *látszottak* (színes pont a kártyán, a lap saját táblájából), de a
+kártya-konténer kötést a felületen nem lehetett megváltoztatni — a roadmap „kártya-konténer kötés, konténer-
+váltás" tétele nyitott volt.
+
+**Döntés:**
+
+1. **A választó a kártyán van**, a meta sorban: egy natív `<select>`, aminek az opciói a konténerek. Nem
+   egyedi legördülő: a natív elem hozza a billentyűzet-kezelést, a képernyőolvasót és a platform menüjét
+   ingyen, a színes pont pedig megmarad mellette (a pont szín = a konténer színe).
+2. **Az írás a megszokott úton megy**: `antikolt-container` esemény → a rács `setContainer`-je →
+   `cards.upsert` → a mag. A rács csak azt mutatja, amit a mag elfogadott (ugyanaz a szabály, mint a
+   kitűzésnél és a jegyzetnél), és a hiba a `window.antikoltContainerState()` witnessben látszik.
+3. **A modell és a rekord külön marad**: a nézet konténer-*objektumot* tart (szín + név), a rekord csak id-t,
+   ezért a válasz id-ját a lap ugyanazon a táblán fordítja vissza, amivel a kártyákat olvasta.
+
+**Következmény:** (+) a kötés a kártyán, egy mozdulattal átállítható, és a magé a döntés; (+) a szín és a név
+egy helyről (a lap táblájából) jön, tehát nem tud széttartani a pont és a menü; (−) a konténer *tábla* még a
+lapban él, nem a magban — új konténer létrehozása, átnevezése és a konténer szerinti szűrés továbbra is nyitott
+(a `19-FOLYTATAS.md` §12).
+
+## ADR-049 — Az oldalszöveg is kereshető, de csak a lemezre mentett kártyáknál (2026-11-19)
+
+**Kontextus:** az ADR-047 kimondta, hogy a kereső nem ígér oldalszöveget, mert semmi nem indexeli a cikkek
+szövegét. Ez őszinte volt, de hiányos: a felhasználó gyakran egy **mondatra** emlékszik, nem a címre.
+
+**Döntés:**
+
+1. **A szöveg a fagyasztáskor keletkezik.** Amikor a kártya lemezre megy, a shell megkérdezi a laptól a
+   `document.body.innerText`-jét (max. 8000 karakter), és a mag `card_page_text` opjával a kártya rekordjába
+   írja. Nem külön index: a kártyarekord egy mezője, tehát nincs új szolgáltatás, amit karban kell tartani.
+2. **Külön op, nem `card_upsert`.** A shell nem birtokolja a teljes rekordot (konténer, jegyzet, cím);
+   egy félkész kártya visszaküldése felülírná, amit sosem olvasott. A `card_page_text` ezért csak a szöveget
+   írja, az id alapján.
+3. **Csatolás és sapka.** A mag whitespace-t összevon, és `MAX_PAGE_TEXT = 16 000` karakterre vág. A
+   kártyalista egyetlen JSON-dokumentum: 500 kártya × 16 kB a felső korlát, nem 200 MB. A lap oldala is vág
+   (8000), tehát a hálózati út is korlátos.
+4. **A pin és a jegyzet nem törli.** A lapról érkező `card_upsert` sosem hoz szöveget; ha üresen jön, a mag
+   megtartja a korábbi capture-t. Csak egy új fagyasztás írja felül.
+5. **A keresés mindhárom helyen látja**: a mag `cards_list`-je kiadja a `page_text` mezőt, a shell
+   `cards.search`-je a foldolt haystackbe teszi, a lap `matchesTerm`-je pedig a `pageText` mezőt is nézi.
+
+**Következmény:** (+) egy cikkben látott szó megtalálja a kártyát, ékezet nélkül is; (+) nincs új index, nincs
+új szolgáltatás; (−) csak a **fagyasztott** kártyáknál működik (élő kártyánál nincs még szöveg), és a szöveg a
+fagyasztás pillanatában érvényes — későbbi oldalváltozást nem követ; (−) a kártyarekord nő, ezért a sapka.
+
+## ADR-048 — A takarítás sem némítja el a játszó kártyát (2026-11-19)
+
+**Kontextus:** a hibernálás régóta kivételt tesz a médiát játszó kártyával (docs/HU/02 §4.2), a **munkamenet-
+takarítás viszont nem**: ha a `wipe`/`sweep` politika szerint esedékes origin éppen a képernyőn lévő kártyáé volt,
+a shell azonnal törölte a storage-ját, és egy előtérben játszó videó elhallgatott. A `19-FOLYTATAS.md` §2 ezt
+nyitott tételként tartotta számon.
+
+**Döntés:** a takarítás ugyanazt kérdezi meg a laptól, mint a hibernálás — egyetlen, mindkét helyen használt
+szkripttel (`LiveMediaPlayingScript`: `video`/`audio`, `!paused && !ended`) —, és ha a válasz `playing`, akkor az
+**élő** origin törlése kimarad, a státuszsor pedig megmondja, miért („a kártya médiát játszik — az élő
+munkamenet megmarad"). A nem élő originok terve változatlanul a következő megnyitásra vár.
+
+**Miért a lap a döntéshozó, és nem a shell találgatása:** a lejátszás állapota a dokumentum tulajdonsága
+(`paused`/`ended`), nem a shell könyveléséé; a címből vagy az URL-ből következtetni pont az a fajta tippelés,
+amit a projekt máshol is elkerül. Egy oldal, amelyik nem válaszol (hiba), nem kap privilégiumot: ilyenkor a
+takarítás a régi módon lefut.
+
+**Mérés (ezen a gépen):** a `--mediacleantest` a magon keresztül vet fel egy esedékes `wipe` sort, megnyitja az
+origin kártyáját, és takarítást kér. A gépnek **nincs hangeszköze**, ezért a Chromium el sem indítja a lejátszót
+(mért: `paused=true`, `readyState=0`, és a `/tone.wav` kérés **el sem indult**) — ezt a teszt ki is mondja
+(`media_skip=not-measurable`), nem tesz úgy, mintha mérte volna. Amit mért: a takarítás az új, média-tudatos
+úton fut le, és a `playing` válasz nélkül (idle) a törlés megtörténik (`media_wipe_when_idle=ok`), a kártya
+storage-ja üres lesz. Hangeszközös gépen ugyanez a teszt a `playing` ágat is méri (a kód ott van, a
+`media_skip` sor vár rá).
+
+**Következmény:** (+) a háttértakarítás nem tud elhallgattatni egy előtérben játszó oldalt; (+) a két út
+(hibernálás, takarítás) ugyanazt a szkriptet használja, tehát nem tud széttartani; (−) a kártya state-je egy
+DevTools-körrel később dől el, tehát a takarítás egy kicsit lassabb, és egy nem válaszoló oldalnál a régi
+viselkedés marad.
+
+## ADR-047 — A keresés ékezet-független, és nem ígér oldalszöveget (2026-11-19)
+
+**Kontextus:** a rács keresője eddig `toLowerCase()`-vel hasonlított, tehát a `kave` **nem** találta meg a
+`Kávézó` kártyát — pont azt a szót, amit egy magyar felhasználó gépel. A helyőrző szöveg ezen kívül
+„oldalszöveg"-et ígért, miközben semmi nem indexeli a cikkek szövegét (a mag és a shell csak címet, webcímet,
+jegyzetet és címkét keres).
+
+**Döntés:**
+
+1. **Ékezet-független egyezés mindkét oldalon.** A lap `foldSearch`-je és a shell `FoldForSearch`-je ugyanazt
+   teszi: kisbetűsít, Unicode NFD-re bont és eltávolítja a kombináló jeleket (`ő` → `o`, `ű` → `u`), majd a
+   felbontás-álló betűket (`ł`, `ø`, `đ`, `ß`) kézzel képezzi le. Azért mindkét oldalon, mert a kérdés nem
+   válaszolhat másképp aszerint, hogy a lap vagy a shell szűrt.
+2. **Az üres találat a keresésre utal, nem a semmire.** A rács „Nincs találat erre: »…«" szöveget mutat a
+   keresett kifejezéssel, a kártyák száma pedig üres — a korábbi néma üresség azt sugallta, hogy elromlott a lap.
+3. **A helyőrző nem ígér oldalszöveget.** „cím, webcím, jegyzet, címke (ékezet nélkül is)" — az oldalszöveg-
+   keresés a hibernált oldal szövegének indexelését igényelné, ezért a `19-FOLYTATAS.md` §12 nyitott tétele
+   marad, és amíg nincs meg, a felület nem állítja, hogy van.
+
+**Következmény:** (+) a keresés a felhasználó gépeléséhez igazodik, nem a tárolt alakhoz; (+) az üres állapot
+megmondja, mit lehet tenni (kevesebb szó, törlés); (−) a fold közelítő: a `ß` → `ss` és a lengyel `ł` → `l`
+kézzel karbantartott lista, tehát ritka nyelvekben maradhat kivétel; (−) az oldalszöveg továbbra sem
+kereshető — ez tudatos ígéret-visszavonás, nem rejtett hiányosság.
+
+## ADR-046 — A shell naplófájlja a konzol, ami nincs (2026-11-19)
+
+**Kontextus:** az 55. szelet eldobja a konzolablakot, amit a Windows a parancsikonos indításhoz ad — és ezzel
+együtt a stderr-t is, tehát a motor üzenetei (GPU-hibák, lap-oldali hibaüzenetek) a semmibe mentek. Egy olyan
+gépen, ahol senki nem néz oda, egy hiba így nyom nélkül eltűnik.
+
+**Döntés:** a shell a **meglévő** üzenetkezelőn (`ForwardQtMessages`) keresztül minden sort a
+`%APPDATA%\Antikolt Project\Antikolt\logs\shell.log` fájlba is ír, időbélyeggel, és 1 MB-nál **egy generációt**
+tart meg (`shell.log.1`). A naplófájl útja **csak a sima indításnál** áll be (üres parancssor): a terminálból
+futtatott programnak már van stderr-je, az öntesztek pedig nem írhatnak a felhasználó naplójába. A határérték
+környezeti kapcsolóval állítható (`ANTIKOLT_SHELL_LOG_LIMIT`), így a `--logtest` néhány kilobájttal rotál.
+
+**Miért nem új naplózási réteg:** a hibák nagy része a motortól jön, ami a saját stderr-jét a shell `qInfo`-jára
+irányítja; egy új, párhuzamos naplózó csak azt biztosítaná, hogy a két helyen más legyen a szöveg. Egy helyen
+formázunk, és ugyanaz a string megy a stderr-re és a fájlba.
+
+**Következmény:** (+) a parancsikonos indítás is diagnosztizálható, és a rotáció miatt a lemez nem telik meg;
+(+) a napló ugyanaz, mint amit egy terminálban látnánk, tehát a hibajegybe másolható; (−) a napló tartalmazhat
+oldalcímeket és hibaüzeneteket (de **jelszót, TOTP-t nem** — az I5 továbbra is áll: a titok a fővilágba és
+naplóba nem kerül); (−) a fájl írása a hibakezelési úton is fut, ezért szándékosan buta (open/append/close), és
+egy tele lemez sem fordíthatja hibába a naplózást.
+
+## ADR-045 — Az oldal-sötétítésnek több fokozata van, a témaváltó pedig ikon (2026-11-18)
+
+**Kontextus:** a felhasználó az ADR-044 után azt kérte, hogy **az oldalakhoz is legyen többféle sötét mód**, ne
+csak a böngészőhöz, és hogy a témaváltó gombok **ikon + tooltip** formában jelenjenek meg (a „light grey dark
+amoled" felirat négy szó volt a vezérlősáv legszélesebb, legkevesebb információt adó részén).
+
+**Döntés:**
+
+1. **Négy oldal-sötétítési fokozat** (`set_forced_dark` `mode` mezője, a korábbi `enabled` logikai mező
+   visszafelé kompatibilis marad): `off`, `invert` (közel fekete), `dim` (sötét szürke, `contrast(0.72)`),
+   `warm` (meleg sötét szürke, `contrast(0.78) sepia(0.35)`). Mindegyik ugyanaz a trükk más erősséggel: a lap
+   invertálása és a képek visszainvertálása, egy **nevesített** stíluselemmel, amit a módváltás *lecserél*,
+   a kikapcsolás *eltávolít* — újratöltés nélkül.
+2. **A témaváltó ikonok**: a négy felületi téma egy-egy generált ikon (a téma háttere + szövegszíne, 20 px),
+   a szó a **tooltipben** és a képernyőolvasó-névben; az oldal-sötétítés egy holdsarló-ikon, ami a menüből
+   választható, és a **ikonja mutatja az éppen érvényes fokozatot**.
+3. **A beállítás megmarad** (`QSettings`, `ui/page_dark_mode`), és a régi `ui/forced_dark` logikai kulcsot az
+   első indítás átváltja `invert`-re, majd törli.
+
+**Miért nem a Chromium saját auto-darkja:** lásd ADR-044 (processz-szintű, verziófüggő). A `contrast()` és a
+`sepia()` ugyanazt a lap-szintű mechanizmust használja, tehát nincs új mechanizmus, csak más fokozat.
+
+**Következmény:** (+) a felhasználó választhat a teljes sötét és a hosszú olvasáshoz kíméletesebb fokozatok
+között; (+) a vezérlősáv keskenyebb lett, és a szavak a tooltipben vannak, ahol keresik őket; (−) az inverzió
+közelítő: a fényképek visszainvertálva is eltérhetnek, az árnyékok és színátmenetek pedig fokozatonként
+másképp viselkednek — ezért marad a „Kikapcsolva" alapállapot.
+
+## ADR-044 — A sötét oldalak a felhasználó kapcsolója, és a felület nem hazudik a témáról (2026-11-18)
+
+**Kontextus:** a felhasználó azt jelentette, hogy „a sötét módok nem működnek", egy amoled témájú ablakban
+(amit a képe bizonyít: a vezérlősáv és a státuszsor `#0A0A0A`), mert a **Wikipedia cikke fehér maradt**. A
+kettő nem ugyanaz a dolog: az ADR-037 szándékosan nem festi át a weboldalakat, csak *megmondja* nekik
+(`prefers-color-scheme`), a cikknek pedig nincs saját sötét témája. A felület tehát a saját témáit jól
+alkalmazta, a **lapot** viszont nem sötétítette — és a felhasználó ezt látta „nem működő sötét módnak".
+
+**Döntés:** három, egymástól független dolog, mindegyik mérve:
+
+1. **A felületi témák** (`light`/`grey`/`dark`/`amoled`) a **termék** felületét festik: az ablakot, a
+   vezérlősávot és a **rácsot** is. A rács saját `data-theme` attribútuma eddig külön kapcsoló volt (sőt egy
+   klikkel le is maradt), mostantól a vezérlősáv döntése hajtja meg, minden témaváltásnál és minden
+   rács-betöltésnél. Ezt a `--themetest` **pixelenként** méri: a vezérlősáv átlagos fényessége 241 / 60 / 42 /
+   15 a négy témában, a rács képe 239 → 68 (light → amoled).
+2. **Az „Oldal-téma: auto/dark/light"** marad az ADR-037 szerinti jelentés: a böngésző megmondja a lapnak,
+   mit szeretne a rendszer; a lap dönt. Ez nem sötétít.
+3. **Új: „🌙 Sötét oldalak" kapcsoló** (alapból **ki**, megjegyzett): a motor a lapba egy **nevesített**
+   stíluselemet szúr (`set_forced_dark`), ami invertálja a dokumentumot és visszainvertálja a képeket — és
+   ugyanazt az elemet eltávolítva állítja vissza, újratöltés nélkül. Mérve: egy fehér próbaoldal fényessége
+   251 → 13.
+
+**Miért nem Chromium saját „auto dark" feature-je:** az processz-szintű kapcsoló (`WebContentsForceDark`),
+ami minden lapot érint, és a viselkedése a Chromium verziójával változik. A stíluselem lap-szintű, pontosan
+visszavonható, és a felhasználó döntése — ez illik az ADR-037 szelleméhez (a lap marad a lap).
+
+**Következmény:** (+) a felhasználó egy kattintással sötét oldalakat kap, és ezt a következő indítás is tudja;
+(+) a rács és a vezérlősáv soha nem mond ellent egymásnak; (−) az inverzió nem tökéletes: a képek/videók
+színvilága közelítőleg marad, de a színátmenetes grafikák és az árnyékok eltérhetnek az eredeti dizájntól —
+ezért **alapból ki**, és nem az „Oldal-téma" gomb része, hanem külön kapcsoló; (−) a beállítás a felhasználói
+profilban (`QSettings`, `ui/forced_dark`) van, tehát az első indításnál még nincs bekapcsolva.
+
+## ADR-043 — A tálcaikon az indító és a futásjelző: egy felhasználó, egy Antikolt (2026-11-18)
+
+**Kontextus:** a programot a hordozható mappa és a parancsikon indítja, de a bezárás gomb **kilépett**, és
+nem volt semmilyen jelzés, hogy fut-e a böngésző; a parancsikon másodszori megnyitása pedig egy *második*
+Antikoltot indított — második motorral, második profillal, második ~150 MB-tal ugyanarra a kártyatárra. A
+felhasználói kérés szó szerint ez volt: „tálcára az indítóikon, ami egyben a futás ikonja is".
+
+**Döntés:** a tálcaikon a parancsikon ikonjával **azonos** kép, és az él, amíg a folyamat él:
+
+1. **Egy felhasználó, egy Antikolt.** Indulás előtt a shell egy nevesített helyi socketet
+   (`antikolt-shell-<felhasználó>`) foglal le (`QLocalServer`). Ha már valaki válaszol rá, ez az indítás
+   elkéri a futó ablaktól, hogy jöjjön elő, és **ablak nélkül, 0-val kilép** — nem indít motort, profilt,
+   folyamatot. A socketnév felhasználónként különbözik, tehát két fiók a gépén két Antikoltot futtathat.
+2. **Az ikon a tálcán** (`QSystemTrayIcon`) a program ikonjával és a „Antikolt — fut" tippel: ez a
+   futásjelző. Kattintásra (vagy duplán) ki-be váltja az ablakot; a menüje „Megnyitás" és „Kilépés".
+3. **A bezárás gomb nem kilépés**: a tálcára teszi az ablakot, és egyszer elmagyarázza, hol van (balloon).
+   Az egyetlen igazi kilépés a tálcamenü „Kilépés" pontja (vagy a folyamat leállítása).
+4. **Tálca nélkül** (tálca nélküli munkamenet, vagy `ANTIKOLT_NO_TRAY`) minden a régi: a bezárás kilép.
+   Minden önteszt ebben a módban fut, csak a `--traytest` kapcsolja be a tálcát.
+
+**Miért nem egy háttérben maradó processz indítja a böngészőt:** az a memória ígéretével ellentétes lenne
+(a „launcher" egy második, mindig futó program), és a Windows tálcájának nincs olyan eseménye, ami egy nem
+futó programnak szólna. A parancsikon + őr kombináció ugyanazt a felhasználói élményt adja, folyamat
+nélkül.
+
+**Következmény:** (+) a bezárás nem viszi el a böngészőt, a felhasználó ugyanoda tér vissza; (+) a
+parancsikon nem indít véletlenül második böngészőt, tehát a kártyatárat nem írja két folyamat; (+) az ikon
+és a parancsikon ugyanaz a kép, tehát a tálcán látszik, hogy fut; (−) a tálcára tett ablak **nem ad vissza
+memóriát**: a motor és a rács él (~150 MB, mért érték), amíg a felhasználó „Kilépés"-t nem nyom — a nyitott
+kártya viszont a szokásos 10 perces szabály szerint magától hibernál, tehát a tálcán várakozó böngésző a
+kártya memóriáját is elengedi; (−) egyetlen socketnév véd egy gépen belül, egy időben (két indulás
+versenye ms-es ablakban elméletileg mindkettő primary lehet — a gyakorlatban a Windows pipe-foglalás ezt
+megfogja).
+
+## ADR-042 — A motorház két felületet tart, és minden parancs megnevezi a magáét (2026-11-17)
+
+**Kontextus:** az ADR-041 munkás-felülete a motorház eddigi feltevésébe ütközött: `RunEngineHostServer`
+egyetlen `HostState`-et tartott, és minden parancsot arra hajtott végre — a `surface` mezőt a huzal
+ellenőrizte, a motor viszont figyelmen kívül hagyta. Egy második felület ezért nem fért be, és a hibás
+(nem létező) felületre címzett parancs csendben a rácsot szolgálta ki.
+
+**Döntés:** a motorház **legfeljebb két** felületet tart (rács + munkás), felületenként külön állapottal,
+és minden felületre vonatkozó parancs a **megnevezett** felületre hat:
+
+1. `create_surface` adja a felület azonosítóját; az állapotok a felület-azonosító kulcsán élnek, a
+   `bridge_reply` a kérelmet a *tulajdonos* felület állapotában keresi.
+2. Ismeretlen felületre címzett parancs `surface_not_found` („no live surface") — nem esik vissza a rácsra.
+3. A harmadik felületet a motor `engine_busy`-vel utasítja el („at most two surfaces at a time"), tehát a
+   korlát a motorban is kényszerítve van, nem csak a shell szándékában.
+4. A `hidden` jelző felületenként adható (`create_surface { …, hidden }`), a `--hidden` folyamatkapcsolóval
+   és nélküle is; a munkás ezzel nem jelenik meg a felhasználó előtt.
+5. A `WM_CLOSE` ablakonként csak a saját felületét zárja be (ablak → felület regisztráció).
+
+**Mérés (memória, a „4 MB" helyett):** a munkás élettartamára a motorházi folyamatfa
+**9 folyamat / 167 MB** volt a **8 folyamat / 143 MB** alapállapothoz képest ugyanabban a futásban
+(`--previewworkertest`, 150 ms-os mintavétel) — azaz a második felület **egy külön renderelő folyamat,
+~24–25 MB**. Az ADR-041 5. pontjának 4 MB-os ígérete ezért téves volt; a valódi korlát a rövid élettartam
+(≤ 8 s), az egyidejűleg egy munkás és a rácson állás.
+
+**Következmény:** (+) a munkás felülete ugyanazon a motoron fut, tehát nincs második motor/Cache; (+)
+minden teszt, amely eddig egy „csendben a rácsra eső" parancsra épült, most **őszintén elbukik** — a
+szelet során tíz ilyen teszt-hiba került elő (dangling `id` referenciák deferred lambdákban,
+elavult felület-azonosítók a hibernált rács után), és mindegyik javítva lett; (−) a motor állapotkezelése
+egy szinttel bonyolultabb (felület-regisztráció, felületenkénti felszabadítás), és a shell-nek garantálnia
+kell, hogy kártyanyitáskor a munkás *előbb* szűnjön meg, mint ahogy az új felület parancsa megy.
+
 ## ADR-041 — A háttér-előnézet rövid életű második felületet kap (2026-11-17)
 
 **Kontextus:** a 28. szelet óta a kártya-előnézet csak akkor készül, amikor a felhasználó megnyitja a
@@ -18,7 +615,10 @@ kártyát. A rács így addig üres kereteket mutat, amíg minden kártyát meg 
    sütijeivel.
 3. **8 másodperces plafon** a betöltésre és a felvételre; utána a felület megszűnik, a kártya kimarad.
 4. **Azonnal megszűnik**, ha a felhasználó kártyát nyit (a munkás nem versenyezhet a felhasználóval).
-5. **Legfeljebb 4 MB** plusz memória a munkás élettartamára — ez a kivétel ára, és csak a rácson állva.
+5. **A plusz memória korlátja a rövid élettartam**, nem egy szám: a mérés szerint a munkás-felület egy
+   **külön renderelő folyamat** (~25 MB a motorházi folyamatfán; lásd ADR-042). Az eredeti „legfeljebb
+   4 MB" ígéret mérés alapján **téves volt**, és helyette a korlát ez: egyidejűleg egy munkás, csak a
+   rácson állva, legfeljebb 8 másodpercig.
 
 **Miért nem alternatíva a rács felületének újrahasználata:** az megszüntetné a rácsot (a felhasználó
 visszatérne egy üres képernyőre), és megsértené a „haza" jelentését.
@@ -28,8 +628,9 @@ miatta (5. pont: azonnali megszakítás); (−) az I1 **szigorúan** él, de egy
 egy kivétellel — ezt a kódban is kényszeríteni kell (állapotgép: `idle → loading → capturing → idle`), és
 önteszttel bizonyítani.
 
-**Állapot:** a döntés megszületett; a munkás kódja **még nincs meg** (a `nextPreviewCard` és a napi keret
-kész, ezek a munkás előfeltételei). A következő szelet: `--previewworkertest`.
+**Állapot:** **megvalósítva** (2026-11-17). A munkás a `MainWindow`-ban él (`previews.h` őrei), a motorház
+két felületet tart (ADR-042), és a `--previewworkertest` méri: megszakítás a plafonon, sikeres felvétel,
+megszakítás kártyanyitáskor, a felület eltűnése és a keret. A memória-ígéret helyesbítése az ADR-042-ben.
 
 ## ADR-040 — Aláírás: Store + SignPath, két csatorna (2026-11-17)
 
@@ -354,7 +955,33 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-038 | `scroll` = `window.scrollBy`, `set_zoom` = újratördelő device-metrics felülírás, a DPR-rel szorozva | Elfogadva |
 | ADR-039 | A munkamenet-szabályokat a felhasználó állítja (`session_rules`), a mag ellenőrzi (TTL 1 óra – 30 nap) | Elfogadva |
 | ADR-040 | Aláírás: Store + SignPath, két csatorna (Store = MSIX az MS-től, SignPath = a saját hordozható kiadás) | Elfogadva |
-| ADR-041 | A háttér-előnézet rövid életű második felületet kap (8 s, egyidejűleg egy, azonnali megszakítás) | Elfogadva |
+| ADR-041 | A háttér-előnézet rövid életű második felületet kap (8 s, egyidejűleg egy, azonnali megszakítás) | Megvalósítva |
+| ADR-042 | A motorház két felületet tart, és minden parancs megnevezi a magáét (felület-azonosító, `hidden`, `engine_busy` a harmadikra) | Elfogadva |
+| ADR-043 | A tálcaikon az indító és a futásjelző: egy felhasználó, egy Antikolt (helyi socket őr, bezárás a tálcára, `--traytest`) | Elfogadva |
+| ADR-044 | A sötét oldalak a felhasználó kapcsolója (`set_forced_dark`), a vezérlősáv témája pedig a rácsot is hajtja (`--themetest`) | Elfogadva |
+| ADR-045 | Az oldal-sötétítésnek négy fokozata van (`off`/`invert`/`dim`/`warm`), a témaváltó ikon + tooltip | Elfogadva |
+| ADR-046 | A shell naplófájlja (`logs/shell.log`, 1 MB-nál rotálva) a konzol nélküli indítás stderr-je | Elfogadva |
+| ADR-047 | A keresés ékezet-független (lap és shell azonos folddal), az üres találat megnevezi a kifejezést, oldalszöveget nem ígér | Elfogadva |
+| ADR-048 | A takarítás sem némítja el a játszó kártyát: ugyanaz a média-kérdés, mint a hibernálásnál | Elfogadva |
+| ADR-049 | Az oldalszöveg a fagyasztáskor a kártyarekordba kerül (`card_page_text`, max. 16 000 karakter), és a keresés mindhárom rétegben látja | Elfogadva |
+| ADR-050 | A konténer-váltás a kártyán, natív `<select>`-tel; az írás a magon át megy, a lap csak azt mutatja, amit a mag elfogadott | Elfogadva |
+| ADR-051 | A konténer-jelmagyarázat egyben a szűrő: chipek színes ponttal és a keresés szerinti darabszámmal, `aria-pressed`-szel | Elfogadva |
+| ADR-052 | A konténer-tábla a magban él (`containers.json`), pushban érkezik a lapra, és nem törölhető, amíg kártya használja | Elfogadva |
+| ADR-053 | A konténer szerkesztése helyben, dialógus nélkül (`＋`, dupla kattintás, `×`), a mag válasza megjelenik | Elfogadva |
+| ADR-054 | A használt konténer törlése `move_to`-val: előbb áthelyezés, aztán törlés; a felület felajánlja, nem kényszerít | Elfogadva |
+| ADR-055 | A címkék a kártyarekordban (`tags`), a mag normalizálja (trim, dedup, 12×32), a keresés ékezet nélkül is látja | Elfogadva |
+| ADR-056 | A munkaterület-tábla a magban él (`workspaces.json`); a kártya `workspace` mezője tárolt adat, nem a lap indexe | Elfogadva |
+| ADR-057 | A munkaterület életciklusa a fül-soron, ugyanazzal a gesztussal, mint a konténereké (`＋`, dupla kattintás, `×`), dialógus nélkül | Elfogadva |
+| ADR-058 | A kártya munkaterülete a kártyán váltható, natív `<select>`-tel (nem drag: a virtualizált rácsban törékeny és billentyűzettel használhatatlan) | Elfogadva |
+| ADR-059 | A profil egy hordozható JSON-kötegben utazik (`profile_export`/`profile_import`), `schema`-számmal; az ismeretlen séma elutasítás | Elfogadva |
+| ADR-060 | A köteg a hídon érkezik, az útvonalat a hívó adja (`profile.export`/`profile.import`); a híd nem nyit dialógust | Elfogadva |
+| ADR-061 | A kezdőlap szerkeszthető: `＋` + soros űrlap, `card_delete` a magban, az új kártya az aktív fülre és az első konténerbe kerül | Elfogadva |
+| ADR-062 | A kártya átnevezése helyben (dupla kattintás, `Enter`/`Esc`), a teljes rekord `cards.upsert`-jével; a mentés a lap-úton (`antikoltRenameCard`) megy | Elfogadva |
+| ADR-063 | A webcím a domain-sávon szerkeszthető (dupla kattintás), a domain a mag válaszából számolódik újra | Elfogadva |
+| ADR-064 | SQLite-store (`rusqlite` bundled, séma `user_version=2`), a JSON-store-ok megmaradnak igazságnak; a `db_status` tükröz és visszaellenőriz | Elfogadva |
+| ADR-065 | A rács listája a SQLite-ból jön (write-through: tükrözés a lista előtt); a JSON marad az író, a hibás eset hangos | Elfogadva |
+| ADR-066 | A tükör soronként követi az írásokat (`mirror_card`/`mirror_delete`), a lista már csak olvas; több-kártyás op külön tükröz | Elfogadva |
+| ADR-067 | Az adatbázis a store sorrendjében adja a kártyákat (`ORDER BY last_opened_at_ms DESC, LOWER(title)`), teszt védi | Elfogadva |
 
 ---
 

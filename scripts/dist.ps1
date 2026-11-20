@@ -121,15 +121,20 @@ if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
 Antikolt — hordozható build
 ===========================
 
-Indítás: antikolt-shell.exe (vagy a desktop parancsikon).
-Az ablakban nyomd meg a „Motor indítása" gombot; utána megjelenik a kártyarács.
+Indítás: antikolt-shell.exe (vagy a desktop / Start menü parancsikon).
+A motor magától elindul, a kártyarács betöltődik. A bezárás gomb nem lép ki: az
+ablak a tálcára kerül, és a tálcaikonról nyitható meg újra (a menüjében van a
+Kilépés). Egyszerre egy Antikolt fut: a parancsikon másodszori megnyitása a futó
+ablakot hozza elő, nem indít második böngészőt.
 
 A mappa mindent tartalmaz, amire futáshoz szükség van (Qt, CEF, Rust mag, a lap).
 Semmit nem telepít és nem ír a rendszerleíró adatbázisba: a mappa és a parancsikon
 törlésével nyom nélkül eltávolítható.
 
 A profil (kártyák, munkamenet-napló, előnézetek) a felhasználói AppData alatt van:
-  %LOCALAPPDATA%\Antikolt\Antikolt\
+  %APPDATA%\Antikolt Project\Antikolt\
+A program naplója (indítási és motorüzenetek) ugyanott:
+  %APPDATA%\Antikolt Project\Antikolt\logs\shell.log
 '@ | Set-Content -Path (Join-Path $Destination 'README.txt') -Encoding UTF8
 
 # --- the desktop shortcut -------------------------------------------------------------------------------

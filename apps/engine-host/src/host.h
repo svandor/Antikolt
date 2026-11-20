@@ -66,6 +66,9 @@ struct HostState {
     std::atomic<bool> timed_out{false};
     /// The window was asked to close. The pump loop closes the browser and shuts CEF down.
     std::atomic<bool> quit_requested{false};
+    /// One surface's window was asked to close (server mode): the pump loop destroys that surface and
+    /// keeps the process alive, because another surface may be the one the user is looking at.
+    std::atomic<bool> close_requested{false};
     /// Set once CEF has actually created the browser. CEF creates it asynchronously, so the pump
     /// loop must not treat "no browser yet" as "browser closed" (that bug exited immediately).
     std::atomic<bool> browser_created{false};

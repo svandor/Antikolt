@@ -109,6 +109,16 @@ bool ParseCommand(const std::string& payload, Command* out) {
     if (!media.empty()) {
         out->media = media;
     }
+    // Dark pages (`set_forced_dark`): the mode (`off`, `invert`, `dim`, `warm`), or the old boolean — the shell
+    // used `enabled` before the modes existed, and an old binary talking to a new host must keep working.
+    const std::string dark_mode = GetString(message, "mode");
+    if (!dark_mode.empty()) {
+        out->dark_mode = dark_mode;
+    } else if (CefRefPtr<CefValue> forced = message->GetValue("enabled")) {
+        if (forced->GetType() == VTYPE_BOOL) {
+            out->dark_mode = forced->GetBool() ? "invert" : "off";
+        }
+    }
     // Scrolling (`scroll`): CSS pixels, and whether the movement is animated.
     out->scroll_x = static_cast<int>(GetNumber(message, "x"));
     out->scroll_y = static_cast<int>(GetNumber(message, "y"));
@@ -172,6 +182,13 @@ bool ParseCommand(const std::string& payload, Command* out) {
             }
             if (height > 0) {
                 out->height = static_cast<int>(height);
+            }
+        }
+        // Optional, additive field (ADR-041): an omitted `hidden` means "show it", so every older caller
+        // keeps its behaviour without a protocol bump — the same rule `parent_window` follows.
+        if (CefRefPtr<CefValue> hidden = config->GetValue("hidden")) {
+            if (hidden->GetType() == VTYPE_BOOL) {
+                out->hidden = hidden->GetBool();
             }
         }
     }

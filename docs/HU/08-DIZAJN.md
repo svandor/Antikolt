@@ -81,6 +81,11 @@ Balról: vissza · előre · újratöltés · **⌂ kezdőlap** · cím/kereső 
 téma-váltó (világos/szürke/sötét) · széf. Jobbról: memória-jelző (opcionális), menü.
 Magasság: 40 px; ikonok 18 px; a címmező kapja a maradék helyet.
 
+**Ahol egy gomb állapotot is jelöl, ott az ikon a felület, a szó a tooltip** (2026-11-18): a négy felületi
+témát egy-egy generált ikon képviseli (a téma háttere + szövegszíne), a megnevezés a tooltipben és a
+képernyőolvasó-névben van; az oldal-sötétítés holdsarló-ikonja a menüből választható, és a **kitöltése mutatja
+az érvényes fokozatot** (üres = kikapcsolva, fekete = sötét, szürke = sötét szürke, meleg = sötét meleg).
+
 ## 7. Akadálymentesség
 
 - Teljes billentyűzetes navigáció; fókuszgyűrű minden témában látható (2 px, `--accent`).
@@ -90,7 +95,33 @@ Magasság: 40 px; ikonok 18 px; a címmező kapja a maradék helyet.
 
 ## 8. Amit a felület soha nem tesz
 
+- **Nem nyit indokolatlan második ablakot, és nem is tart életben egyet.** Egy böngészőnek egy látható ablaka
+  van (a kártya ebbe van ágyazva, nem külön ablak), a motor- és magfolyamatok rejtett csöveken beszélnek, és a
+  tálcaikon nem ablak, hanem jelzés. Ha egy indítás mégis plusz ablakot hozna létre (a Windows
+  konzol-subsystem programoknak ad egyet), a program **azonnal eldobja** — nem elrejti, nem hagyja ott
+  (`DropOwnConsoleWindow`, `main.cpp`). Ez a felhasználói szabály: „szigorúan tilos bármilyen indokolatlan
+  plusz ablakot megnyitni és főleg életben tartani" (2026-11-18).
 - Nem villog, nem ugrál (a kártya-morfolás a kivétel, de az is 250 ms).
 - Nem tesz fel kérdést, amire a válasz megjósolható (pl. „biztosan megnyitod?" — a megnyitás olcsó).
 - Nem töm tele feliratot: a kártya címe + domain + állapot elég.
 - Nem rejti el a memóriát (a jelző megmutatja, mennyi az éppen használt érték — ez a bizalom része).
+- Nem hazudik a témáról: a vezérlősáv választása a **saját** felületeket (ablak, rács) azonnal átfestit, a
+  weboldalakat pedig vagy a saját sötét témájuk, vagy a felhasználó által kért „Sötét oldalak" kapcsoló
+  (ADR-044) — a `--themetest` mindkettőt méri, pixelenként.
+
+## 9. A sötét oldalak (ADR-044/ADR-045)
+
+A `light`/`grey`/`dark`/`amoled` a **termék** felülete; egy weboldal világos marad, ha nincs saját sötét
+témája. Erre való a vezérlősáv **holdsarló-ikonja** (alapból kikapcsolva, megjegyzett), aminek a menüjében
+négy fokozat van:
+
+| Fokozat | Mit tesz a lappal | Mért fényesség (fehér próbaoldal) |
+|---|---|---|
+| `off` (Kikapcsolva) | semmit | 251 |
+| `invert` (Sötét) | invertálás + `hue-rotate(180deg)` | 4 |
+| `dim` (Sötét szürke) | ugyanaz + `contrast(0.72)` | 39 |
+| `warm` (Sötét meleg) | ugyanaz + `contrast(0.78) sepia(0.35)` | 33 |
+
+A motor egy **nevesített** stíluselemet szúr a lapba, a módváltás lecseréli, a kikapcsolás eltávolítja —
+újratöltés nélkül. Nem keverendő az „Oldal-téma: auto/dark/light" gombbal, ami csak *megmondja* a lapnak, mit
+szeretne a rendszer.

@@ -1,7 +1,8 @@
 Antikolt
 ========
 
-Copyright © 2026 Antikolt Project and contributors.
+Copyright © 2026 Varga Sándor (svandor) and contributors.
+Licence: Mozilla Public License, v. 2.0 (see `LICENSE`).
 
 This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 If a copy of the MPL was not distributed with this file, You can obtain one at
@@ -16,8 +17,8 @@ under human direction and review). This is disclosed deliberately:
   * No part of this project claims exclusive human authorship of AI-generated code.
   * AI-generated code is reviewed, tested and measured before it is merged; the test suite and the
     memory benchmark in `perf/` are the evidence, not the claim.
-  * Human decisions, requirements and reviews are made by the maintainer, who is the copyright
-    holder of the project's contributions and responsible for releases.
+  * Human decisions, requirements and reviews are made by the maintainer (Varga Sándor, `@svandor`), who is the
+    copyright holder of the project's contributions and responsible for releases.
 
 If you contribute, you do not need to disclose or avoid AI tools. You sign off your commit
 (`git commit -s`, the Developer Certificate of Origin) to confirm you have the right to submit the

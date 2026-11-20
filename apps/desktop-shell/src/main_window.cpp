@@ -5,6 +5,7 @@
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -18,14 +19,20 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QMenu>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QSet>
+#include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QSystemTrayIcon>
 #include <QTableWidget>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -64,6 +71,28 @@ constexpr qint64 kPreviewMaxAgeMs = 7LL * 24 * 60 * 60 * 1000;
 
 /// The hard ceiling on previews per day, persisted in the profile (a budget that resets on launch is not one).
 constexpr int kPreviewDailyMax = 100;
+
+/// The background worker's own viewport: the same default a card window has, so a preview looks like the
+/// page does when the card is opened — and a browser has to lay something out to photograph it.
+constexpr int kWorkerViewportWidth = 1280;
+constexpr int kWorkerViewportHeight = 800;
+
+/// One worker job's ceiling: load plus capture (ADR-041, point 3).
+///
+/// Eight seconds is enough for a page to paint on this machine and short enough that a stalled host cannot
+/// hold the one worker slot; a page that has not painted by then is skipped, not waited for.
+constexpr int kWorkerDeadlineMs = 8000;
+
+/// The ceiling a job actually gets, in milliseconds.
+///
+/// `ANTIKOLT_PREVIEW_DEADLINE_MS` overrides it, the way `ANTIKOLT_HIBERNATE_MS` shortens the idle clock: a
+/// self test must measure the worker, not how fast this machine's compositor falls back from a dead GPU,
+/// and the same knob lets a check drive the ceiling deterministically with a tiny value.
+int workerDeadlineMs() {
+    bool configured = false;
+    const int requested = qEnvironmentVariableIntValue("ANTIKOLT_PREVIEW_DEADLINE_MS", &configured);
+    return configured && requested > 0 ? requested : kWorkerDeadlineMs;
+}
 
 /// The origin of a URL (`scheme://host[:port]`), or "" when the scheme has no storable origin.
 ///
@@ -105,12 +134,140 @@ const ThemePalette kDark{
 const ThemePalette kAmoled{
     "#000000", "#0A0A0A", "#121212", "#EDEDED", "#9A9A9A", "#1E1E1E", "#8AB8FF", "#7BD8A5", "#FF8A80"};
 
+/// The painter's own size for the generated icons: Qt scales them down for the toolbar, so they are drawn once
+/// at a size that survives High DPI instead of being a bitmap of the wrong size.
+constexpr int kIconPixels = 32;
+
+/// The icon of one theme: a rounded "window" filled with the theme's background, carrying three lines of text in
+/// the theme's text colour. Distinct at 20 px, and it needs no asset files — the palette is the specification.
+QIcon ThemeIcon(const ThemePalette& palette) {
+    QPixmap pixmap(kIconPixels, kIconPixels);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QRectF frame(2.0, 2.0, kIconPixels - 4.0, kIconPixels - 4.0);
+    painter.setPen(QPen(QColor(palette.border), 2.0));
+    painter.setBrush(QColor(palette.background));
+    painter.drawRoundedRect(frame, 6.0, 6.0);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(palette.text));
+    painter.drawRoundedRect(QRectF(7.0, 8.0, 18.0, 3.5), 1.5, 1.5);
+    painter.drawRoundedRect(QRectF(7.0, 15.0, 13.0, 3.0), 1.5, 1.5);
+    painter.drawRoundedRect(QRectF(7.0, 21.0, 15.0, 3.0), 1.5, 1.5);
+    painter.end();
+    return QIcon(pixmap);
+}
+
+/// A crescent moon whose fill shows what the mode does to a page: hollow (off), near-black (invert), dark grey
+/// (dim), warm grey (warm). The crescent is the *page*, not the browser — the browser theme has its own icons.
+QIcon PageDarkIcon(const QString& mode) {
+    QPixmap pixmap(kIconPixels, kIconPixels);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPainterPath moon;
+    moon.addEllipse(QRectF(3.0, 3.0, 26.0, 26.0));
+    QPainterPath bite;
+    bite.addEllipse(QRectF(13.0, 0.0, 26.0, 26.0));
+    moon = moon.subtracted(bite);
+
+    if (mode == QStringLiteral("off")) {
+        painter.setPen(QPen(QColor(QStringLiteral("#8E9196")), 2.2));
+        painter.setBrush(Qt::NoBrush);
+    } else if (mode == QStringLiteral("invert")) {
+        painter.setPen(QPen(QColor(QStringLiteral("#E9E9E7")), 1.2));
+        painter.setBrush(QColor(QStringLiteral("#0B0B0C")));
+    } else if (mode == QStringLiteral("dim")) {
+        painter.setPen(QPen(QColor(QStringLiteral("#C9CDD2")), 1.2));
+        painter.setBrush(QColor(QStringLiteral("#3A3F45")));
+    } else {
+        painter.setPen(QPen(QColor(QStringLiteral("#E0C9A6")), 1.2));
+        painter.setBrush(QColor(QStringLiteral("#3C332A")));
+    }
+    painter.drawPath(moon);
+    painter.end();
+    return QIcon(pixmap);
+}
+
+/// The page's own answer to "are you playing sound or video right now?" — the one documented exception a user
+/// feels (docs/HU/02 §4.2), asked the same way by hibernation and by the cleanup of session storage.
+///
+/// A `<video muted autoplay>` or an `<audio>` mid-playback reports `paused === false`; a page with no media at all
+/// answers `idle`. Nothing is inferred from the page's title or URL: the element state is the fact.
+QString LiveMediaPlayingScript() {
+    return QStringLiteral(
+        "(function(){var m=document.querySelectorAll('video,audio');"
+        "for(var i=0;i<m.length;i++){if(!m[i].paused&&!m[i].ended)return 'playing';}"
+        "return 'idle';})()");
+}
+
+/// The accent folding the page uses, on the shell side (`cards.search`, ADR-047).
+///
+/// `Kávé` must be found by typing `kave`, and the two sides must fold the same way — otherwise the same query
+/// answers differently depending on whether the page or the shell filtered it.
+QString FoldForSearch(const QString& text) {
+    QString folded = text.normalized(QString::NormalizationForm_D);
+    folded.removeIf([](QChar character) { return character.category() == QChar::Mark_NonSpacing; });
+    folded = folded.toLower();
+    // The handful of letters Unicode does not decompose — the same short list as the page's `foldSearch`.
+    folded.replace(QChar(0x0142), QLatin1Char('l'));  // ł
+    folded.replace(QChar(0x00F8), QLatin1Char('o'));  // ø
+    folded.replace(QChar(0x0111), QLatin1Char('d'));  // đ
+    folded.replace(QStringLiteral("ß"), QStringLiteral("ss"));
+    return folded;
+}
+
+/// The human name of a theme, in the product's language. The toolbar shows the icon; tooltips and screen
+/// readers show this.
+QString themeLabel(const QString& theme) {
+    if (theme == QStringLiteral("light")) {
+        return QStringLiteral("Világos téma");
+    }
+    if (theme == QStringLiteral("grey")) {
+        return QStringLiteral("Szürke téma (alap)");
+    }
+    if (theme == QStringLiteral("dark")) {
+        return QStringLiteral("Sötét téma");
+    }
+    return QStringLiteral("AMOLED fekete téma");
+}
+
+/// The human name of a page-dark mode (ADR-045).
+QString pageDarkModeLabel(const QString& mode) {
+    if (mode == QStringLiteral("invert")) {
+        return QStringLiteral("Sötét (invertálás)");
+    }
+    if (mode == QStringLiteral("dim")) {
+        return QStringLiteral("Sötét szürke");
+    }
+    if (mode == QStringLiteral("warm")) {
+        return QStringLiteral("Sötét meleg");
+    }
+    return QStringLiteral("Kikapcsolva");
+}
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(QStringLiteral("Antikolt"));
     resize(1280, 800);
     setMinimumSize(760, 480);
+
+    // The forced-dark switch is a user preference, not a per-session whim: read it before the toolbar builds, so
+    // the action starts in the state the engine will be asked for (ADR-044).
+    // The page-dark mode is a user preference, not a per-session whim: read it before the toolbar builds, so the
+    // button starts in the state the engine will be asked for. The old boolean key is the previous build's
+    // spelling and is migrated here once (ADR-045).
+    {
+        QSettings settings;
+        const QString stored = settings.value(QStringLiteral("ui/page_dark_mode")).toString();
+        if (!stored.isEmpty() && pageDarkModes().contains(stored)) {
+            page_dark_mode_ = stored;
+        } else if (settings.value(QStringLiteral("ui/forced_dark"), false).toBool()) {
+            page_dark_mode_ = QStringLiteral("invert");
+        }
+    }
 
     buildToolBar();
     buildCardArea();
@@ -131,6 +288,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(engine_, &EngineClient::loadFinished, this,
             [this](qint64 surface, const QString& url, int httpStatus) {
+                // The background worker's own surface: its load is not the card's, and must not move the
+                // window's idea of what the user is looking at (ADR-041). The engine's events carry the
+                // surface id, so the worker's page can never masquerade as the grid.
+                if (worker_state_ != antikolt::PreviewWorker::Idle && surface == worker_surface_) {
+                    onPreviewWorkerLoaded();
+                    return;
+                }
                 setStatus(QStringLiteral("betöltve (#%1, %2): %3")
                               .arg(surface)
                               .arg(httpStatus)
@@ -144,6 +308,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 if (zoom_percent_ != 100 && engine_ != nullptr) {
                     engine_->setZoom(surface, zoom_percent_, nullptr);
                 }
+                // And the page-dark mode: the page forgot what the previous load asked for (ADR-044/ADR-045).
+                if (page_dark_mode_ != QStringLiteral("off") && engine_ != nullptr) {
+                    engine_->setPageDarkMode(surface, page_dark_mode_, nullptr);
+                }
                 // The grid must show the cards the core owns, so the list is pushed once the page is
                 // there to receive it. A real card is not a grid, and the *tracked* home id is not a reliable
                 // test on its own: it is cleared when a card detaches, and that detach can arrive after the
@@ -152,7 +320,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 if (surface == home_surface_ || url == homePageUrl()) {
                     live_origin_.clear();
                     home_surface_ = surface;
+                    // The page starts in the toolbar's theme, not in its own remembered default: one product,
+                    // one theme switch (measured: the grid used to come up grey while the chrome was amoled).
+                    pushThemeToGrid(surface);
                     pushCardsToGrid(surface);
+                    // The grid is the only place the preview worker may run (ADR-041), and its empty frames
+                    // are exactly what the worker exists to fill. Scheduled a beat after the push, so the
+                    // core has answered and the grid is not still laying out.
+                    QTimer::singleShot(1500, this, &MainWindow::schedulePreviewWork);
                     return;
                 }
                 // A card finished loading: if the policy queued this origin (see cleanupSessions), this
@@ -213,6 +388,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // The card owns the surface lifecycle locally; the window mirrors it for the status bar.
     connect(card_, &LiveCard::surfaceAttached, this, [this](qint64 surface) {
+        // A card is coming to the front: the worker yields first, so its surface is destroyed before the
+        // card asks for one — the user must never wait for a preview (ADR-041, point 4).
+        if (worker_state_ != antikolt::PreviewWorker::Idle) {
+            abortPreviewWorker(QStringLiteral("kártya nyílik"));
+        }
         surface_ = surface;
         // A pending card wins over the home page: this is the click-through path from the grid.
         const QString target = pending_url_.isEmpty() ? homePageUrl() : pending_url_;
@@ -260,8 +440,127 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // wakes the clock through the bridge (a page that is not touched never sends anything).
     qApp->installEventFilter(this);
 
+    // The worker's ceiling and its queue (ADR-041). One timer for the whole job — load *and* capture —
+    // because the promise is "eight seconds, then the slot is free", not eight seconds per step.
+    worker_deadline_ = new QTimer(this);
+    worker_deadline_->setSingleShot(true);
+    // The interval is set per job (`workerDeadlineMs()`), so a check can drive the ceiling too.
+    connect(worker_deadline_, &QTimer::timeout, this, [this] {
+        if (worker_state_ != antikolt::PreviewWorker::Idle) {
+            abortPreviewWorker(QStringLiteral("a nyolc másodperces határidő lejárt"));
+        }
+    });
+    // A finished job makes room for the next one. Deferred, because the signal is emitted from paths that
+    // are in the middle of opening a card or tearing the surface down; scheduling then would race them.
+    connect(this, &MainWindow::previewWorkerFinished, this, [this](const QString&, bool) {
+        QTimer::singleShot(1200, this, &MainWindow::schedulePreviewWork);
+    });
+
     setStatus(QStringLiteral("motor: nincs elindítva · kártyák: 0"));
     applyTheme(QStringLiteral("grey"));
+
+    // The icon in the notification area: the same picture the shortcut carries, alive exactly as long as
+    // this process is (ADR-043).
+    setupTray();
+}
+
+bool MainWindow::trayEnabled() {
+    return qEnvironmentVariableIsEmpty("ANTIKOLT_NO_TRAY");
+}
+
+void MainWindow::setupTray() {
+    if (!trayEnabled()) {
+        return;
+    }
+    if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+        // No notification area (a session without a shell, a bare CI agent): the close button keeps meaning
+        // what it always meant, and nothing pretends otherwise.
+        qInfo("[shell] tray: nincs rendszertálca, a bezárás kilép");
+        return;
+    }
+    tray_ = new QSystemTrayIcon(windowIcon(), this);
+    tray_->setToolTip(QStringLiteral("Antikolt — fut"));
+    tray_menu_ = new QMenu(this);
+    QAction* open = tray_menu_->addAction(QStringLiteral("Megnyitás"));
+    open->setObjectName(QStringLiteral("tray.open"));
+    connect(open, &QAction::triggered, this, &MainWindow::restoreFromTray);
+    tray_menu_->addSeparator();
+    QAction* quit = tray_menu_->addAction(QStringLiteral("Kilépés"));
+    quit->setObjectName(QStringLiteral("tray.quit"));
+    connect(quit, &QAction::triggered, this, &MainWindow::quitFromTray);
+    tray_->setContextMenu(tray_menu_);
+    connect(tray_, &QSystemTrayIcon::activated, this,
+            [this](QSystemTrayIcon::ActivationReason reason) {
+                if (reason != QSystemTrayIcon::Trigger && reason != QSystemTrayIcon::DoubleClick) {
+                    return;
+                }
+                // One click toggles: the icon is the way in and the way out of the way.
+                if (isVisible()) {
+                    hideToTray();
+                } else {
+                    restoreFromTray();
+                }
+            });
+    tray_->show();
+    qInfo("[shell] tray: ikon a tálcán (%s)",
+          qUtf8Printable(windowIcon().isNull() ? QStringLiteral("ikon nélkül")
+                                              : QStringLiteral("a program ikonjával")));
+}
+
+QStringList MainWindow::trayMenuLabels() const {
+    QStringList labels;
+    if (tray_menu_ == nullptr) {
+        return labels;
+    }
+    for (const QAction* action : tray_menu_->actions()) {
+        if (action != nullptr && !action->isSeparator()) {
+            labels.append(action->text());
+        }
+    }
+    return labels;
+}
+
+void MainWindow::hideToTray() {
+    hide();
+    if (tray_ != nullptr && !tray_hint_shown_) {
+        // Said once: the first time the window vanishes the user must know where it went, and how to stop
+        // it for good. Repeating it on every close would be a nag, not an explanation.
+        tray_hint_shown_ = true;
+        tray_->showMessage(QStringLiteral("Antikolt"),
+                           QStringLiteral("A böngésző a tálcán fut tovább. Megnyitás és kilépés: a "
+                                          "tálcaikon menüje."),
+                           QSystemTrayIcon::Information, 5000);
+    }
+    setStatus(QStringLiteral("a tálcán fut · megnyitás: a tálcaikon"));
+}
+
+void MainWindow::restoreFromTray() {
+    showNormal();
+    raise();
+    activateWindow();
+    setStatus(QStringLiteral("előhozva a tálcáról"));
+}
+
+void MainWindow::quitFromTray() {
+    quit_requested_ = true;
+    if (tray_ != nullptr) {
+        tray_->hide();
+    }
+    // Closing for real now: the close event sees the flag and lets the window go, and the engine is shut
+    // down by the destructor like every other exit.
+    close();
+    QCoreApplication::quit();
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (tray_ != nullptr && !quit_requested_) {
+        // The close button puts the window away, it does not end the browser: the tray icon is the way
+        // back, and "Kilépés" in its menu is the way out (ADR-043).
+        hideToTray();
+        event->ignore();
+        return;
+    }
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::armIdleTimer() {
@@ -292,10 +591,7 @@ void MainWindow::onIdleTimeout() {
     // The one documented exception a user would feel: a page that is playing sound or video keeps its
     // card alive (docs/HU/02 §4.2). Everything else goes to disk, unpinned or not.
     engine_->evaluate(
-        surface_,
-        QStringLiteral("(function(){var m=document.querySelectorAll('video,audio');"
-                       "for(var i=0;i<m.length;i++){if(!m[i].paused&&!m[i].ended)return 'playing';}"
-                       "return 'idle';})()"),
+        surface_, LiveMediaPlayingScript(),
         [this](const QJsonObject& reply, const QString& error) {
             hibernating_ = false;
             const QString value = reply.value(QStringLiteral("value")).toString();
@@ -328,6 +624,9 @@ MainWindow::~MainWindow() {
     // Teardown order is not cosmetic: the browser lives in a child window of this window, so it has to
     // be closed *before* Qt destroys the widget that owns it, and the engine has to be gone before the
     // process exits. Getting this wrong crashed with an access violation after every successful run.
+    // The worker's surface goes first: the engine is still alive to destroy it, and `shutdown()` below
+    // would otherwise leave the request unanswered.
+    abortPreviewWorker(QStringLiteral("a shell leáll"));
     closeLiveCard();
     if (core_ != nullptr) {
         core_->shutdown();
@@ -420,8 +719,32 @@ bool MainWindow::applyTheme(const QString& theme) {
         card_->update();
     }
 
+    // The remembered theme is the one being applied — set before anything reads it, or the page would always
+    // receive the *previous* choice (measured: the grid lagged exactly one click behind the toolbar).
     currentTheme_ = theme;
+
+    // The grid is the product's own page and has a theme attribute of its own: the toolbar's choice is the
+    // one the user made, so the page follows it instead of keeping a second, disagreeing switch.
+    if (home_surface_ != 0) {
+        pushThemeToGrid(home_surface_);
+    }
+
     return true;
+}
+
+void MainWindow::pushThemeToGrid(qint64 surface) {
+    if (engine_ == nullptr || surface == 0 || currentTheme_.isEmpty()) {
+        return;
+    }
+    // The page owns the attribute and re-renders the cards from it (home/app.js `setTheme`); the storage write
+    // is the same one its own buttons do, so a reload keeps the choice. Storage can be denied in a locked
+    // profile — the attribute still applies for this session, hence the try/catch on the page.
+    engine_->evaluate(
+        surface,
+        QStringLiteral("document.documentElement.setAttribute('data-theme','%1');"
+                       "try{localStorage.setItem('antikolt.theme','%1')}catch(e){}")
+            .arg(currentTheme_),
+        [](const QJsonObject&, const QString&) {});
 }
 
 QString MainWindow::engineExecutable() {
@@ -517,9 +840,15 @@ void MainWindow::startEngine() {
     }
     if (!core_->isRunning()) {
         const QString corePath = coreExecutable();
+        // `ANTIKOLT_CORE_DATA` exists for the self tests: the 500-card scale check must not seed a developer's
+        // own grid with five hundred probe cards (and must not read their cards either). Unset means the profile
+        // directory, which is what the product uses.
+        const QString fromEnvironment = qEnvironmentVariable("ANTIKOLT_CORE_DATA");
         const QString coreData =
-            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
-            QStringLiteral("/core");
+            !fromEnvironment.isEmpty()
+                ? fromEnvironment
+                : QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                      QStringLiteral("/core");
         QDir().mkpath(coreData);
         if (corePath.isEmpty()) {
             setStatus(QStringLiteral("a mag nem található (ANTIKOLT_CORE) — a rács egyelőre mintaadatot mutat"));
@@ -564,6 +893,11 @@ void MainWindow::ensureSurface() {
 }
 
 void MainWindow::openCard(const QString& url, const QString& title) {
+    // The user wins over the background: a preview is never worth a moment of their wait, so the running
+    // worker is stopped before anything else happens (ADR-041, point 4).
+    if (worker_state_ != antikolt::PreviewWorker::Idle) {
+        abortPreviewWorker(QStringLiteral("kártya nyílik"));
+    }
     rememberScroll([this, url, title] {
     if (url.isEmpty()) {
         setStatus(QStringLiteral("a kártyának nincs címe"));
@@ -640,7 +974,7 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
     // ---- questions the page waits for (protocol 2, ADR-034) --------------------------------
     if (request > 0) {
         if (method == QStringLiteral("cards.search")) {
-            const QString query = args.value(QStringLiteral("q")).toString().trimmed().toLower();
+            const QString query = FoldForSearch(args.value(QStringLiteral("q")).toString()).trimmed();
             if (core_ == nullptr || !core_->isRunning()) {
                 replyToPage(request, {}, QStringLiteral("a mag nem fut"));
                 return;
@@ -658,11 +992,13 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                         matches.append(card);
                         continue;
                     }
-                    const QString haystack =
-                        (card.value(QStringLiteral("title")).toString() + QLatin1Char(' ') +
-                         card.value(QStringLiteral("url")).toString() + QLatin1Char(' ') +
-                         card.value(QStringLiteral("notes")).toString())
-                            .toLower();
+                    // The page's captured text is part of what a search may look at (ADR-049): a user remembers a
+                    // sentence, not the title. It is folded the same way the query is, so `kave` finds `Kávé`.
+                    const QString haystack = FoldForSearch(
+                        card.value(QStringLiteral("title")).toString() + QLatin1Char(' ') +
+                        card.value(QStringLiteral("url")).toString() + QLatin1Char(' ') +
+                        card.value(QStringLiteral("notes")).toString() + QLatin1Char(' ') +
+                        card.value(QStringLiteral("page_text")).toString());
                     if (haystack.contains(query)) {
                         matches.append(card);
                     }
@@ -687,6 +1023,166 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                 replyToPage(request,
                             QJsonObject{{QStringLiteral("card"),
                                          saved.value(QStringLiteral("card"))}});
+            });
+            return;
+        }
+        if (method == QStringLiteral("cards.delete")) {
+            const QString card_id = args.value(QStringLiteral("id")).toString();
+            if (card_id.isEmpty() || core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("nincs azonosító vagy a mag nem fut"));
+                return;
+            }
+            core_->cardDelete(card_id, [this, request](const QJsonObject& reply, const QString& error) {
+                if (!error.isEmpty()) {
+                    replyToPage(request, {}, error);
+                    return;
+                }
+                replyToPage(request, reply);
+            });
+            return;
+        }
+        // ---- the container table (ADR-052) -----------------------------------------------------
+        // The page draws the legend and the card's selector from here, so a rename in the core is what a reload
+        // shows: the table is not a constant in the page any more.
+        if (method == QStringLiteral("containers.list")) {
+            if (core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("a mag nem fut"));
+                return;
+            }
+            core_->containersList([this, request](const QJsonObject& reply, const QString& error) {
+                if (!error.isEmpty()) {
+                    replyToPage(request, {}, error);
+                    return;
+                }
+                replyToPage(request, QJsonObject{{QStringLiteral("containers"),
+                                                 reply.value(QStringLiteral("containers"))}});
+            });
+            return;
+        }
+        if (method == QStringLiteral("containers.upsert")) {
+            const QJsonObject container = args.value(QStringLiteral("container")).toObject();
+            if (container.isEmpty() || core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("nincs konténer vagy a mag nem fut"));
+                return;
+            }
+            core_->containerUpsert(container,
+                                   [this, request](const QJsonObject& saved, const QString& error) {
+                                       if (!error.isEmpty()) {
+                                           replyToPage(request, {}, error);
+                                           return;
+                                       }
+                                       replyToPage(request,
+                                                   QJsonObject{{QStringLiteral("container"),
+                                                                saved.value(QStringLiteral("container"))}});
+                                   });
+            return;
+        }
+        if (method == QStringLiteral("containers.delete")) {
+            const QString container_id = args.value(QStringLiteral("id")).toString();
+            // The target of the move is optional: without it the core refuses a container that still holds cards;
+            // with it the cards travel first and the container goes afterwards (ADR-054).
+            const QString move_to = args.value(QStringLiteral("moveTo")).toString();
+            if (container_id.isEmpty() || core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("nincs azonosító vagy a mag nem fut"));
+                return;
+            }
+            core_->containerDelete(container_id, move_to,
+                                   [this, request](const QJsonObject& reply, const QString& error) {
+                                       if (!error.isEmpty()) {
+                                           replyToPage(request, {}, error);
+                                           return;
+                                       }
+                                       replyToPage(request, reply);
+                                   });
+            return;
+        }
+        // ---- the workspace table (ADR-056) ------------------------------------------------------
+        if (method == QStringLiteral("workspaces.list")) {
+            if (core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("a mag nem fut"));
+                return;
+            }
+            core_->workspacesList([this, request](const QJsonObject& reply, const QString& error) {
+                if (!error.isEmpty()) {
+                    replyToPage(request, {}, error);
+                    return;
+                }
+                replyToPage(request, QJsonObject{{QStringLiteral("workspaces"),
+                                                  reply.value(QStringLiteral("workspaces"))}});
+            });
+            return;
+        }
+        if (method == QStringLiteral("workspaces.upsert")) {
+            const QJsonObject workspace = args.value(QStringLiteral("workspace")).toObject();
+            if (workspace.isEmpty() || core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("nincs munkaterület vagy a mag nem fut"));
+                return;
+            }
+            core_->workspaceUpsert(workspace,
+                                   [this, request](const QJsonObject& saved, const QString& error) {
+                                       if (!error.isEmpty()) {
+                                           replyToPage(request, {}, error);
+                                           return;
+                                       }
+                                       replyToPage(request,
+                                                   QJsonObject{{QStringLiteral("workspace"),
+                                                                saved.value(QStringLiteral("workspace"))}});
+                                   });
+            return;
+        }
+        if (method == QStringLiteral("workspaces.delete")) {
+            const QString workspace_id = args.value(QStringLiteral("id")).toString();
+            if (workspace_id.isEmpty() || core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("nincs azonosító vagy a mag nem fut"));
+                return;
+            }
+            core_->workspaceDelete(workspace_id,
+                                   [this, request](const QJsonObject& reply, const QString& error) {
+                                       if (!error.isEmpty()) {
+                                           replyToPage(request, {}, error);
+                                           return;
+                                       }
+                                       replyToPage(request, reply);
+                                   });
+            return;
+        }
+        // ---- the portable bundle (ADR-059) -------------------------------------------------------
+        // The path comes from the caller: the page's own button will open a dialog and hand the path here, so the
+        // bridge stays free of native UI (a `QFileDialog` inside a request would block the page's answer).
+        if (method == QStringLiteral("profile.export") ||
+            method == QStringLiteral("profile.import")) {
+            const QString path = args.value(QStringLiteral("path")).toString();
+            if (path.isEmpty() || core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("nincs útvonal vagy a mag nem fut"));
+                return;
+            }
+            const auto handler = [this, request](const QJsonObject& reply, const QString& error) {
+                if (!error.isEmpty()) {
+                    replyToPage(request, {}, error);
+                    return;
+                }
+                replyToPage(request, reply);
+            };
+            if (method == QStringLiteral("profile.export")) {
+                core_->profileExport(path, handler);
+            } else {
+                core_->profileImport(path, handler);
+            }
+            return;
+        }
+        // ---- the database (ADR-064) --------------------------------------------------------------
+        if (method == QStringLiteral("db.status")) {
+            if (core_ == nullptr || !core_->isRunning()) {
+                replyToPage(request, {}, QStringLiteral("a mag nem fut"));
+                return;
+            }
+            const bool sync = args.value(QStringLiteral("sync")).toBool(false);
+            core_->dbStatus(sync, [this, request](const QJsonObject& reply, const QString& error) {
+                if (!error.isEmpty()) {
+                    replyToPage(request, {}, error);
+                    return;
+                }
+                replyToPage(request, reply);
             });
             return;
         }
@@ -764,8 +1260,46 @@ void MainWindow::pushCardsToGrid(qint64 surface) {
             setStatus(QStringLiteral("kártyalista a magtól: %1 kártya").arg(count));
         });
     });
-}
+        // The container table travels with the cards, not on the page's own request: the bridge script is installed
+        // on load *end*, which can be after the page's deferred script runs, and a table that arrives too late
+        // left the legend drawing the fallback (measured: the page showed four containers while the core had
+        // five). A push has no such race (ADR-052).
+        core_->containersList([this, surface](const QJsonObject& table_reply, const QString& table_error) {
+            if (!table_error.isEmpty()) {
+                setStatus(QStringLiteral("a konténer-tábla nem érkezett meg: %1").arg(table_error));
+                return;
+            }
+            QJsonObject table_payload;
+            table_payload.insert(QStringLiteral("containers"),
+                                 table_reply.value(QStringLiteral("containers")));
+            const QJsonDocument table_document(table_payload);
+            const QString table_script =
+                QStringLiteral("window.antikoltAcceptContainers(JSON.parse(\"%1\"))")
+                    .arg(asJavaScriptStringLiteral(
+                        QString::fromUtf8(table_document.toJson(QJsonDocument::Compact))));
+            engine_->evaluate(surface, table_script, [](const QJsonObject&, const QString&) {});
+        });
+        // The workspace table travels the same way, and for the same reason (ADR-056): the tabs are the core's, and
+        // a push has no race with the page's own script.
+        core_->workspacesList([this, surface](const QJsonObject& spaces_reply,
+                                              const QString& spaces_error) {
+            if (!spaces_error.isEmpty()) {
+                setStatus(
+                    QStringLiteral("a munkaterület-tábla nem érkezett meg: %1").arg(spaces_error));
+                return;
+            }
+            QJsonObject spaces_payload;
+            spaces_payload.insert(QStringLiteral("workspaces"),
+                                  spaces_reply.value(QStringLiteral("workspaces")));
+            const QJsonDocument spaces_document(spaces_payload);
+            const QString spaces_script =
+                QStringLiteral("window.antikoltAcceptWorkspaces(JSON.parse(\"%1\"))")
+                    .arg(asJavaScriptStringLiteral(
+                        QString::fromUtf8(spaces_document.toJson(QJsonDocument::Compact))));
+            engine_->evaluate(surface, spaces_script, [](const QJsonObject&, const QString&) {});
+        });
 
+}
 void MainWindow::loadHome() {
     rememberScroll([this] {
     if (!engine_->isRunning()) {
@@ -786,7 +1320,37 @@ void MainWindow::freezeCard() {
         setStatus(QStringLiteral("nincs mit fagyasztani"));
         return;
     }
+    // Freezing leaves the grid behind too, so a worker has no business running through it.
+    if (worker_state_ != antikolt::PreviewWorker::Idle) {
+        abortPreviewWorker(QStringLiteral("a kártya lemezre megy"));
+    }
     const qint64 surface = card_->surface();
+    // Before the surface goes away: the page's own text, so a search can find a word from the article and not
+    // only from the title (ADR-049). Capped here *and* in the store, because a page must not be able to grow the
+    // card list. A card with no id yet (the grid) has nothing to attach it to.
+    if (core_ != nullptr && core_->isRunning() && !current_card_id_.isEmpty()) {
+        engine_->evaluate(
+            surface,
+            QStringLiteral("(function(){var t=(document.body&&document.body.innerText)||'';"
+                           "return t.replace(/\\s+/g,' ').trim().slice(0,8000);})()"),
+            [this](const QJsonObject& reply, const QString& error) {
+                if (!error.isEmpty() || current_card_id_.isEmpty()) {
+                    return;
+                }
+                const QString text = reply.value(QStringLiteral("value")).toString();
+                if (text.isEmpty()) {
+                    return;
+                }
+                core_->cardPageText(
+                    current_card_id_, text,
+                    [](const QJsonObject&, const QString& failure) {
+                        if (!failure.isEmpty()) {
+                            qWarning("[shell] oldalszöveg mentése nem sikerült: %s",
+                                     qPrintable(failure));
+                        }
+                    });
+            });
+    }
     engine_->snapshot(surface, [this, surface](const QJsonObject& result, const QString& error) {
         if (!error.isEmpty()) {
             return_to_grid_ = false;
@@ -915,6 +1479,54 @@ void MainWindow::setPageMedia(const QString& media) {
         setStatus(error.isEmpty() ? QStringLiteral("oldal-téma: %1").arg(media)
                                   : QStringLiteral("oldal-téma hiba: %1").arg(error));
     });
+}
+
+QStringList MainWindow::pageDarkModes() {
+    // Order is the menu's order and the test's order: the darkest first, because that is what most people mean by
+    // "dark pages"; the softer ones follow for long reading.
+    return {QStringLiteral("off"), QStringLiteral("invert"), QStringLiteral("dim"),
+            QStringLiteral("warm")};
+}
+
+QToolButton* MainWindow::themeButton(const QString& theme) const {
+    return theme_buttons_.value(theme, nullptr);
+}
+
+void MainWindow::setPageDarkMode(const QString& mode) {
+    if (!pageDarkModes().contains(mode)) {
+        return;
+    }
+    page_dark_mode_ = mode;
+    // Remembered across runs: a user who asked for dark pages should not have to ask again at every launch.
+    // The old boolean key is migrated once, so a profile from the previous build keeps its choice.
+    QSettings settings;
+    settings.setValue(QStringLiteral("ui/page_dark_mode"), page_dark_mode_);
+    settings.remove(QStringLiteral("ui/forced_dark"));
+    if (page_dark_button_ != nullptr) {
+        // The button's face and tooltip are the state: the mode is visible without opening the menu.
+        page_dark_button_->setIcon(PageDarkIcon(page_dark_mode_));
+        page_dark_button_->setToolTip(
+            QStringLiteral("Oldalak sötétítése: %1\nA weboldal saját sötét témája nélkül is sötét lesz.")
+                .arg(pageDarkModeLabel(page_dark_mode_)));
+        if (page_dark_button_->menu() != nullptr) {
+            for (QAction* action : page_dark_button_->menu()->actions()) {
+                action->setChecked(action->objectName() ==
+                                   QStringLiteral("pageDarkMode_") + page_dark_mode_);
+            }
+        }
+    }
+    if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0) {
+        setStatus(QStringLiteral("sötét oldalak: %1 (nincs élő felület)")
+                      .arg(pageDarkModeLabel(page_dark_mode_)));
+        return;
+    }
+    engine_->setPageDarkMode(surface_, page_dark_mode_,
+                             [this](const QJsonObject&, const QString& error) {
+                                 setStatus(error.isEmpty()
+                                               ? QStringLiteral("sötét oldalak: %1").arg(
+                                                     pageDarkModeLabel(page_dark_mode_))
+                                               : QStringLiteral("sötét oldalak hiba: %1").arg(error));
+                             });
 }
 
 QString MainWindow::scrollBookPath() const {
@@ -1048,6 +1660,238 @@ void MainWindow::producePreview(qint64 surface) {
                 });
         };
         capture_to(capture_to, 1);
+    });
+}
+
+bool MainWindow::previewWorkerAutoEnabled() {
+    return !qEnvironmentVariableIsSet("ANTIKOLT_NO_PREVIEW_WORKER");
+}
+
+bool MainWindow::gridIsShowing() const {
+    // The id is tracked, not guessed: `surface_` is whatever is attached, and the grid is the surface the
+    // window is *calling* home. A card that is being opened has already cleared both.
+    return card_ != nullptr && card_->hasSurface() && surface_ != 0 && surface_ == home_surface_;
+}
+
+bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url) {
+    if (engine_ == nullptr || !engine_->isRunning() || engine_profile_.isEmpty()) {
+        return false;
+    }
+    const QString budget = engine_profile_ + QStringLiteral("/previews/budget.json");
+    const QString today = QDate::currentDate().toString(Qt::ISODate);
+    // The four conditions are previews.h's, not this function's: the window must not be able to forget
+    // one of them (ADR-041, point 1).
+    const bool budget_ok = antikolt::previewBudgetAllows(budget, today, kPreviewDailyMax);
+    const bool has_candidate =
+        !cardId.isEmpty() && !url.isEmpty() && previews_made_ < kPreviewCap;
+    if (!antikolt::previewWorkerCanStart(worker_state_, !gridIsShowing(), budget_ok, has_candidate)) {
+        return false;
+    }
+
+    worker_state_ = antikolt::PreviewWorker::Loading;
+    worker_card_id_ = cardId;
+    worker_page_url_ = url;
+    worker_preview_name_ = cardId + QStringLiteral(".png");
+    worker_surface_ = 0;
+    worker_deadline_->start(workerDeadlineMs());
+    qInfo("[shell] preview worker: %s", qUtf8Printable(cardId));
+
+    // Its own partition (`persist:preview`), so a preview never touches a card's cookies, and hidden, so a
+    // window never appears over the grid while the user is reading it (ADR-041, point 2).
+    engine_->createSurface(
+        QStringLiteral("persist:preview"), kWorkerViewportWidth, kWorkerViewportHeight, 100, 0,
+        [this](const QJsonObject& reply, const QString& error) {
+            if (!error.isEmpty()) {
+                finishPreviewWorker(
+                    false, QStringLiteral("a munkás felülete nem jött létre: %1").arg(error));
+                return;
+            }
+            const qint64 created =
+                static_cast<qint64>(reply.value(QStringLiteral("surface")).toDouble());
+            if (created <= 0) {
+                finishPreviewWorker(false, QStringLiteral("a motor nem adott felület-azonosítót"));
+                return;
+            }
+            // Remembered before the state test: a job that was abandoned while the engine was creating the
+            // surface still has to have that surface destroyed, and the self test proves it was.
+            worker_last_surface_ = created;
+            if (worker_state_ == antikolt::PreviewWorker::Idle) {
+                // The job was abandoned while the engine was creating the surface (the user opened a card):
+                // the fresh surface belongs to nobody, so it is destroyed here instead of leaking.
+                engine_->destroySurface(created, nullptr);
+                return;
+            }
+            worker_surface_ = created;
+            engine_->navigate(created, worker_page_url_,
+                              [this](const QJsonObject&, const QString& navigate_error) {
+                                  if (navigate_error.isEmpty()) {
+                                      return;
+                                  }
+                                  if (worker_state_ == antikolt::PreviewWorker::Loading) {
+                                      finishPreviewWorker(
+                                          false, QStringLiteral("navigáció: %1").arg(navigate_error));
+                                  }
+                              });
+        },
+        /*hidden=*/true);
+    return true;
+}
+
+void MainWindow::onPreviewWorkerLoaded() {
+    if (worker_state_ != antikolt::PreviewWorker::Loading) {
+        return;  // a second load event is not a second job
+    }
+    worker_state_ = antikolt::PreviewWorker::Capturing;
+    qInfo("[shell] preview worker: %s betöltve, felvétel", qUtf8Printable(worker_card_id_));
+    engine_->capture(
+        worker_surface_, QStringLiteral("png"), 80,
+        [this](const QJsonObject& shot, const QString& error) {
+            // A job that ended while the capture was in flight (deadline, or the user opened a card) must
+            // not write a record afterwards: the state is the single source of truth.
+            if (worker_state_ != antikolt::PreviewWorker::Capturing) {
+                return;
+            }
+            const QString written = shot.value(QStringLiteral("path")).toString();
+            if (!error.isEmpty() || written.isEmpty()) {
+                finishPreviewWorker(false,
+                                    QStringLiteral("felvétel: %1")
+                                        .arg(error.isEmpty() ? QStringLiteral("nincs fájl")
+                                                             : error));
+                return;
+            }
+            const QString target =
+                engine_profile_ + QStringLiteral("/previews/") + worker_preview_name_;
+            // `capture` writes into `screenshots/`; the preview belongs under the name the card carries, in
+            // the directory the engine's `antikolt://blob/` handler serves (ADR-035).
+            QFile::remove(target);
+            if (!QFile::copy(written, target)) {
+                finishPreviewWorker(false, QStringLiteral("a fájl nem került a profilba"));
+                return;
+            }
+            qInfo("[shell] preview worker: kép a profilban (%s)", qUtf8Printable(worker_preview_name_));
+            // Counted only once a picture exists: a budget spent on a failure would be a lie.
+            const QString budget = engine_profile_ + QStringLiteral("/previews/budget.json");
+            antikolt::previewConsumeBudget(budget, QDate::currentDate().toString(Qt::ISODate));
+            if (core_ == nullptr || !core_->isRunning()) {
+                finishPreviewWorker(true, QString());  // the file is a preview, the record can catch up
+                return;
+            }
+            // The record learns the name; the grid shows the picture the next time it loads, because the
+            // push carries the record and the engine serves the file (ADR-035).
+            const QString card_id = worker_card_id_;
+            core_->cardsList([this, card_id](const QJsonObject& listed, const QString& list_error) {
+                if (worker_state_ != antikolt::PreviewWorker::Capturing) {
+                    return;
+                }
+                if (!list_error.isEmpty()) {
+                    finishPreviewWorker(false, QStringLiteral("a kártyalista nem jött meg: %1").arg(list_error));
+                    return;
+                }
+                QJsonObject record;
+                for (const QJsonValue& value : listed.value(QStringLiteral("cards")).toArray()) {
+                    const QJsonObject card = value.toObject();
+                    if (card.value(QStringLiteral("id")).toString() == card_id) {
+                        record = card;
+                        break;
+                    }
+                }
+                if (record.isEmpty()) {
+                    finishPreviewWorker(false, QStringLiteral("nincs ilyen kártya: %1").arg(card_id));
+                    return;
+                }
+                QJsonObject updated = record;
+                updated.insert(QStringLiteral("preview_ref"), worker_preview_name_);
+                core_->cardUpsert(updated, [this](const QJsonObject&, const QString& upsert_error) {
+                    if (worker_state_ != antikolt::PreviewWorker::Capturing) {
+                        return;
+                    }
+                    if (!upsert_error.isEmpty()) {
+                        finishPreviewWorker(
+                            false, QStringLiteral("a rekord nem mentődött: %1").arg(upsert_error));
+                        return;
+                    }
+                    ++previews_made_;
+                    setStatus(QStringLiteral("háttér-előnézet kész: %1").arg(worker_preview_name_));
+                    finishPreviewWorker(true, QString());
+                });
+            });
+        });
+}
+
+void MainWindow::finishPreviewWorker(bool produced, const QString& reason) {
+    if (worker_state_ == antikolt::PreviewWorker::Idle) {
+        return;
+    }
+    const QString card_id = worker_card_id_;
+    const qint64 surface = worker_surface_;
+    // Idle first: every late reply (capture, record, load) is recognised as belonging to a dead job.
+    worker_state_ = antikolt::PreviewWorker::Idle;
+    worker_surface_ = 0;
+    worker_card_id_.clear();
+    worker_page_url_.clear();
+    worker_preview_name_.clear();
+    if (worker_deadline_ != nullptr) {
+        worker_deadline_->stop();
+    }
+    if (surface > 0 && engine_ != nullptr && engine_->isRunning()) {
+        engine_->destroySurface(surface, nullptr);
+    }
+    if (!produced) {
+        qInfo("[shell] preview worker: leállítva (%s)", qUtf8Printable(reason));
+        if (!reason.isEmpty()) {
+            setStatus(QStringLiteral("háttér-előnézet kimaradt: %1").arg(reason));
+        }
+    }
+    emit previewWorkerFinished(card_id, produced);
+}
+
+void MainWindow::abortPreviewWorker(const QString& reason) {
+    if (worker_state_ == antikolt::PreviewWorker::Idle) {
+        return;
+    }
+    // The rule is previews.h's: a worker that is running yields to a live card, always.
+    if (!antikolt::previewWorkerMustAbort(worker_state_, /*has_live_card=*/true)) {
+        return;
+    }
+    finishPreviewWorker(false, reason);
+}
+
+void MainWindow::schedulePreviewWork() {
+    if (!previewWorkerAutoEnabled() || worker_state_ != antikolt::PreviewWorker::Idle) {
+        return;
+    }
+    if (!gridIsShowing() || engine_ == nullptr || !engine_->isRunning() || core_ == nullptr ||
+        !core_->isRunning() || engine_profile_.isEmpty() || previews_made_ >= kPreviewCap) {
+        return;
+    }
+    const QString budget = engine_profile_ + QStringLiteral("/previews/budget.json");
+    if (!antikolt::previewBudgetAllows(budget, QDate::currentDate().toString(Qt::ISODate),
+                                       kPreviewDailyMax)) {
+        return;
+    }
+    core_->cardsList([this](const QJsonObject& listed, const QString& error) {
+        if (!error.isEmpty() || !gridIsShowing() ||
+            worker_state_ != antikolt::PreviewWorker::Idle) {
+            return;  // the world moved on while the core answered
+        }
+        const QJsonArray cards = listed.value(QStringLiteral("cards")).toArray();
+        // Which card is worth a picture is `previews.h`'s decision: missing first, then stale, fresh never,
+        // and a page that cannot be photographed is not a candidate at all.
+        const QString next = antikolt::nextPreviewCard(
+            cards, engine_profile_ + QStringLiteral("/previews"),
+            QDateTime::currentMSecsSinceEpoch(), kPreviewMaxAgeMs);
+        if (next.isEmpty()) {
+            return;
+        }
+        QString url;
+        for (const QJsonValue& value : cards) {
+            const QJsonObject card = value.toObject();
+            if (card.value(QStringLiteral("id")).toString() == next) {
+                url = card.value(QStringLiteral("url")).toString();
+                break;
+            }
+        }
+        startPreviewWorker(next, url);
     });
 }
 
@@ -1210,7 +2054,12 @@ void MainWindow::cleanupSessions() {
                 return;
             }
             const QJsonArray rows = due.value(QStringLiteral("due")).toArray();
-            int immediate = 0;
+            int queued = 0;
+            /// The live origin's plan, held back until the page says whether it is playing: wiping the storage of
+            /// the card on screen mid-playback cuts the sound (docs/HU/02 §4.2 — a playing card keeps its session).
+            QString live_origin;
+            PendingWipe live_pending;
+            QStringList live_storages;
             for (const QJsonValue& value : rows) {
                 const QJsonObject entry = value.toObject();
                 const QJsonObject session = entry.value(QStringLiteral("session")).toObject();
@@ -1230,38 +2079,69 @@ void MainWindow::cleanupSessions() {
                 }
                 const PendingWipe pending{session.value(QStringLiteral("container_id")).toString(),
                                           storages};
-                if (!live_origin_.isEmpty() && live_origin_ == origin && surface_ != 0) {
-                    // The origin is on screen: wipe it now, on the surface it owns.
-                    engine_->clearOriginData(
-                        surface_, origin, storages,
-                        [this, origin, container = pending.container](const QJsonObject&,
-                                                                     const QString& failure) {
-                            if (!failure.isEmpty()) {
-                                setStatus(QStringLiteral("takarítás hiba (%1): %2")
-                                              .arg(origin, failure));
-                                return;
-                            }
-                            core_->sessionClose(container, origin,
-                                                [this](const QJsonObject&, const QString&) {
-                                                    refreshSessions();
-                                                });
-                        });
-                    ++immediate;
+                if (!live_origin_.isEmpty() && live_origin_ == origin && surface_ != 0 &&
+                    live_origin.isEmpty()) {
+                    live_origin = origin;
+                    live_pending = pending;
+                    live_storages = storages;
                 } else {
                     wipe_on_open_.insert(origin, pending);
+                    ++queued;
                 }
             }
-            setStatus(QStringLiteral("takarítás: %1 azonnal, %2 a kártya következő megnyitásakor")
-                          .arg(immediate)
-                          .arg(wipe_on_open_.size()));
-            if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
-                refreshSessions();
+
+            const auto report = [this, queued](int immediate) {
+                setStatus(QStringLiteral("takarítás: %1 azonnal, %2 a kártya következő megnyitásakor")
+                              .arg(immediate)
+                              .arg(queued));
+                if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
+                    refreshSessions();
+                }
+            };
+
+            if (live_origin.isEmpty()) {
+                report(0);
+                return;
             }
+
+            // The live origin: ask the page first. A card that plays sound or video keeps its session — this was
+            // the last place that ignored it, so housekeeping could silence a video in the foreground.
+            engine_->evaluate(
+                surface_, LiveMediaPlayingScript(),
+                [this, live_origin, live_pending, live_storages, report](const QJsonObject& reply,
+                                                                        const QString& mediaError) {
+                    const bool playing = mediaError.isEmpty() &&
+                                         reply.value(QStringLiteral("value")).toString() ==
+                                             QStringLiteral("playing");
+                    if (playing) {
+                        setStatus(QStringLiteral(
+                            "takarítás: a kártya médiát játszik — az élő munkamenet megmarad"));
+                        if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
+                            refreshSessions();
+                        }
+                        return;
+                    }
+                    engine_->clearOriginData(
+                        surface_, live_origin, live_storages,
+                        [this, live_origin, container = live_pending.container, report](
+                            const QJsonObject&, const QString& failure) {
+                            if (!failure.isEmpty()) {
+                                setStatus(QStringLiteral("takarítás hiba (%1): %2")
+                                              .arg(live_origin, failure));
+                                return;
+                            }
+                            core_->sessionClose(container, live_origin,
+                                                [this, report](const QJsonObject&, const QString&) {
+                                                    report(1);
+                                                });
+                        });
+                });
         });
 }
 
 
-void MainWindow::buildToolBar() {    auto* toolbar = addToolBar(QStringLiteral("Fő"));
+void MainWindow::buildToolBar() {
+    auto* toolbar = addToolBar(QStringLiteral("Fő"));
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
 
@@ -1291,20 +2171,70 @@ void MainWindow::buildToolBar() {    auto* toolbar = addToolBar(QStringLiteral("
     zoomIn->setObjectName(QStringLiteral("zoomInAction"));
     connect(zoomIn, &QAction::triggered, this, [this] { setZoomPercent(zoom_percent_ + 25); });
 
+    // Dark pages (ADR-044/ADR-045): the site theme query only *tells* a page what the system prefers, so a page
+    // without a dark theme of its own stays white. This is the user's switch for that case — with the modes the
+    // user asked for (near-black, soft grey, warm grey), off by default, remembered, re-applied on every load.
+    // Icon + menu + tooltip: the button's face is the mode in force, the words live in the tooltip.
+    page_dark_button_ = new QToolButton(this);
+    page_dark_button_->setObjectName(QStringLiteral("pageDarkButton"));
+    page_dark_button_->setPopupMode(QToolButton::InstantPopup);
+    page_dark_button_->setAutoRaise(true);
+    page_dark_button_->setCursor(Qt::PointingHandCursor);
+    page_dark_button_->setMenu(new QMenu(page_dark_button_));
+    for (const QString& mode : pageDarkModes()) {
+        auto* action = page_dark_button_->menu()->addAction(pageDarkModeLabel(mode));
+        action->setObjectName(QStringLiteral("pageDarkMode_") + mode);
+        action->setCheckable(true);
+        action->setChecked(mode == page_dark_mode_);
+        action->setIcon(PageDarkIcon(mode));
+        connect(action, &QAction::triggered, this, [this, mode] { setPageDarkMode(mode); });
+    }
+    page_dark_button_->setIcon(PageDarkIcon(page_dark_mode_));
+    page_dark_button_->setToolTip(
+        QStringLiteral("Oldalak sötétítése: %1\nA weboldal saját sötét témája nélkül is sötét lesz.")
+            .arg(pageDarkModeLabel(page_dark_mode_)));
+    page_dark_button_->setAccessibleName(QStringLiteral("Oldalak sötétítése"));
+    toolbar->addWidget(page_dark_button_);
+
     auto* spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     toolbar->addWidget(spacer);
 
-    // Theme switching is part of the identity (light / grey / dark), not a settings-page afterthought.
-    auto* themeGroup = new QActionGroup(this);
-    themeGroup->setExclusive(true);
+    // Theme switching is part of the identity (light / grey / dark), not a settings-page afterthought — and it
+    // is *icons* with tooltips (docs/HU/08-DIZAJN.md §6): four words next to each other were the widest thing on
+    // the toolbar for the least information. The action's text stays for screen readers and tooltips.
+    auto* themeGroup = new QWidget(this);
+    auto* themeLayout = new QHBoxLayout(themeGroup);
+    themeLayout->setContentsMargins(0, 0, 0, 0);
+    themeLayout->setSpacing(2);
+    auto* themeActions = new QActionGroup(this);
+    themeActions->setExclusive(true);
     for (const QString& name : themeNames()) {
-        auto* action = toolbar->addAction(name);
+        auto* button = new QToolButton(themeGroup);
+        button->setObjectName(QStringLiteral("themeButton_") + name);
+        button->setAutoRaise(true);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setCheckable(true);
+        button->setChecked(name == currentTheme_);
+        button->setIcon(ThemeIcon(paletteFor(name)));
+        button->setIconSize(QSize(20, 20));
+        button->setToolTip(QStringLiteral("%1 (%2)").arg(themeLabel(name), name));
+        button->setAccessibleName(themeLabel(name));
+        theme_buttons_.insert(name, button);
+        themeLayout->addWidget(button);
+
+        // One action per theme, so the group stays exclusive without a second source of truth.
+        auto* action = new QAction(themeLabel(name), button);
         action->setCheckable(true);
-        action->setChecked(name == QStringLiteral("grey"));
-        themeGroup->addAction(action);
+        action->setChecked(name == currentTheme_);
+        themeActions->addAction(action);
+        connect(button, &QToolButton::clicked, this, [this, name, action] {
+            action->setChecked(true);
+            applyTheme(name);
+        });
         connect(action, &QAction::triggered, this, [this, name] { applyTheme(name); });
     }
+    toolbar->addWidget(themeGroup);
 }
 
 void MainWindow::buildCardArea() {

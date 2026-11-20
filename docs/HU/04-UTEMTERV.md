@@ -4,6 +4,11 @@
 > dogfoodol. Ez a ciklus gyorsítja az írást, de **nem** a validálást: minden fázis végén mérés, teszt és
 > a gazda jóváhagyása dönt. Az időbecslések ezért ciklusokban értendők, ±40% bizonytalansággal.
 
+
+> **Jelölők állapota (2026-11-19):** a pipák a kódhoz és a tesztekhez igazodnak, nem a szándékhoz. Egy tétel
+> akkor pipa, ha van rá **futtatható bizonyíték** (a nevezett önteszt), és a részleges tételeknél a nyitott rész
+> ott van a sorban. A teljes, mindig friss kép a `19-FOLYTATAS.md` §12; ez a fájl a mérföldkövek terve.
+
 ## Fázisok
 
 | Fázis | Tartalom | Ciklus | Kimenet |
@@ -49,23 +54,25 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 - [ ] Döntés: megyünk tovább / módosítunk.
 
 ### M1 — „A kártya él" (F1 vége)
-- [ ] Kártya megnyitása, görgetés, fagyasztás, visszaállítás (R0→R1→R2).
-- [ ] MHTML + meta + előnézet atomikusan a lemezen.
-- [ ] 10 perces szabály (hang/videó/kitűzés kivétellel).
+- [x] Kártya megnyitása, görgetés, fagyasztás, visszaállítás (R0→R1→R2). — `--opentest`, `--scrollzoomtest`, `--lifecycletest` (2026-11-19)
+- [x] MHTML + meta + előnézet atomikusan a lemezen. — `--lifecycletest`, `--capturetest`, `--previewtest`
+- [x] 10 perces szabály (hang/videó/kitűzés kivétellel). — `--lifecycletest`; a média-kivétel a takarításban is: `--mediacleantest` (ADR-048)
 - [ ] Mérőpad: S3 és S6 zöld.
 
 ### M2 — „Használom" (F2 vége)
-- [ ] Virtualizált rács 500 kártyával.
-- [ ] Szerkeszthető kezdőlap + `<antikolt-card>`.
-- [ ] Keresés (cím, URL, jegyzet, oldalszöveg; magyar ékezetek).
-- [ ] Munkaterületek, címkék, jegyzet, kitűzés; előnézet-ütemező.
+- [x] Virtualizált rács 500 kártyával. — `--gridscaletest`: 503 kártya, **13** renderelt DOM-elem, 20 ms az első renderig (2026-11-19)
+- [x] Szerkeszthető kezdőlap: kártya hozzáadása (`＋` + soros űrlap) és törlése. — `--addcardtest` (ADR-061); nyitott: a cím/webcím átírása a felületen, és a törlés megerősítése
+- [ ] `<antikolt-card>` külön csomagként (a mai kártya a lap saját komponense).
+- [x] Keresés (cím, URL, jegyzet, címke, oldalszöveg; magyar ékezetek). — `--searchtest` + `--tagtest`: ékezet-független cím/webcím/jegyzet/címke, és az oldalszöveg is kereshető (`search_page_text=ok`, ADR-049/055)
+- [x] Munkaterületek, címkék, jegyzet, kitűzés; előnézet-ütemező. — `--workspacetest` + `--tagtest` + `--notetest` + `--pintest`: a fül-sor a mag `workspaces.json`-jából jön, a kártya `workspace` mezője tárolt adat (a régi `index > 12` kitalálás helyett, ADR-056), a fül-soron van életciklus (`＋`/dupla kattintás/`×`, ADR-057), és a kártya munkaterülete a saját választójával váltható (ADR-058); nyitott: fogd-és-vidd a `<select>` mellett
 
 ### M3 — „Minden fiókom egyszerre" (F3 vége) → **a valódi termék**
-- [ ] Konténerek színkóddal, kártya-konténer kötés, konténer-váltás.
+- [x] Konténerek színkóddal, kártya-konténer kötés, konténer-váltás. — `--containertest` (ADR-050…054): színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, és használt konténer törlése áthelyezéssel (mind mérve); nyitott: konténerenkénti engedély/proxy
 - [ ] OAuth-popup a helyes partícióban (max. 60 s, dokumentált I1-kivétel).
-- [ ] **Munkamenetek panel + ledger**: látszik, mi van életben, mennyi RAM/lemez, mit veszítenénk.
-- [ ] `keep`/`sweep`/`wipe` politika + origin-szintű végrehajtás.
+- [x] **Munkamenetek panel + ledger**: látszik, mi van életben, mennyi RAM/lemez, mit veszítenénk. — `--sessionpanel`, `--scrollbook`
+- [x] `keep`/`sweep`/`wipe` politika + origin-szintű végrehajtás. — `--wipetest`, `--cleanuptest`, `--mediacleantest`
 - [ ] Engedélykezelés és proxy konténerenként.
+- [x] Profil-költöztetés: egy fájl, verziózott köteg. — `--profiletest` (ADR-059): `profile_export`/`profile_import`; nyitott: felületi gomb és a köteg titkosítása
 
 ### M4 — „Nem kell jelszót gépelnem" (F4 vége)
 - [ ] Széf (DEK/KEK, opcionális mesterjelszó), auto-zárolás, KDBX export.
@@ -78,7 +85,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 - [ ] Őszinte tájékoztatás: nincs hardveres védelem; a széf zárolása a jelenlét-ellenőrzés.
 
 ### M5 — „Nem vakít el este" (F5 vége)
-- [ ] Négy felületi téma (világos/szürke/sötét/AMOLED), kontraszt-teszt CI-ban.
+- [x] Négy felületi téma (világos/szürke/sötét/AMOLED), kontraszt-teszt CI-ban. — `--themetest`: pixelmérés + WCAG AA minden témára (a legkisebb 5.6:1)
 - [ ] Technika-létra + luminancia-ellenőrzés + oldalankénti tanulás.
 - [ ] Szürke mód és olvasómód.
 
@@ -89,7 +96,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 - [ ] Hangolási riport (mely kapcsolók segítettek, mérve).
 
 ### M7 — „Béta" (F7 vége)
-- [ ] Letöltéskezelő, Ctrl+F, zoom, PDF, PiP, nyomtatás.
+- [ ] Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás. — a **zoom** kész (`--scrollzoomtest`), a többi nyitott
 - [ ] Összeomlás utáni helyreállítás.
 - [ ] Billentyűzetes navigáció, képernyőolvasó-támogatás.
 - [ ] HU/EN felület; jelszó- és könyvjelző-import.

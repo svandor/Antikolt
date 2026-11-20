@@ -102,8 +102,18 @@ $engineChecks = @(
     @{ Name = 'timeouttest'; Args = @('--timeouttest') },
     @{ Name = 'previewtest'; Args = @('--previewtest') },
     @{ Name = 'previewgentest'; Args = @('--previewgentest') },
+    @{ Name = 'previewworkertest'; Args = @('--previewworkertest') },
     @{ Name = 'metricstest'; Args = @('--metricstest') },
     @{ Name = 'mediatest'; Args = @('--mediatest') },
+    @{ Name = 'themetest'; Args = @('--themetest') },
+    @{ Name = 'searchtest'; Args = @('--searchtest') },
+    @{ Name = 'mediacleantest'; Args = @('--mediacleantest') },
+    @{ Name = 'gridscaletest'; Args = @('--gridscaletest') },
+    @{ Name = 'containertest'; Args = @('--containertest') },
+    @{ Name = 'workspacetest'; Args = @('--workspacetest') },
+    @{ Name = 'profiletest'; Args = @('--profiletest') },
+    @{ Name = 'addcardtest'; Args = @('--addcardtest') },
+    @{ Name = 'tagtest'; Args = @('--tagtest') },
     @{ Name = 'scrollzoomtest'; Args = @('--scrollzoomtest') }
     @{ Name = 'scrollrestore'; Args = @('--scrollrestore') }
 )
@@ -140,6 +150,20 @@ if (-not $shell) {
 } else {
     & $shell --scrollbook
     Add-Result 'scrollbook' ($LASTEXITCODE -eq 0)
+}
+Write-Host '=== traytest ===' -ForegroundColor Cyan
+if (-not $shell) {
+    Add-Result 'traytest' $false 'missing antikolt-shell.exe'
+} else {
+    & $shell --traytest
+    Add-Result 'traytest' ($LASTEXITCODE -eq 0)
+}
+Write-Host '=== logtest ===' -ForegroundColor Cyan
+if (-not $shell) {
+    Add-Result 'logtest' $false 'missing antikolt-shell.exe'
+} else {
+    & $shell --logtest
+    Add-Result 'logtest' ($LASTEXITCODE -eq 0)
 }
 Write-Host '=== previewbudget ===' -ForegroundColor Cyan
 if (-not $shell) {

@@ -13,6 +13,15 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// How much of a page's text one card may keep (`card_page_text`, ADR-049). The card list is a single JSON
+/// document, so this is a promise about the file's size, not about the page's length.
+pub const MAX_PAGE_TEXT: usize = 16_000;
+
+/// How many tags one card may carry, and how long one tag may be (`card_upsert`, ADR-055). A tag is a word or a
+/// short phrase the user typed; the limits are what keeps a pasted paragraph from becoming a "tag".
+pub const MAX_TAGS: usize = 12;
+pub const MAX_TAG_LEN: usize = 32;
+
 /// One bookmark card, as the grid shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
@@ -40,6 +49,21 @@ pub struct Card {
     /// Epoch milliseconds of the last time the user opened this card; `0` means never.
     #[serde(default)]
     pub last_opened_at_ms: u64,
+    /// The page's own text, captured when the card was frozen (`card_page_text`, ADR-049), so a search can find
+    /// a word that appears only in the article and not in its title or note. Capped by the store (see
+    /// `MAX_PAGE_TEXT`): the card list is one JSON document, and a searchable index is not worth a 200 MB file.
+    #[serde(default)]
+    pub page_text: String,
+    /// The workspace (top-level tab) this card lives under (ADR-056). Empty means "the first workspace", which is
+    /// what every card written before the workspaces were real means: a missing field must not move a card to a
+    /// tab the user never chose.
+    #[serde(default)]
+    pub workspace: String,
+    /// Free-form tags, written by the user on the card (ADR-055). The search has always promised "címke", and a
+    /// card model without a tag field made that a promise the product could not keep. Normalised by the store:
+    /// trimmed, de-duplicated case-insensitively, at most [`MAX_TAGS`] of them, each at most [`MAX_TAG_LEN`].
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_status() -> String {
@@ -67,6 +91,7 @@ impl CardStore {
     /// Seeding is deliberate: an empty grid on the very first start looks like a bug, and the user has
     /// nothing to click. The examples are clearly editable data, not hidden state.
     pub fn open(data_dir: &Path) -> Result<Self, StoreError> {
+        fs::create_dir_all(data_dir)?;
         let path = data_dir.join("cards.json");
         if !path.exists() {
             let store = Self {
@@ -104,13 +129,109 @@ impl CardStore {
     }
 
     /// Insert or replace a card by id. The grid's editor will use this.
-    pub fn upsert(&mut self, card: Card) -> Result<Card, StoreError> {
+    pub fn upsert(&mut self, mut card: Card) -> Result<Card, StoreError> {
+        card.page_text = Self::cap_page_text(&card.page_text);
+        card.tags = Self::normalise_tags(&card.tags);
         match self.cards.iter_mut().find(|entry| entry.id == card.id) {
-            Some(existing) => *existing = card.clone(),
+            Some(existing) => {
+                if card.page_text.is_empty() {
+                    card.page_text = existing.page_text.clone();
+                }
+                *existing = card.clone();
+            }
             None => self.cards.push(card.clone()),
         }
         self.save()?;
         Ok(card)
+    }
+
+    /// Store the page's text for one card (`card_page_text`, ADR-049). An unknown id is not an error at the
+    /// store level — the caller decides what a missing card means.
+    pub fn set_page_text(&mut self, card_id: &str, text: &str) -> Result<Option<Card>, StoreError> {
+        let Some(card) = self.cards.iter_mut().find(|entry| entry.id == card_id) else {
+            return Ok(None);
+        };
+        card.page_text = Self::cap_page_text(text);
+        let stored = card.clone();
+        self.save()?;
+        Ok(Some(stored))
+    }
+
+    /// Move every card from one container to another (`container_delete` with `move_to`, ADR-054), in one save.
+    ///
+    /// This is the explicit exit from the "a used container is not deletable" rule: the caller has to say where
+    /// the cards go, so nothing disappears by accident, and the count is returned for the reply.
+    pub fn move_container(&mut self, from: &str, to: &str) -> Result<usize, StoreError> {
+        let mut moved = 0usize;
+        for card in self.cards.iter_mut() {
+            if card.container == from {
+                card.container = to.to_string();
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            self.save()?;
+        }
+        Ok(moved)
+    }
+
+    /// Trim, de-duplicate (case-insensitively, keeping the first spelling) and cap the tags (ADR-055).
+    ///
+    /// The store is where every writer meets: the page, a future importer and a test. A rule that only lives in
+    /// the page is a rule the importer will not follow.
+    pub fn normalise_tags(tags: &[String]) -> Vec<String> {
+        let mut seen: Vec<String> = Vec::new();
+        for tag in tags {
+            let trimmed = tag.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let capped: String = trimmed.chars().take(MAX_TAG_LEN).collect();
+            let key = capped.to_lowercase();
+            if seen.iter().any(|existing| existing.to_lowercase() == key) {
+                continue;
+            }
+            seen.push(capped);
+            if seen.len() >= MAX_TAGS {
+                break;
+            }
+        }
+        seen
+    }
+
+    /// The text a search may see. The cap is a promise about the *file*, not about the page: this is far more
+    /// than any title or note, and even five hundred of them stay small enough to keep the card list a list.
+    fn cap_page_text(text: &str) -> String {
+        let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        collapsed.chars().take(MAX_PAGE_TEXT).collect()
+    }
+
+    /// Remove one card (`card_delete`, ADR-061). An unknown id is `Ok(false)`: the caller decides what a missing
+    /// card means, and a delete that says "gone" twice must not be an error the second time.
+    pub fn remove(&mut self, card_id: &str) -> Result<bool, StoreError> {
+        let before = self.cards.len();
+        self.cards.retain(|card| card.id != card_id);
+        if self.cards.len() == before {
+            return Ok(false);
+        }
+        self.save()?;
+        Ok(true)
+    }
+
+    /// Replace the whole list, for an import (`profile_import`, ADR-059). Every card goes through the same
+    /// normalisation a write does, so an imported profile cannot smuggle in a rule the store would refuse.
+    pub fn replace_all(&mut self, cards: Vec<Card>) -> Result<usize, StoreError> {
+        self.cards = cards
+            .into_iter()
+            .map(|mut card| {
+                card.page_text = Self::cap_page_text(&card.page_text);
+                card.tags = Self::normalise_tags(&card.tags);
+                card
+            })
+            .collect();
+        let count = self.cards.len();
+        self.save()?;
+        Ok(count)
     }
 
     /// Write the whole list out atomically.
@@ -143,6 +264,9 @@ fn seed_cards() -> Vec<Card> {
             notes: "A fejlesztés itt zajlik".to_string(),
             preview_ref: String::new(),
             last_opened_at_ms: 0,
+            page_text: String::new(),
+            tags: Vec::new(),
+            workspace: String::new(),
         },
         Card {
             id: "01SEED000000000000000002".to_string(),
@@ -154,6 +278,9 @@ fn seed_cards() -> Vec<Card> {
             notes: String::new(),
             preview_ref: String::new(),
             last_opened_at_ms: 0,
+            page_text: String::new(),
+            tags: Vec::new(),
+            workspace: String::new(),
         },
         Card {
             id: "01SEED000000000000000003".to_string(),
@@ -165,6 +292,9 @@ fn seed_cards() -> Vec<Card> {
             notes: String::new(),
             preview_ref: String::new(),
             last_opened_at_ms: 0,
+            page_text: String::new(),
+            tags: Vec::new(),
+            workspace: String::new(),
         },
     ]
 }
@@ -227,6 +357,105 @@ mod tests {
         store.upsert(card.clone()).expect("upsert");
         assert_eq!(store.list().len(), 3, "no duplicate was created");
         assert!(store.list().iter().any(|entry| entry.title == "Átnevezve"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cards_can_be_moved_out_of_a_container_in_one_save() {
+        let dir = temp_dir("move-container");
+        let mut store = CardStore::open(&dir).expect("open");
+        let id = store.list()[0].id.clone();
+        let before = store.list()[0].container.clone();
+        assert_eq!(before, "c-dev", "the seed card starts in the dev container");
+
+        // The move is explicit and counted; the record keeps everything else.
+        let moved = store.move_container("c-dev", "c-private").expect("move");
+        assert!(moved >= 1, "at least the seed card moved");
+        let after = store
+            .list()
+            .into_iter()
+            .find(|card| card.id == id)
+            .expect("card");
+        assert_eq!(after.container, "c-private");
+        assert_eq!(after.title, "Antikolt projekt", "nothing else changed");
+
+        // Moving out of a container nobody uses is a no-op, not an error.
+        assert_eq!(
+            store.move_container("c-nincs", "c-private").expect("move"),
+            0
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_text_is_captured_kept_and_capped() {
+        let dir = temp_dir("page-text");
+        let mut store = CardStore::open(&dir).expect("open");
+        let id = store.list()[0].id.clone();
+
+        // A capture stores what the page said, with runs of whitespace collapsed (the search does not care
+        // about line breaks, and the JSON file does).
+        let stored = store
+            .set_page_text(&id, "első   sor\n\nmásodik sor")
+            .expect("set")
+            .expect("the card exists");
+        assert_eq!(stored.page_text, "első sor második sor");
+
+        // A pin or a note arrives from the page, which never carries the text: the capture must survive it.
+        let mut card = stored.clone();
+        card.pinned = true;
+        card.notes = "jegyzet".to_string();
+        card.page_text = String::new();
+        let after_pin = store.upsert(card).expect("upsert");
+        assert_eq!(
+            after_pin.page_text, "első sor második sor",
+            "a pin must not delete the capture"
+        );
+
+        // The cap is about the file, not the page.
+        let long = "a".repeat(MAX_PAGE_TEXT + 500);
+        let capped = store.set_page_text(&id, &long).expect("set").expect("card");
+        assert_eq!(capped.page_text.chars().count(), MAX_PAGE_TEXT);
+
+        // An unknown id is answerable without a write.
+        assert!(store
+            .set_page_text("nincs-ilyen", "x")
+            .expect("set")
+            .is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tags_are_trimmed_deduplicated_and_capped() {
+        let dir = temp_dir("tags");
+        let mut store = CardStore::open(&dir).expect("open");
+        let mut card = store.list()[0].clone();
+        card.id = "tag-probe".to_string();
+        card.tags = vec![
+            "  munka ".to_string(),
+            "MUNKA".to_string(),
+            "".to_string(),
+            "a".repeat(MAX_TAG_LEN + 10),
+        ];
+        let saved = store.upsert(card).expect("upsert");
+        assert_eq!(
+            saved.tags.len(),
+            2,
+            "the duplicate and the empty tag are dropped"
+        );
+        assert_eq!(saved.tags[0], "munka", "the first spelling wins, trimmed");
+        assert_eq!(
+            saved.tags[1].chars().count(),
+            MAX_TAG_LEN,
+            "a tag is capped, not refused"
+        );
+
+        // The cap is a count, not an error: the first MAX_TAGS survive.
+        let mut many = saved.clone();
+        many.tags = (0..40).map(|index| format!("tag{index}")).collect();
+        let capped = store.upsert(many).expect("upsert");
+        assert_eq!(capped.tags.len(), MAX_TAGS);
+        assert_eq!(capped.tags[0], "tag0");
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>

@@ -16,12 +16,23 @@
 
       <nav class="workspaces" id="workspaces" role="tablist" aria-label="Munkaterületek"></nav>
 
+      <!-- Adding a card is the home page's own job (ADR-061): a URL, an optional title, Enter. No dialog. -->
+      <button
+        type="button"
+        class="card-add"
+        id="card-add"
+        aria-label="Új kártya"
+        title="Új kártya (Ctrl N)"
+      >
+        ＋
+      </button>
+
       <form class="search-wrap" role="search" onsubmit="return false">
         <input
           id="search"
           class="search"
           type="search"
-          placeholder="Keresés — cím, webcím, jegyzet, oldalszöveg"
+          placeholder="Keresés — cím, webcím, jegyzet, címke, oldalszöveg (ékezet nélkül is)"
           aria-label="Keresés"
           autocomplete="off"
           spellcheck="false"
@@ -50,6 +61,13 @@
           <h2 class="section-title" id="all-heading">Kártyák</h2>
           <span class="count" id="count" aria-live="polite"></span>
         </div>
+
+        <!-- The container legend is also the filter: one chip per container, coloured, with the count the current
+             search shows (ADR-051). -->
+        <div class="container-legend" id="container-legend" role="group" aria-label="Konténerek szűrése"></div>
+
+        <!-- The add-card editor: in the page, not in a dialog (ADR-061). -->
+        <div class="card-add-host" id="card-add-form" hidden></div>
 
         <!-- Virtualised: only the visible rows exist in the DOM (docs/HU/03, rule 1). -->
         <div class="viewport" id="viewport" role="list" aria-label="Kártyák">

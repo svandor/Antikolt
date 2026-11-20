@@ -178,6 +178,65 @@ kbd {
   box-shadow: var(--shadow-1);
 }
 
+/* The workplace lifecycle on the tab row (ADR-057): a tab is a pick button plus a remove `×`, and the add/rename
+   editor is an inline form — the same shape as the container legend, because it is the same gesture. */
+.ws-tab {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.ws-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px 2px 0;
+  cursor: pointer;
+}
+.ws-remove:hover, .ws-remove:focus-visible {
+  color: var(--danger, #c0392b);
+}
+.ws-add {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  padding: 5px 10px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.ws-add:hover, .ws-add:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.ws-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ws-input {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  padding: 4px 10px;
+  min-width: 9em;
+}
+.ws-editor-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.ws-error {
+  font-size: 11px;
+  color: var(--danger, #c0392b);
+  white-space: nowrap;
+}
+
 .search-wrap {
   position: relative;
   flex: 1;
@@ -391,6 +450,69 @@ antikolt-card {
   padding: 0 var(--space-3) var(--space-3);
 }
 
+/* Adding a card (ADR-061): the button sits next to the tabs, the form sits above the grid — no dialog, because a
+   native one would block the page's answer and cannot be measured here. */
+.card-add {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-control);
+  padding: 4px 8px;
+  cursor: pointer;
+  flex: none;
+}
+.card-add:hover, .card-add:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.card-add-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-2);
+}
+.card-add-url, .card-add-title {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 5px 10px;
+}
+.card-add-url {
+  min-width: 16em;
+  border-color: var(--accent);
+}
+.card-add-title {
+  flex: 1;
+  min-width: 10em;
+}
+.card-add-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.card-add-error {
+  font-size: 11px;
+  color: var(--danger, #c0392b);
+}
+
+/* The title's editor (ADR-062): the same box, so the card does not jump while it is being renamed. */
+.card-title-input {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  width: 100%;
+}
+
 .card-title {
   font-size: 13px;
   font-weight: 500;
@@ -417,6 +539,19 @@ antikolt-card {
   white-space: nowrap;
 }
 
+/* The URL's editor (ADR-063): as wide as the domain it replaces, so the meta row does not jump. */
+.card-domain-input {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0 3px;
+  min-width: 8em;
+  flex: 1;
+}
+
 .dot {
   width: 6px;
   height: 6px;
@@ -424,6 +559,193 @@ antikolt-card {
   flex: none;
 }
 
+/* The container is switchable from the card: a compact native select, so it keeps the keyboard, the screen
+   reader and the platform's own menu. It is styled to sit in the meta row, not to look like a form. */
+.container-select {
+  font: inherit;
+  font-size: 11px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 2px;
+  max-width: 7em;
+  flex: none;
+  cursor: pointer;
+}
+
+/* The workspace selector next to the container one (ADR-058): narrower, because it is the rarer change. */
+.workspace-select {
+  font: inherit;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 2px;
+  max-width: 6em;
+  flex: none;
+  cursor: pointer;
+}
+.workspace-select:hover, .workspace-select:focus-visible {
+  color: var(--text);
+  border-color: var(--border);
+}
+.container-select:hover, .container-select:focus-visible {
+  border-color: var(--border);
+  background: var(--surface-raised);
+}
+
+
+/* The container legend (ADR-051): a chip per container, coloured, with the count the current search shows.
+   Clicking a chip filters the grid to that container; clicking it again clears the filter. */
+.container-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-2);
+}
+.legend-chip {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.legend-chip:hover, .legend-chip:focus-within {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+
+/* The legend's own controls (ADR-052): the chips have a pick button and a remove button, and the add/rename
+   editor is an inline form — no dialog, because a JS `prompt` needs a handler the engine host does not install. */
+.legend-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  padding: 2px 4px 2px 10px;
+  cursor: pointer;
+}
+.legend-pick:hover, .legend-pick:focus-visible {
+  color: var(--text);
+}
+.legend-pick[aria-pressed="true"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.legend-remove {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  padding: 2px 8px 2px 4px;
+  cursor: pointer;
+}
+.legend-remove:hover, .legend-remove:focus-visible {
+  color: var(--danger, #c0392b);
+}
+.legend-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend-input {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 2px 10px;
+  min-width: 9em;
+}
+.legend-editor-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.legend-add {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.legend-add:hover, .legend-add:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.legend-error {
+  font-size: 11px;
+  color: var(--danger, #c0392b);
+}
+
+/* Tags (ADR-055): a card's own words. The chips are the reading state; the input is the same line, in place. */
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--space-1);
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 4px 1px 8px;
+}
+.tag-remove {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.tag-remove:hover, .tag-remove:focus-visible {
+  color: var(--danger, #c0392b);
+}
+.tag-add {
+  font: inherit;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.tag-add:hover, .tag-add:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.tag-input {
+  font: inherit;
+  font-size: 10px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 1px 8px;
+  min-width: 6em;
+}
 .badge {
   margin-left: auto;
   font-size: 11px;

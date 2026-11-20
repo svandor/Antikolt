@@ -3,6 +3,1186 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-19 (nyolcvankettedik szelet) — a rács sorrendje a váltás után is ugyanaz
+
+A store-csere csendben megváltoztatta volna a rács sorrendjét: a JSON-store Rustban rendezett, a rendezés nélküli
+SQL `SELECT` viszont **beszúrási** sorrendet ad — tehát egy kártya megnyitása nem rendezte volna újra a rácsot.
+Javítás (ADR-067): `ORDER BY last_opened_at_ms DESC, LOWER(title) ASC`, és egy teszt, amely szándékosan fordított
+beszúrási sorrenddel ír be két kártyát.
+
+### Bizonyíték
+
+```
+cargo test -p antikolt-core-service
+  the_database_returns_the_stores_order_not_the_insertion_order ... ok
+  test result: ok. 21 passed + 2 passed
+clippy -D warnings → tiszta
+antikolt-shell --addcardtest … → add_card=ok, db_status=ok schema=2 cards=11 verified=yes, add_card_check=ok
+verify.ps1 → ALL CHECKS PASSED + ALL SELF TESTS PASSED (a szelet kódján)
+```
+
+### Őszinte megjegyzés — a telepített példány mérése ezúttal nem sikerült
+
+A `dist.ps1 -Release` lefutott (`445.6 MB`, parancsikon), de a **telepített** binárison a `--addcardtest` nem adott
+kimenetet: az engine GPU-folyamata elhalt (`GPU state invalid after WaitForGetOffsetInRange`,
+`GPU process exited unexpectedly: exit_code=-2147483645`), és a shell a 240 s-os várakozásig sem lépett tovább. Ez a
+korábban is dokumentált környezeti hiba (a `build/` binárison ugyanez a kód percekkel korábban zöld volt), de a
+szabály szerint **nem állítom, hogy a telepített példány ellenőrizve van**: ez a szelet ott `not-measurable`, a
+környezet GPU-állapota miatt. Újraindított gép / tiszta GPU-állapot mellett újra kell futtatni.
+
+## 2026-11-19 (nyolcvanegyedik szelet) — a tükör soronként követi az írásokat (és egy néma elavulás javítása)
+
+A nyolcvanadik szelet minden lista-kérésnél újraírta a teljes tükröt (O(n) írás). Most (ADR-066) az **írások**
+frissítik a saját sorukat (`mirror_card`/`mirror_delete`), és a lista már csak **olvas** — kivéve, ha a darabszám
+nem egyezik, mert akkor egyszer újraépít, és a stderr-re írja, hogy miért kellett.
+
+Ez a szelet egy **néma elavulást** is talált: a `container_delete` `move_to`-val áthelyezte a kártyákat a JSON-ban,
+de a tükör megtartotta a régi konténert — a darabszám egyezett, tehát semmi nem javította ki, és a
+`--containertest` `container_move_delete=FAILED container_gone=yes card_in=c-proba` sorral bukott el. A javítás:
+áthelyezés után minden érintett kártya sora frissül a tükörben.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --addcardtest <engine>
+add_card=ok before=10 after=11 page=11
+db_status=ok schema=2 cards=11 verified=yes
+add_card_check=ok
+
+antikolt-shell --containertest <engine>
+container_move_delete=ok container_gone=yes card_in=c-private
+container_switch=ok
+```
+
+```
+verify.ps1 → ALL CHECKS PASSED + ALL SELF TESTS PASSED
+dist       → 445.6 MB, a telepített binárison mindkét teszt zöld
+```
+
+### Ami továbbra is nyitva
+
+A JSON-store még mindig az **író**. A következő szelet az írás átállítása a SQLite-ba (a JSON export lesz), amivel a
+két írás szinkronja megszűnik — addig minden olyan helyet, ahol egy op több kártyát ír, kézzel kell tükrözni (ezt a
+szelet pontosan megmutatta).
+
+## 2026-11-19 (nyolcvanadik szelet) — a rács listája az adatbázisból jön
+
+A tükör után a csere értelmes fele (ADR-065): a `cards_list` **előbb tükröz, aztán olvas** — a kártyalista a
+SQLite-ból érkezik. Az írás helye nem változott (JSON-store), tehát a váltás nem kockáztat adatvesztést, és ha a
+darabszám nem egyezik, a mag **nem ad ki bizonytalan adatot**: a JSON-listát szolgálja ki, és
+`[core] db_list_mismatch` sort ír a stderr-re.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --addcardtest <engine>
+add_card=ok typed=submitted before=10 after=11 page=11 error=""
+edit_card_title=ok … wrote_by=gesture
+edit_card_url=ok gesture=typed
+db_status=ok schema=2 cards=11 verified=yes
+delete_card=ok answer=ok remaining=10 expected=10
+add_card_check=ok
+```
+
+```
+verify.ps1  → ALL CHECKS PASSED + ALL SELF TESTS PASSED
+```
+
+### Ami továbbra is nyitva
+
+A tükrözés minden lista-kérésnél O(n) írás. A következő szelet az **írás** átállítása az adatbázisba (a JSON ezután
+export), amivel ez a költség megszűnik.
+
+## 2026-11-19 (hetvenkilencedik szelet) — a tükör teljes egyezést bizonyít (és egy append-only hibát tárt fel)
+
+A hetvennyolcadik szelet után a tükör csak az **első** kártyát ellenőrizte. Most **minden** sorát: a `db_status`
+végigmegy a JSON-store kártyalistáján, és mezőnként összehasonlítja a SQLite-párjával (`mismatches`).
+
+Ez rögtön ki is mutatta a hibát: `db_status=FAILED … verified=no`, mert a tükrözés **csak upsert** volt — a
+felhasználó által törölt kártya örökre bent maradt az adatbázisban (14 sor a JSON 11-e helyett). A javítás a helyes
+alak: **`mirror()`** — egy tranzakcióban törli a három táblát, majd újraírja a JSON-store tartalmából. Utána:
+
+```
+antikolt-shell --addcardtest <engine>
+db_status=ok schema=2 cards=11 verified=yes containers=4 workspaces=3
+add_card_check=ok
+```
+
+### Kapu
+
+`verify.ps1` → **ALL SELF TESTS PASSED**; `check-repo` → ALL CHECKS PASSED (78 + 20 + 2 + 1 + 15 Rust-teszt,
+`cargo fmt`, `clippy -D warnings`).
+
+### Ami továbbra is nyitva
+
+A **tényleges csere**: a rács és a szűrők még a JSON-store-okból olvasnak. A tükör most már *bizonyítottan*
+teljes egyezést mutat, tehát a következő szelet az olvasás átállítása — és ha ez a mérés elbukik, tudni fogjuk,
+melyik sorokban.
+
+## 2026-11-19 (hetvennyolcadik szelet) — az adatbázis a termék útján is látszik
+
+A hetvenhetedik szelet az adatbázist a magba tette, de a lap nem érte el. Most eléri (ADR-064 folytatása): híd
+`db.status`, lap-oldali `antikoltDbStatus(sync)`, és a `--addcardtest` a **felület útján** kérdezi meg a tükröt —
+a válasz a sémát, a darabszámokat és a `verified` mezőt is tartalmazza.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --addcardtest <engine>
+add_card=ok typed=submitted before=10 after=11 page=11 error=""
+db_status=ok schema=2 cards=11 verified=yes containers=4 workspaces=3
+delete_card=ok answer=ok remaining=10 expected=10
+add_card_check=ok
+```
+
+A telepített példányon ugyanez `schema=2 cards=13 verified=yes` (a profilban közben annyi kártya volt).
+
+### Ami továbbra is nyitva
+
+A **tényleges csere**: a rács és a szűrők még a JSON-store-okból olvasnak; a `db_status` a tükör, nem az igazság.
+A következő szelet a JSON → SQLite átállítás (importtal és mérési összehasonlítással).
+
+## 2026-11-19 (hetvenhetedik szelet) — az adatbázis megérkezik (a store-csere első fele)
+
+A négy JSON-store semmire nem tud kérdezni: minden „mi van ebben a konténerben / mi jár le" kérdés végigmegy az
+egész listán. Elindult a store-csere (ADR-064): **`rusqlite` `bundled`-del**, `user_version = 2` sémával, WAL
+naplózással, és a JSON-store-ok **egyelőre igazság maradnak** — a `db_status` op `sync`-kel tükröz, majd
+visszaolvassa az első kártyát és összehasonlítja a mezőket.
+
+### Bizonyíték
+
+```
+cargo test -p antikolt-core-service     → 20 passed (17 + 3 új adatbázis-teszt)
+  a_fresh_database_migrates_to_the_current_schema_and_keeps_it
+  a_card_round_trips_with_every_field_the_json_store_has     ← page_text, tags, workspace is
+  the_mirror_tables_take_the_containers_and_workspaces_too
+cargo clippy -D warnings                → tiszta
+```
+
+### Őszinte megjegyzés a szelet közben
+
+A `main.rs`-t egy PowerShell-splice **ismét törölte** (0 bájt): egy `Replace` kifejezés kivételt dobott, a
+változó üresen maradt, és a `WriteAllText` kiírta. A fájl a szelet elején mentett tartalomból **teljes egészében
+újraíródott** (write tool), és a 20 zöld teszt + clippy igazolja, hogy minden mai op (page_text, konténer,
+munkaterület, bundle, card_delete, db_status) a helyén van. A tanulság, amit ez a napló rögzít: **PowerShell-ben
+soha nem szabad string-építés eredményét `Replace`-csel előállítani és vakon kiírni** — a `write`/`edit` tool
+hibát dob, a splice csendben töröl.
+
+### Ami nyitva maradt
+
+A tényleges csere: a shell ma a JSON-fájlokat olvassa, a `db_status` mellékvágány. A következő szelet dolga a
+kártyalista és a szűrők átállítása a SQLite-ra, a JSON-ok importálásával és egy mérési összehasonlítással.
+
+## 2026-11-19 (hetvenhatodik szelet) — a webcím is szerkeszthető a kártyán
+
+A cím és a jegyzet után a **webcím** is (ADR-063): a meta-sor domainje a fogantyú, dupla kattintás → mező →
+`Enter`/`Esc`, a mentés a teljes rekord `cards.upsert`-jével. A beírt cím normalizálódik (séma nélkül `https://`),
+és a megjelenített domain a **mag válaszából** számolódik újra. A mentés itt is előbb ír, aztán állítja vissza a
+DOM-ot (az ADR-062 tanulsága).
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --addcardtest <engine>
+add_card=ok typed=submitted before=10 after=11 page=11 error=""
+edit_card_title=ok gesture=typed wrote_by=gesture stored="Próba kártya — átnevezve"
+edit_card_url=ok gesture=typed stored="https://proba.example/masik-cikk"
+delete_card=ok answer=ok remaining=10 expected=10
+add_card_check=ok        (exit 0, mindkét futásban)
+```
+
+### Ami nyitva maradt
+
+A webcím-váltás **nem nyitja újra** a kártyát (a következő megnyitás használja az új címet), és a régi oldal
+rögzített szövege (ADR-049) a régi tartalom marad, amíg a kártyát újra nem fagyasztják. A törlés megerősítése
+továbbra is nyitott (a megerősítő dialógus ugyanaz a CEF-probléma).
+
+## 2026-11-19 (hetvenötödik szelet) — a kártya átnevezése helyben (és egy őszinte hiány)
+
+Az ADR-061 után kártyát tenni és venni lehetett, de a **címét átírni nem**. Most lehet (ADR-062): dupla kattintás a
+címre, beviteli mező a helyén, `Enter`/`Esc`; a mentés a teljes rekordot viszi a `cards.upsert`-en, tehát a
+konténer, a címkék, a jegyzet és a rögzített oldalszöveg nem veszik el.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --addcardtest <engine>
+add_card=ok typed=submitted before=10 after=11 page=11 error=""
+add_card_record=ok id=01M7… title="Próba kártya — címmel" workspace=w-home
+edit_card_title=ok gesture=typed wrote_by=path stored="Próba kártya — átnevezve"
+delete_card=ok answer=ok remaining=10 expected=10
+add_card_check=ok
+```
+
+### A hiány, amit ez a szelet megmutatott — és megjavított
+
+Az első mérés `wrote_by=path`, `editor=""` volt: a **megerősített** írás a lap-úton történt, a szerkesztő mentési
+ága egyáltalán nem futott le. Az ok a saját kódomban volt: a `finish` **előbb** állította vissza a címet, mire a
+böngésző `blur`-t küldött, annak `finish("", false)` ága újra belépett, és a `replaceWith` elszállt — a mentés
+elmaradt. A javítás: **előbb ír, aztán állítja vissza a DOM-ot**, és a visszaállítás `try`-ban van. Utána:
+
+```
+edit_card_title=ok gesture=typed wrote_by=gesture
+   editor="{"id":"01M7TA9…","title":"Próba kártya — átnevezve"}"
+   stored="Próba kártya — átnevezve" ui_error=""
+```
+
+Ez a szelet tehát két dolgot ad: egy működő átnevezést, és egy tanulságot — a `wrote_by`/`editor` pár nélkül a
+hiba „zöld" maradt volna.
+
+## 2026-11-19 (hetvennegyedik szelet) — a kezdőlap szerkeszthető: kártya hozzáadása és törlése
+
+A felhasználó eddig nem tudott kártyát létrehozni a felületen — a rács a mag kártyáit mutatta, új kártya csak a
+mag `cards.upsert`-jével kerülhetett bele. Most lehet (ADR-061), és törölni is.
+
+- **`＋` gomb a fül-sor mellett**, soros űrlap a rácson (`webcím` + opcionális `cím`), `Enter`/`Esc`. Dialógus
+  nincs (a CEF alatt a `prompt` csendben `null`-t adna, ADR-053).
+- **Az új kártya az aktív fülre és az első konténerbe** kerül: ez a két tény, amit egy űrlap nem kérdezhet meg
+  értelmesen. Az id ULID-alakú (`01M7T7…`), a cím üresen a domain.
+- **`card_delete` a magban** (`CardStore::remove`) + híd `cards.delete` + lap-út `antikoltDeleteCard`: a törlés a
+  hozzáadás párja.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után, végig a felület gesztusain)
+
+```
+antikolt-shell --addcardtest <engine>
+add_card_before=10
+add_card=ok typed=submitted before=10 after=11 page=11 error=""
+add_card_record=ok id=01M7T7J7A3FHXG6Q80596QQ3YN title="Próba kártya — címmel" url=https://proba.example/hu/cikk workspace=w-home
+delete_card=ok answer=ok remaining=10 expected=10
+add_card_check=ok        (exit 0, mindkét futásban)
+```
+
+### Ami nyitva maradt
+
+A kártya **szerkesztése** (cím/webcím/jegyzet átírása a felületen) még nincs, csak a létrehozás és a törlés. A
+törlés megerősítés nélkül azonnali; a megerősítő dialógus ugyanaz a CEF-probléma, ezért ez külön döntés lesz.
+
+## 2026-11-19 (hetvenharmadik szelet) — a köteg a hídon is átér
+
+Az ADR-059 a magban kész tette a költöztetést, de a lap nem érte el. Most eléri (ADR-060), és mérve is van.
+
+- **Híd:** `profile.export` / `profile.import`, `path` argumentummal. Az útvonalat **a hívó adja** — a híd nem
+  nyit natív dialógust egy kérés közepén (az megakasztaná a lap válaszát).
+- **Lap:** `window.antikoltProfileWrite(path)` / `window.antikoltProfileRead(path)` — ide kerül majd a gomb és a
+  fájlválasztó, a híd változatlanul marad.
+- **Teszt:** `--profiletest` a két fejetlen mag-pár után **ablakot** nyit, a lapon keresztül exportál, majd
+  visszaolvassa. A választ a lap saját változójából (`window.__profWrite`) olvassa, mert az `evaluate` nem várja
+  meg a promise-t — ezt a hibát az első futás meg is mutatta (`write=""`), és a javítás a mérésben látszik.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --profiletest <engine>
+profile_export=ok cards=3 source_cards=3 bytes=1842
+profile_import=ok exported=3 read_back=3 containers=4 workspaces=3 error=
+profile_refused=ok message="unsupported bundle schema: 99 (this core writes 1)"
+profile_bridge=ok wrote_cards=10 read_cards=10 bytes=14530
+   write="{"cards":10,"containers":4,"path":"…/ui.antikolt.json","schema":1,"sessions":14,"workspaces":3}"
+profile_check=ok        (exit 0, mindkét futásban)
+```
+
+### Ami továbbra is nyitott
+
+A **gomb** és a natív fájlválasztó: a harness nem tud dialógust kattintani, ezért ez a lépés önmagában
+`not-measurable` lenne — a híd és a lap-út viszont kész és mérve.
+
+## 2026-11-19 (hetvenkettedik szelet) — a profil egy fájlban költöztethető
+
+A felhasználó adata négy külön fájlban élt; a dokumentáció „költöztetést" ígért, de mód nem volt rá. Most van
+(ADR-059): `profile_export` / `profile_import`, egy JSON-kötegben (`schema`, `cards`, `containers`, `workspaces`,
+`sessions`, `rules`).
+
+- **Mag:** `bundle.rs` (atomikus írás, `schema`-ellenőrzés olvasáskor) + `replace_all` mind a négy store-on. Az
+  import **előbb validál, aztán ír**: egy félig sikerült import rosszabb, mint egy el sem kezdett. Az importált
+  kártyák ugyanazon a normalizáláson mennek át (tehát importtal sem lehet megkerülni a címke-szabályt).
+- **Teszt:** `--profiletest` két eldobható adatkönyvtárral, két mag-folyamattal: export → import egy friss
+  profilba → visszaolvasás a *fájlból*, plusz egy szándékosan „újabb" (`schema: 99`) köteg elutasítása.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --profiletest <engine>
+profile_export=ok cards=3 source_cards=3 bytes=1842
+profile_import=ok exported=3 read_back=3 containers=4 workspaces=3 error=
+profile_refused=ok message="unsupported bundle schema: 99 (this core writes 1)"
+profile_check=ok        (exit 0, mindkét futásban)
+```
+
+### Ami nyitva maradt
+
+A köteg **titkokat is tartalmaz** (munkamenet-sorok), ezért a fájl védelme a felhasználó dolga — a titkosítás
+külön döntés. A felületi gomb („Mentés egy fájlba" / „Megnyitás fájlból") még nincs; a híd és a mag út kész.
+
+## 2026-11-19 (hetvenegyedik szelet) — a kártya munkaterülete a kártyán váltható
+
+Az ADR-056/057 után a munkaterület-tábla és a fül-sor életciklusa kész volt, de egy kártya munkaterületét a
+felületen nem lehetett áttenni. Most lehet (ADR-058): a kártya meta-sorában, a konténer-választó mellett egy
+második, keskenyebb natív `<select>` (`.workspace-select`), ugyanazon az úton: `change` → `setWorkspace` →
+`cards.upsert` → a mag válasza rajzol. Nem drag: a virtualizált rácsban a kártya shadow-hostja görgetéskor
+újraépül, és a drag billentyűzettel nem használható.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után, végig a felület választóján)
+
+```
+antikolt-shell --workspacetest <engine>
+workspace_move=ok card=01SEED000000000000000001 target=w-home now=w-home answer=changed
+workspace_core=ok stored=w-home          ← friss mag-kliens olvassa a fájlt
+workspace_restored=ok answer=changed
+workspace_used_delete=ok holder=w-work still_there=yes shown="1 kártya még ebben a munkaterületben van"
+workspace_deleted=ok remaining=w-home:Otthon w-work:Munka w-read:Olvasnivaló
+workspace_check=ok        (exit 0, mindkét futásban)
+```
+
+### Őszinte megjegyzés
+
+A szelet közben a teszt **törölte** a fejlesztői profil „Otthon" munkaterületét: a „használt törlés" lépés a
+kártya *eredeti* munkaterületét feltételezte, de a kártya időközben máshova került, így a `×` egy üres fület
+talált. A profilt kézzel állítottam helyre (a három leszállított munkaterület visszaírása), és a teszt mostantól
+a **kártyalistából olvassa** a tulajdonost, majd ellenőrzi, hogy a megtagadás után a fül **megvan** — nem
+feltételez. Egy teszt, ami a felhasználó adatát törli, nem teszt.
+
+## 2026-11-19 (hetvenedik szelet) — a munkaterület-életciklus a fül-soron
+
+Az ADR-056 a táblát a magba tette, de a felületen nem lehetett munkaterületet létrehozni, átnevezni vagy
+törölni. Most lehet, ugyanazzal a három gesztussal, mint a konténereknél (ADR-057): `＋` (soros mező, `Enter`/
+`Esc`), dupla kattintás a fülön (átnevezés), `×` (törlés) — dialógus nélkül.
+
+- **Lap:** `commitWorkspaceEdit` / `deleteWorkspace` / `reloadWorkspaces`; az új id a névből származó slug
+  (`w-proba-ter`); a használt munkaterület törlésének `in_use` válasza **megjelenik** a fül-soron.
+- **Witness:** a `window.antikoltWorkspaceState()` most a szerkesztő állapotát és a felületi hibát is kiadja
+  (`editing`, `uiError`), a fül-witness pedig a `removable` mezőt is.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --workspacetest <engine>
+workspace_table=ok / workspace_cards=ok / workspace_move=ok / workspace_core=ok / workspace_restored=ok
+workspace_created=ok id=w-proba-ter answer=submitted     ← a ＋ gomb + soros mező
+workspace_renamed=ok                                     ← dupla kattintás + mentés
+workspace_used_delete=ok shown="1 kártya még ebben a munkaterületben van"
+workspace_deleted=ok remaining=w-home:Otthon w-work:Munka w-read:Olvasnivaló
+workspace_check=ok        (exit 0, mindkét futásban)
+```
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (38 önteszt + `check-repo`).
+
+## 2026-11-19 (hatvankilencedik szelet) — a munkaterületek valódiak, a „tizenharmadik kártya" hiba javítva
+
+A lap a kártya *helyéből* találta ki a munkaterületet (`index > 12 ? "w-read" : "w-home"`): minden tizenharmadik
+kártya némán az „Olvasnivaló" fülre került. Ez nem közelítés volt, hanem hiba — most a munkaterület tárolt adat
+(ADR-056).
+
+- **Mag:** `workspaces.json` + `workspaces_list`/`workspace_upsert`/`workspace_delete` (a három leszállított
+  munkaterülettel), és `Card.workspace` mező. Az üres mező az első munkaterületet jelenti: egy hiányzó mező nem
+  költöztet kártyát olyan fülre, amit a felhasználó nem választott.
+- **Shell:** `workspaces.list/upsert/delete` a hídon, és a tábla **pushban** megy a lapra
+  (`window.antikoltAcceptWorkspaces`), ugyanazért, mint a konténer-tábla (ADR-052).
+- **Lap:** `pageWorkspaces` a mag táblája, a fül-sor abból épül; a kártya `workspaceId`-je a rekordból jön; új
+  witness: `window.antikoltWorkspaceState()`, és a termék saját írási útja: `antikoltMoveToWorkspace`.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --workspacetest <engine>
+workspace_table=ok core=w-home:Otthon w-work:Munka w-read:Olvasnivaló
+                     page=…ugyanaz… tabs=…ugyanaz…
+workspace_cards=ok count=10 first=w-home        ← nincs kitalált munkaterület
+workspace_move=ok card=01SEED000000000000000001 target=w-work now=w-work answer=ok
+workspace_core=ok stored=w-work                  ← friss mag-kliens olvassa a fájlt
+workspace_restored=ok                            ← a teszt visszaállítja
+workspace_check=ok        (exit 0, mindkét futásban)
+```
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (38 önteszt + `check-repo`, 16 Rust-teszt).
+
+## 2026-11-19 (hatvannyolcadik szelet) — a címkék: a kereső ígérete igazzá vált
+
+A keresőmező placeholderje régóta „címke"-t ígért, a kártyarekordban viszont nem volt ilyen mező — a lap
+`matchesTerm`-je egy soha nem létező `card.tags` tömböt vizsgált. Most van (ADR-055).
+
+- **Mag:** `Card.tags: Vec<String>` (`#[serde(default)]`, a régi `cards.json` gond nélkül betöltődik), és a
+  **normalizálás a store-ban**: trim, kis-nagybetűtől független dedup (az első írásmód marad), max. 12 címke,
+  egyenként max. 32 karakter. A hosszra vágás nem hiba, hanem adatmentés.
+- **Lap:** a kártyán chipek, mellettük `＋címke` (helyben nyíló mező, `Enter`/`Esc`), a chipen `×`. Az írás a
+  megszokott `cards.upsert` úton megy, a rács a mag válaszát mutatja; új witness: `window.antikoltTagState()`.
+- **Keresés:** a címkék ugyanabba a haystackbe kerülnek, mint a cím/webcím/jegyzet/oldalszöveg, tehát az
+  ékezet-független fold rájuk is vonatkozik (`kavezo` → `kávézó`).
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --tagtest <engine>
+tag_card=01SEED000000000000000001
+tag_add=ok typed=typed page=kávézó card=kávézó        ← a kártya saját szerkesztője
+tag_core=ok stored=kávézó                             ← friss mag-kliens olvassa a fájlt
+tag_search=ok filtered=2 titles=Antikolt projekt | Kávézó-próba — Árvíztűrő Tükörfúrógép term=kavezo
+tag_remove=ok remaining=                              ← a chip ×-e kitakarít
+tag_check=ok        (exit 0, mindkét futásban)
+```
+
+A keresésnél a második találat a profilban maradt próba-kártya: az állítás ezért az, hogy **a megcímkézett
+kártya a találatok között van** (és a fold működik), nem az, hogy pontosan egy találat van — a profil nem
+fixture.
+
+### Egy őszinte megjegyzés a szelet közben
+
+A címke-szelet szerkesztése közben egy PowerShell-splice **törölte** `crates/antikolt-core-service/src/store.rs`-t
+(a fájl 2 bájtra zsugorodott). Nem történt adatvesztés a tárban: a fájl a `git show HEAD:…` verzióból és a nap
+korábbi szeleteinek (oldalszöveg, `move_container`, címkék) újraírásával épült vissza, majd **13 store-teszt** és a
+teljes kapu igazolta. A tanulság a munka menetére vonatkozik: a soronkénti splice két helyen is némán
+elfelejtett egy `#[test]` attribútumot — a szigorú `clippy -D warnings` fogta meg, nem a szem.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (37 önteszt + `check-repo`, 13 store-teszt).
+
+## 2026-11-19 (hatvanhetedik szelet) — a használt konténer is törölhető, de csak áthelyezéssel
+
+Az ADR-052 szándékosan megtagadta egy használt konténer törlését (`in_use`), hogy semmi ne tűnjön el csendben —
+csakhogy ez zsákutca volt: a felhasználó nem tudta megszüntetni a régi csoportosítását. Most van kiút (ADR-054).
+
+- **Mag:** `container_delete` opcionális `move_to`-val. Ha van, **előbb** áthelyez (`CardStore::move_container`,
+  egy mentésben), **azután** töröl, és a válasz megmondja, hány kártya vándorolt. Ha nincs, marad az `in_use`
+  hiba; ha a cél nem létezik vagy maga a törölt konténer, `invalid_argument`/`not_found`.
+- **A sorrend szándékos:** előbb az áthelyezés íródik ki. Ha a törlés elhasal, a kártyák akkor is valahol vannak.
+- **Felület:** a `×` után az `in_use` válasz nem hibaüzenet, hanem **felajánlás**: a legenda egy sort nyit
+  („1 kártya még ebben a konténerben van"), választóval a többi konténerre és „Áthelyezés és törlés" gombbal.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --containertest <engine>
+container_created=ok id=c-proba answer=submitted
+container_reload=ok chips=c-work c-private c-money c-dev c-proba
+container_rename=ok page=c-proba:Próba 2
+container_used_delete=ok shown="1 kártya még ebben a konténerben van" move=offered
+container_move_delete=ok container_gone=yes card_in=c-private
+container_switch=ok        (exit 0, mindkét futásban)
+```
+
+A teszt a kártyát a **kártya saját választójával** teszi a próba-konténerbe, hogy a megtagadás valódi legyen,
+majd a soron keresztül helyezi át és töröl — végül visszateszi a kártyát az eredeti konténerébe.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (36 önteszt + `check-repo`, 12 store-teszt).
+
+## 2026-11-19 (hatvanhatodik szelet) — a konténer-életciklus a felületen teljes
+
+Az ADR-052 a táblát a magba tette, de a felületen nem lehetett konténert létrehozni, átnevezni vagy törölni.
+Most lehet (ADR-053), dialógus nélkül:
+
+- **`＋ konténer`** a legenda végén: beviteli mező jelenik meg, `Enter` ment, `Esc` mégse. Az új id a névből
+  származó slug (`c-proba`), a színt a mag generálja.
+- **Átnevezés**: a chip dupla kattintása ugyanezt a mezőt nyitja, előtöltött névvel.
+- **Törlés `×`-szel**: ha a konténerben még van kártya, a mag `in_use` válasza **megjelenik** a legendában
+  („1 kártya még ebben a konténerben van") — nem nyeljük el.
+- **Miért nincs `prompt`**: a CEF oldali JS-dialógushoz a házigazdának `CefJSDialogHandler`-t kellene adnia, ami
+  nincs; a `prompt` csendben `null`-t adna, és a felület „nem csinálna semmit". A helyben szerkesztő form ezt
+  elkerüli, és billentyűzettel is használható.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után, végig a felület útján)
+
+```
+antikolt-shell --containertest <engine>
+container_created=ok id=c-proba answer=submitted   ← a ＋ gomb + a soros mező
+container_reload=ok chips=c-work c-private c-money c-dev c-proba
+container_rename=ok page=c-proba:Próba 2           ← dupla kattintás + mentés
+container_used_delete=ok shown=1 kártya még ebben a konténerben van
+container_deleted=ok remaining=c-work:Munka c-private:Magán c-money:Pénz c-dev:Fejlesztés
+container_switch=ok        (exit 0, mindkét futásban)
+```
+
+A teszt **nem hívja közvetlenül a magot**: kattint, gépel, `submit`-ol — és utána a friss mag-klienssel
+ellenőrzi, hogy a fájl valóban azt tartalmazza, amit a felület mutat.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (36 önteszt + `check-repo`).
+
+## 2026-11-19 (hatvanötödik szelet) — a konténer-tábla a magba költözött
+
+A konténerek neve és színe eddig a lapban volt, egy konstansban; a mag csak egy id-t tárolt a kártyán. Most a
+tábla a magé (ADR-052), a lap pedig azt rajzolja, amit a mag mond.
+
+- **Mag:** `containers.rs` + `containers.json` a kártyák mellett; `containers_list`, `container_upsert`,
+  `container_delete`. Az első indítás a négy leszállított konténert veti el (a régi profil semmit nem veszít).
+  A szín `#RRGGBB`, a hiányzó/hibás színt determinisztikusan generálja (ugyanaz az id → ugyanaz a szín).
+  Törlés csak akkor, ha egy kártya sem használja: `in_use` hiba — egy csendes áthelyezés az „eltűntek a
+  kártyáim" hibaosztály.
+- **Shell:** `containers.list` / `containers.upsert` / `containers.delete` a hídon, és a tábla **pushban** megy a
+  lapra a kártyalistával (`window.antikoltAcceptContainers`).
+- **Lap:** `pageContainers` a mag táblája (a konstans csak fallback böngészőhöz), és új witness:
+  `window.antikoltContainerTable()`.
+
+### Két valódi hiba, amit a mérés fogott
+
+1. **A híd később települ, mint a lap szkriptje.** A lap `containers.list` kérése `mock` táblát kapott (a
+   híd még nem létezett), ezért a legenda négy konténert rajzolt, miközben a magban öt volt. A javítás: push a
+   kártyákkal együtt, nem kérés.
+2. **A shell magja hosszú életű, a tábla a memóriájában él.** A teszt első változata külön mag-folyamattal írta
+   a fájlt, amit a shell magja nem látott — a mérés a saját másolatunkat mérte, nem a terméket. A javítás: a
+   teszt a **lapon keresztül** ír (a termék útján), és friss mag-klienssel olvassa vissza a fájlt.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --containertest <engine>
+container_table=ok core=c-work:Munka c-private:Magán c-money:Pénz c-dev:Fejlesztés
+                     page=c-work:Munka c-private:Magán c-money:Pénz c-dev:Fejlesztés
+container_created=ok answer={"container":{"color":"#34B26A","id":"c-proba","name":"Próba"}}
+container_reload_load=ok
+container_reload=ok chips=… c-proba:Próba 0        ← a lap a mag tábláját rajzolja
+container_rename=ok page=c-proba:Próba 2
+container_used_delete=ok answer=error:1 kártya még ebben a konténerben van
+container_deleted=ok answer={"removed":true}        ← a teszt kitakarít maga után
+container_switch=ok        (exit 0, mindkét futásban)
+```
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (36 önteszt + `check-repo`, benne 11 store-teszt).
+
+## 2026-11-19 (hatvannegyedik szelet) — a konténereknek neve, színe és szűrője van
+
+A konténer eddig színes pont volt a kártyán, magyarázat nélkül. Most a rács fölött **chip-sor** áll:
+konténerenként színes pont, név és a **jelenlegi keresés szerinti darabszám**; a chip maga a szűrő (ADR-051).
+
+- **Lap:** `renderContainerLegend()` az `applyFilter()`-en belül fut, tehát a számok a kereséssel együtt
+  frissülnek; a szűrés a keresés *után* lép be. Egyszerre egy konténer aktív, újabb kattintás törli; a chipek
+  `aria-pressed`-szel jelzik az állapotot.
+- **A szűrő nézet-állapot**, nem tárolt beállítás: új indítás mindent mutat (egy elfelejtett szűrő csapda).
+- **Witness:** a `window.antikoltContainerState()` most a szűrőt, a szűrt darabszámot és a chipek állapotát is
+  kiadja.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --containertest <engine>
+container_card=01SEED000000000000000001 from=c-work
+container_target=c-private
+container_page=ok last=c-private error=
+container_core=ok stored=c-private
+container_restored=ok
+container_legend=ok chip=Munka 1          ← a chip színes pontja + neve + a keresés szerinti szám
+container_filter=ok filter=c-work filtered=1
+container_filter_cleared=ok filtered=10   ← a második kattintás visszaadja a teljes listát
+container_switch=ok        (exit 0, mindkét futásban)
+```
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (36 önteszt + `check-repo`).
+
+## 2026-11-19 (hatvanharmadik szelet) — a kártya átköltöztethető másik konténerbe
+
+A roadmap „kártya-konténer kötés, konténer-váltás" tétele eddig csak *látszott*: a kártyán volt színes pont, de
+a kötést nem lehetett megváltoztatni. Most a kártya meta sorában egy natív `<select>` áll, és a választás a
+magon át megy (ADR-050).
+
+- **Lap:** a kártya `antikolt-container` eseményt küld, a rács `setContainer`-je `cards.upsert`-tel ír, és a
+  válaszból frissíti a modellt (a nézet konténer-objektumot tart, a rekord id-t). Új witness:
+  `window.antikoltContainerState()`.
+- **Miért natív select:** a billentyűzet, a képernyőolvasó és a platform menüje ingyen jön; a színes pont
+  megmarad mellette, és a menü a konténer **nevét** is mutatja (a pont magában nem olvasható fel).
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --containertest <engine>
+home_surface=1
+container_dom={"cards":10,"first":1}
+container_card=01SEED000000000000000001 from=c-work
+container_target=c-private
+container_page=ok last=c-private error=
+container_core=ok stored=c-private          ← friss mag-kliens olvassa vissza
+container_restored=ok                       ← a teszt visszaállítja az eredeti konténert
+container_switch=ok        (exit 0, mindkét futásban)
+```
+
+Három tanú egyezik: a lap állapota a váltás után, a mag rekordja (friss klienssel olvasva) és a modell
+konténer-térképe. A teszt a végén **visszaállítja** az eredeti konténert, hogy ne rendezze át a felhasználó
+kártyáit.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (36 önteszt + `check-repo`).
+
+## 2026-11-19 (hatvankettedik szelet) — a jegyzet fókusza: mérve, és egy igazi hiba javítva
+
+A `19-FOLYTATAS.md` §3 két dolgot hagyott nyitva: a **fókusz-visszaadás mérése** „nem lehetséges", és a
+**renderelt jegyzet** mérése hiányzik. Mindkettő kész; közben kiderült, hogy nem csak a mérés volt rossz.
+
+1. **A próba a rossz elemet kérdezte.** A régi `note_focus` az *első* kártya shadow rootjában kereste az aktív
+   elemet, nem abban, amelyik a fókuszt birtokolja — egy működő funkciót mért `none`-nak.
+2. **A fókusz-visszaadás valóban elveszhetett.** A lap egy 2 másodperces időzítővel engedte el a
+   visszafókuszálási szándékot, a mag viszont egy második újrarenderelést küld, ami később is megérkezhet; ha az
+   időzítő előbb járt le, a fókusz a `body`-ra esett (mért: `note_focus=not-host:BODY`). Javítás: az azonosító a
+   **következő felhasználói eseményig** marad, és a rács a render **után szinkron** is visszaadja a fókuszt (egy
+   háttérben lévő ablak animációs képkockát nem feltétlenül kap).
+3. **A renderelt jegyzet** próbája most a state-válasz után pollozva olvassa a kártya `.card-notes` elemét.
+
+### Bizonyíték (tényleges kimenet, kétszer egymás után)
+
+```
+antikolt-shell --notetest <engine>
+note_save=ok
+note_rendered=probe note
+note_focus_chain={"hasFocus":true,"activeTag":"ANTIKOLT-CARD","activeIsHost":true,"shadowActive":"card"}
+note_id=01SEED000000000000000001
+note_page=probe note
+note_model=probe note
+note_core=probe note
+note_error=
+note_focus=01SEED000000000000000001:card
+note_write=ok
+note_rendered_ok=ok
+note_focus_ok=ok        (exit 0, mindkét futásban)
+```
+
+A `note_write=ok` mostantól a **négy** tanút együtt kéri: a szerkesztő válaszát, a rács modelljét, a mag
+rekordját és a renderelt jegyzetet — plusz a fókuszt.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (35 önteszt + `check-repo`).
+
+## 2026-11-19 (hatvanegyedik szelet) — az oldalszöveg is kereshető
+
+Az ADR-047 visszavonta az oldalszöveg-ígéretet, mert semmi nem indexelte a cikkek szövegét. Most már van mivel:
+a fagyasztás megméri a lap szövegét, a mag a kártyarekordba írja, és a keresés mindhárom rétegben látja
+(ADR-049).
+
+- **Mag:** a kártyarekord új `page_text` mezője (serde-default, tehát a régi store-ok változatlanul olvashatók),
+  `card_page_text` op (`{id_of_card, text}`), `set_page_text` + sapka (16 000 karakter, whitespace összevonva).
+  A `card_upsert` megőrzi a korábbi szöveget, ha a bejövő üres — a pin és a jegyzet nem törölheti a capture-t.
+- **Shell:** a `freezeCard` a felület eldobása **előtt** megkérdezi a laptól a `document.body.innerText`-jét
+  (8000 karakterre vágva), és a `card_page_text`-tel elmenti; a `cards.search` haystackje a `page_text`-et is
+  foldolja.
+- **Lap:** a kártyamodell `pageText` mezőt kap, a `matchesTerm` pedig ezt is nézi — ékezet nélkül is.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+cargo test -p antikolt-core-service
+test result: ok. 8 passed; …            ← új: page_text_is_captured_kept_and_capped
+
+antikolt-shell --searchtest <engine>
+search_page_text_written=ok            ← a mag `card_page_text` opja elfogadta
+search_seeded=ok
+search_fold=ok folded=arvizturo tukorfurogep lodz
+search_total=10
+search_accent=ok term=kavezo filtered=1 of=10
+search_empty=ok empty_text=Nincs találat erre: „zzzz”. Próbálj kevesebb szót, vagy töröld a keresést.
+search_page_text=ok filtered=1         ← a „rejtettoldalszoveg” szó csak a rögzített szövegben van benne
+search_escape=ok filtered=10
+search_check=ok        (exit 0)
+```
+
+A store-teszt azt is méri, amit a felület nem tud megmutatni: a whitespace-összevonást, a sapkát, az ismeretlen
+id válaszát, és azt, hogy egy **pin nem törli** a rögzített szöveget.
+
+### Amit ez a szelet nem ígér
+
+- Élő (nem fagyasztott) kártyánál nincs oldalszöveg: a capture a fagyasztás pillanatában készül.
+- A szöveg a fagyasztás kori állapot; ha az oldal később változik, a keresés a régit látja — ez tudatos (a
+  kártya lényege, hogy a lemezen lévő állapotot őrzi).
+- A store JSON-dokumentum marad; a SQLite-séma (`0001_init.sql`) még nem ismeri a mezőt, mert az a következő
+  nagy lépés (a store cseréje), és addig a JSON a valóság.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (35 önteszt + `check-repo`, benne `cargo fmt`,
+`clippy -D warnings`, 8 store-teszt).
+
+## 2026-11-19 (hatvanadik szelet) — 500 kártya mérve, és az ütemterv pipái a valósághoz
+
+A `04-UTEMTERV` azt ígérte: „Virtualizált rács 500 kártyával" — és eddig ezt senki nem mérte meg. Új önteszt
+(`--gridscaletest`) és egy dokumentum-szinkron.
+
+### A mérés
+
+A teszt **saját magkönyvtárban** dolgozik (`ANTIKOLT_CORE_DATA`), tehát a fejlesztői profilba nem kerül 500
+próbakártya — ez az új környezeti kapcsoló kifejezetten ezért készült. 500 kártyát ír be a magon keresztül,
+megnyitja a rácsot, és a lap saját állapotából mér:
+
+```
+antikolt-shell --gridscaletest <engine>
+scale_dir=C:/Users/info/AppData/Local/Temp/antikolt-scale-11696/core
+scale_seeded=ok written=500
+home_surface=1
+scale_render_ms=20
+scale_cards=503                     (500 + a mag 3 demókártyája)
+grid_scale_count=ok
+grid_scale_rendered=ok rendered=13 maxIndex=12     ← 13 DOM-elem 503 kártyából
+grid_scale_scroll=not-measurable (the page had no layout height in this harness)
+grid_scale=ok        (exit 0)
+```
+
+A **13 renderelt elem** az állítás lényege: a rács nem 503 elemet rak a DOM-ba, hanem egy képernyőnyit, és a
+többi a `#spacer` magasságában él. A `scale_render_ms=20` az első renderig mért idő.
+
+**Amit nem mértem, és ezt kimondom:** a *görgetéses* ugrást („a 13 elem a lap végére is eljut") ebben a
+harnessben nem lehet mérni, mert a beágyazott lapnak nincs layout-magassága (`innerHeight=0` — a shell méretezi
+a kártya-területet, és a tesztablak felület-szélessége 0). A teszt ezért `not-measurable`-t ír, nem zöldet. A
+görgetés amúgy a `--gridtest`/`--scrollzoomtest` útjain már bizonyított, csak nem 500 kártyán.
+
+### Ütemterv-szinkron
+
+A `04-UTEMTERV` pipái mostantól **bizonyítékhoz** kötöttek: minden pipa mellett ott a futtatható önteszt neve,
+a részleges tételeknél pedig a nyitott rész (pl. a keresésnél az oldalszöveg). Új pipák: kártya-életciklus,
+MHTML+meta+előnézet, 10 perces szabály, 500 kártyás rács, keresés, munkamenet-panel + ledger, keep/sweep/wipe,
+négy téma + WCAG. A „Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás" sor annyiban változott, hogy a **zoom** kész,
+a többi nyitott.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (35 önteszt + `check-repo`).
+
+## 2026-11-19 (ötvenkilencedik szelet) — a takarítás nem némítja el a játszó kártyát
+
+A `19-FOLYTATAS.md` §2 nyitott tétele: a hibernálás tiszteletben tartja a médiát játszó kártyát, a
+**munkamenet-takarítás nem** — egy esedékes `wipe` az előtérben játszó videót is elhallgattathatta. Javítva
+(ADR-048).
+
+- **Közös szkript**: a média-kérdés (`video`/`audio`, `!paused && !ended`) egy helyre került
+  (`LiveMediaPlayingScript`), és a hibernálás mellett a takarítás is ezt használja.
+- **A döntés a lapé**: ha a válasz `playing`, az **élő** origin törlése kimarad, a státuszsor megmondja, miért;
+  ha az oldal nem válaszol (hiba), a takarítás a régi módon lefut.
+- **A struktúra**: az élő origint a ciklus már csak *kiválasztja*, a törlés (és a könyvelés lezárása) a lap
+  válasza után történik — a nem élő originok változatlanul a következő megnyitásra várnak.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --mediacleantest <engine>
+origin=http://127.0.0.1:52723
+session_written=ok
+grid_loaded=ok loads=about:blank, file:///…/home/index.html, about:blank, http://127.0.0.1:52723/
+card_surface=2
+media_playing=unavailable (no audio device on this machine) storage_before=1|probe=1
+media_probe={"paused":true,"ended":false,"readyState":0,"networkState":2,"muted":true,
+             "currentSrc":"http://127.0.0.1:52723/tone.wav","duration":null,"error":0}
+media_skip=not-measurable (no audio device: the page never starts its player)
+media_wipe_when_idle=ok status=takarítás: 1 azonnal, 14 a kártya következő megnyitásakor
+media_cleanup_check=ok        (exit 0)
+```
+
+**Amit ez a napló kimond:** ezen a gépen nincs hangeszköz, ezért a Chromium el sem indítja a lejátszót
+(`readyState=0`, és a `/tone.wav` kérés **el sem indult** — a próbaszerver naplója szerint csak `/` és
+`/favicon.ico` jött be). A teszt ezt kimondja (`not-measurable`) ahelyett, hogy zöldet hazudna: amit mért, az
+az, hogy a takarítás **az új, média-tudatos úton** fut le, és `playing` nélkül a törlés megtörténik. Hangeszközös
+gépen ugyanez a teszt a `playing` ágat is méri.
+
+### Tanulság a próbaszerverről
+
+A kártya nyitását nem a `loadFinished`-re kell várni: egy médiaelemet tartalmazó lap `on_load_end`-je késhet.
+A teszt ezért a `window.liveCard()->surface()`-ből olvassa a felületet. A próbaszerver pedig akkor is
+válaszoljon, ha a kérés már a socket átadása előtt megérkezett (a `readyRead` ilyenkor nem jelez).
+
+### Két hiba, amit a kapu fogott meg (nem a felhasználó)
+
+1. **A `metricstest` kiesett a parancsértelmezőből.** A szelet közbeni szövegblokk-cserék egyike elvitte a
+   `parser.addOption(metricstest)` sort, és a futtatás `Unknown option 'metricstest'`-tel állt meg — a kapu
+   azonnal jelezte. Ez a fajta hiba (egy teszt csendben nem fut le) pont az, amiért a kapu harminchárom sort
+   sorol fel, és nem csak egy összesített zöldet ír.
+2. **A `sessionpanel` egy varázsszámra (`rows == 1`) hasonlított.** A fejlesztői profilban a korábbi tesztek
+   esedékes munkamenet-sorai felgyűltek, és a panel-teszt ettől bukott — vagyis a *profilról* szólt, nem a
+   panelről. Javítva: a panel sorainak számát a mag által jelentett esedékes sorokhoz hasonlítja
+   (`panel_due_rows`), a tartalmi állítások változatlanok. A `--mediacleantest` pedig a végén lezárja a saját
+   sorát, hogy ne hagyjon szemetet.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (33 önteszt + `check-repo`).
+
+## 2026-11-19 (ötvennyolcadik szelet) — a keresés a felhasználó gépeléséhez igazodik
+
+A rács keresője eddig `toLowerCase()`-vel hasonlított: a `kave` **nem** találta meg a `Kávézó` kártyát. A
+helyőrző ezen kívül „oldalszöveg"-et ígért, ami nincs indexelve. Mindkettő javítva (ADR-047).
+
+- **Ékezet-független fold**, a lapon (`foldSearch`) és a shellben (`FoldForSearch`, a `cards.search` opban):
+  NFD-bontás + kombináló jelek törlése, valamint a felbontás-álló betűk (`ł`, `ø`, `đ`, `ß`) kézi leképezése.
+- **Az üres találat megnevezi a keresett kifejezést**: „Nincs találat erre: »zzzz«. Próbálj kevesebb szót, vagy
+  töröld a keresést." — a korábbi néma üresség azt sugallta, hogy elromlott a lap.
+- **A helyőrző nem ígér oldalszöveget**: „cím, webcím, jegyzet, címke (ékezet nélkül is)". Az oldalszöveg-
+  keresés a §12 nyitott tétele marad; a felület addig nem állítja, hogy van.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --searchtest <engine>
+core_executable=…/target/debug/antikolt-core-service.exe
+search_seeded=ok
+home_surface=1
+search_fold=ok folded=arvizturo tukorfurogep lodz
+search_total=10
+search_accent=ok term=kavezo filtered=1 of=10
+search_empty=ok empty_text=Nincs találat erre: „zzzz”. Próbálj kevesebb szót, vagy töröld a keresést.
+search_focused=no                                        (a teszt ablaka nem előtérben; tájékoztató sor)
+search_escape=ok filtered=10
+search_check=ok        (exit 0)
+```
+
+A teszt a keresett kártyát a **magon** keresztül veti fel (`Kávézó-próba — Árvíztűrő Tükörfúrógép`), tehát nem
+attól függ, mi van éppen a profilban; a `kavezo` kifejezés ékezet nélkül, egyetlen kártyát ad. Az Escape-lépés
+utáni `filtered=10` a kiinduló rács: a keresés nem marad „beragadva".
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (32 önteszt + `check-repo`).
+
+## 2026-11-19 (ötvenhetedik szelet) — a shell naplófájlja: a konzol, ami nincs
+
+A konzolablak eldobása (55. szelet) után a parancsikonos indításnak nem maradt olvasható kimenete: a motor
+GPU-hibái és minden `[shell] …` sor a semmibe ment. A javítás egy naplófájl a profilban
+(`%APPDATA%\Antikolt Project\Antikolt\logs\shell.log`), időbélyeggel, egygenerációs rotációval
+(`shell.log.1`, 1 MB-nál), és **csak** a sima indításnál: a terminálból futtatott programnak már van stderr-je, az
+öntesztek pedig nem írhatnak a felhasználó naplójába.
+
+A napló írása a **meglévő** üzenetkezelőn megy át (`ForwardQtMessages`), tehát nem új naplózási réteg: minden sor,
+ami eddig a stderr-re ment — a motor átirányított kimenete is —, ugyanaz a szöveg, csak időbélyeggel és a lemezen
+is. A határérték környezeti kapcsolóval állítható (`ANTIKOLT_SHELL_LOG_LIMIT`), ezért a teszt néhány kilobájttal
+rotál, nem egy megabájttal.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --logtest
+log_path=C:/Users/info/AppData/Local/Temp/antikolt-logtest-20532/shell.log
+log_lines=3
+log_has_lines=ok
+log_rotated=ok current=1098 previous=1952
+log_stopped=ok
+log_check=ok        (exit 0)
+```
+
+Élő indítás (parancsikon-mód, üres parancssor), majd a napló visszaolvasva:
+
+```
+log_exists=True  log_bytes=4483  lines_after=70
+2026-11-19T01:31:32.689 [shell] info: [shell] tray: ikon a tálcán (a program ikonjával)
+2026-11-19T01:31:35.873 [shell] info: [engine] [engine-host] previews: antikolt://blob/ from …\engine\previews
+```
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (31 önteszt + `check-repo`).
+
+## 2026-11-18 (ötvenhatodik szelet) — az oldalaknak is több sötét fokozata, a témaváltó pedig ikon
+
+A felhasználó pontosítása: „az oldalakhoz is lesz többféle sötét mód, nem csak a böngészőhöz", és kérte, hogy a
+témagombok **ikon + tooltip** legyenek. Mindkettő kész (ADR-045).
+
+### Az oldal-sötétítés négy fokozata
+
+A `set_forced_dark` op most `mode` mezőt kap (`off`, `invert`, `dim`, `warm`); a régi `enabled` logikai mező
+visszafelé is működik (`true` → `invert`). A motor ugyanazt a **nevesített** stíluselemet cseréli vagy
+távolítja el, tehát a fokozatváltás újratöltés nélkül történik. A kiválasztott fokozat megmarad
+(`ui/page_dark_mode`), és a régi `ui/forced_dark` kulcsot az első indítás átváltja majd törli.
+
+### A vezérlősáv: ikonok, tooltipek
+
+A négy felirat (`light grey dark amoled`) helyett négy **generált ikon** (a téma háttere + szövegszíne, 20 px,
+kódban rajzolva, nincs új asset), a szó a tooltipben és a képernyőolvasó-névben. Az oldal-sötétítés
+holdsarló-ikonja menüből választható, és a **kitöltése** mutatja az érvényes fokozatot.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --themetest <engine>
+theme_chrome=light luma=244
+theme_chrome=grey luma=58
+theme_chrome=dark luma=40
+theme_chrome=amoled luma=13
+theme_contrast=ok
+theme_button=light painted=85% ok        (mind a négy ikon 85%-ban fest, és négy különböző kép)
+theme_icons=ok
+theme_wcag=light  text=16.2 muted=6.0 surface=17.4 ok
+theme_wcag=grey   text=11.2 muted=5.6 surface=10.0 ok
+theme_wcag=dark   text=13.9 muted=6.1 surface=12.7 ok
+theme_wcag=amoled text=17.9 muted=7.5 surface=16.9 ok
+theme_wcag_aa=ok
+grid_capture=light luma=240 → grid_capture=amoled luma=50, grid_theme=ok
+dark_capture=mode_off    luma=251
+dark_capture=mode_invert luma=4
+dark_capture=mode_dim    luma=39
+dark_capture=mode_warm   luma=33
+dark_page_modes=ok
+dark_mode_persisted=ok
+theme_check=ok        (exit 0)
+```
+
+Két új mérés került a tesztbe, mert eddig csak *állítottuk* őket: (1) a témagombok ikonja **tényleg fest**
+(a látható pixelek aránya, és hogy a négy ikon négy különböző kép — a négy azonos hold nem menne át);
+(2) a `08-DIZAJN.md` §1 ígérete a WCAG AA kontrasztra **számolva** van minden témára (a napló fölött látszik:
+a legkisebb érték 5.6:1, a küszöb 4.5).
+
+### Egy környezeti buktató, amit a teszt most már nem nyel le
+
+Az első futás `CefInitialize failed`-del állt meg, mert egy **korábbi, megszakított futtatás** motor-fái még
+éltek (`antikolt-shell` + több `antikolt-engine-host`, 17:53-tól). A tesztek a folyamatokat a végükön lezárják;
+a tanulság a naplóban marad: a „minden zöld" csak akkor igaz, ha előtte nincs szemét folyamat.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (30 önteszt + `check-repo`).
+
+## 2026-11-18 (ötvenötödik szelet) — egy ablak, és a sötét oldalak
+
+A felhasználó a Start menüből indított programban **két ablakot** látott: a böngészőt és egy fekete
+konzolablakot a motor naplójával, benne a GPU-hibákkal. Ez a szabály is megszületett: „szigorúan tilos
+bármilyen indokolatlan plusz ablakot megnyitni és főleg életben tartani".
+
+### A plusz ablak: a konzol-subsystem
+
+A shell eddig console-subsystem exe volt, és a Windows a parancsikonos indításhoz ad neki egy saját
+konzolablakot (mért bizonyíték: a futó folyamat ablakai között `ConsoleWindowClass`, láthatóan). A javítás
+(`DropOwnConsoleWindow`): ha a konzolhoz **egyedül** a mi folyamatunk kapcsolódik, akkor az a konzol a miénk —
+eldobjuk (`FreeConsole`); ha egy shell is ott van (minden önteszt), akkor az övé, és marad. A GUI-subsystem
+(`WIN32_EXECUTABLE`) kipróbálva **elvetve**: a PowerShell egy GUI-programot nem vár meg és nem adja vissza a
+kimenetét (mért: `& $shell --traytest` azonnal visszatért, üres kimenettel és kilépési kóddal), ami csendben
+hatástalanította volna a teljes kaput — ezt előbb a harnessnek kell megtanulnia.
+
+### A sötét módok: a felület sötét, a cikk fehér
+
+A felhasználó képe (amoled téma) mérve: a vezérlősáv pixel `#0A0A0A`, a státuszsor `#000000` — tehát a
+**téma működött**; a Wikipedia cikke maradt fehér, mert az ADR-037 csak *megmondja* a lapnak, hogy sötétet
+szeretnénk, a cikknek pedig nincs saját sötét témája. Két hiba és egy hiányzó funkció jött ki ebből:
+
+1. **A rács nem követte a vezérlősávot** (saját `data-theme` kapcsolója volt), és a shell-push egy klikkel
+   **le is maradt** (`currentTheme_` a push *után* állt be). Javítva: a vezérlősáv döntése hajtja a rácsot,
+   témaváltáskor és minden rácstöltésnél.
+2. **Az önteszt eddig csak a stíluslap szövegét olvasta** — a felhasználó találta meg a különbséget a
+   szöveg és a képernyő között. Új `--themetest`: renderel, és pixelt mér.
+3. **Új funkció (ADR-044): „🌙 Sötét oldalak"** kapcsoló (alapból ki, megjegyzett). A motor `set_forced_dark`
+   opja egy **nevesített** stíluselemet szúr a lapba (invertál + a képeket visszainvertálja), és ugyanazt
+   eltávolítva állítja vissza — újratöltés nélkül.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --themetest <engine>
+theme_chrome=light luma=241
+theme_chrome=grey luma=60
+theme_chrome=dark luma=42
+theme_chrome=amoled luma=15
+theme_contrast=ok
+grid_surface=1
+grid_theme_attr=amoled
+grid_capture=light luma=239
+grid_capture=amoled luma=68
+grid_theme=ok
+dark_surface=2
+dark_capture=no-force luma=251
+dark_capture=forced luma=13
+forced_dark_pages=ok
+forced_dark_persisted=ok
+theme_check=ok        (exit 0)
+```
+
+A `theme_chrome` sorok a vezérlősáv **átlagos** fényessége a négy témában (a paletta sorrendje: 241 ≫ 60 > 42
+> 15), a `grid_capture` a termék saját rácsoldala (239 → 68), a `dark_capture` pedig egy fehér
+próbaoldal a kapcsolóval ki/be (251 → 13). A teszt a végén **kikapcsolja** a kapcsolót: egy önteszt nem
+változtathatja meg a felhasználó beállítását, és a `forced_dark_persisted=ok` sor azt bizonyítja, hogy egy
+második ablak (a következő indítás) ugyanazt az értéket olvassa vissza a `QSettings`-ből.
+
+### A szabály rögzítve
+
+`docs/HU/08-DIZAJN.md` §8–9 és `docs/HU/15-HOZZAJARULAS.md` §4: **nincs indokolatlan plusz ablak, és nem
+marad életben egy sem**; a motor- és magfolyamatok rejtett csöveken beszélnek, a tálcaikon jelzés és nem
+ablak, a saját konzolablakot a program eldobja. Ez review-kérdés minden olyan változtatásnál, ami ablakot
+vagy folyamatot hoz létre.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (30 önteszt, köztük `themetest ok`, + `check-repo`).
+
+## 2026-11-18 (ötvennegyedik szelet) — tálcaikon, ami egyben a futásjelző, és egy felhasználó = egy Antikolt
+
+A kérés szó szerint ez volt: „tálcára az indítóikon, ami egyben a futás ikonja is". Két dolog hiányzott
+hozzá: az ikon, és az, hogy a parancsikon ne indítson második böngészőt. Mindkettő kész (ADR-043).
+
+**Egypéldányos őr** (`instance_guard.h/.cpp`): indulás előtt a shell lefoglal egy nevesített helyi socketet
+(`antikolt-shell-<felhasználó>`); ha már válaszol rá valaki, elkéri a futó ablaktól, hogy jöjjön elő, és
+**ablak nélkül, 0-val kilép** — motor, profil és ~150 MB nélkül. A sorrend nem véletlen: előbb
+*csatlakozni* kell, aztán foglalni, mert Windowson két folyamat is létrehozhat pipe-példányt ugyanarra a
+névre (mértem: a pusztán `listen()`-re épülő változat másodikként is primary lett).
+
+**Tálcaikon** (`MainWindow::setupTray`): a program ikonja (ugyanaz, amit a parancsikon mutat), „Antikolt —
+fut" tipp, kattintásra ki-be váltja az ablakot, menüje „Megnyitás" és „Kilépés". A bezárás gomb a tálcára
+teszi az ablakot, és ezt egyszer el is mondja; a valódi kilépés a menü „Kilépés" pontja. Tálca nélküli
+munkamenetben minden a régi (bezárás = kilépés); a többi önteszt ebben a módban fut
+(`ANTIKOLT_NO_TRAY`), csak a `--traytest` kapcsolja be a tálcát.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --traytest
+instance_primary=ok
+instance_second=instance=secondary exit=0
+instance_raised=ok
+tray_icon=ok
+tray_menu=Megnyitás|Kilépés
+close_returns=hidden
+tray_hides=ok
+tray_menu_items=ok
+tray_restores=ok
+tray_quit=ok
+fallback_tray=absent close=closed
+tray_and_instance=ok        (exit 0, három futásból három zöld)
+```
+
+Az `instance_second` sor egy **valódi második folyamat** válasza: a teszt ugyanezt az exét indítja el
+`--ping-instance`-szel, mint ahogy a parancsikon tenné. A `fallback_tray=absent close=closed` sor a
+tálca nélküli ágat bizonyítja: ott a bezárás tényleg bezár.
+
+Élő próba a kész programmal: az első indítás fut (motor, ablak), a **második indítás `exit=0`** és a
+naplóban `már fut egy Antikolt: a meglévő ablak előhozva, ez az indítás kilép` — második motor nem indult.
+
+### Ami a mérésből látszik (és amit a felhasználónak tudni kell)
+
+A tálcára tett ablak **nem ad vissza memóriát**: a motor és a rács él, amíg „Kilépés" nem történik. A nyitott
+kártya viszont a 10 perces szabály szerint magától hibernál, tehát a tálcán várakozó böngésző elengedi a
+kártya memóriáját is (ADR-043 következmény).
+
+### A hordozható példány frissítve
+
+A `dist\Antikolt` és a Start menü/asztali parancsikon eddig a **tegnapi** buildet futtatta; a szelet végén
+`scripts/dist.ps1 -Release` újraépítette, és a `README.txt` is a valóságot írja (a motor magától indul, a
+bezárás a tálcára tesz, a második indítás előhozza a futó ablakot).
+
+### Élő próba a kész programmal (és a hiba, amit csak ez mutatott meg)
+
+A `--traytest` zöld volt, de az **igazi** indításnál a tálca nem jelent meg. Ok: a két kapcsoló
+(`ANTIKOLT_NO_TRAY`, `ANTIKOLT_NO_PREVIEW_WORKER`) feltétele „nem ez a teszt" volt, ami a *sima indításra*
+is igaz — tehát a szállított böngészőben a tálca **és** a háttér-előnézet queue-ja is ki volt kapcsolva.
+A javítás: a kapcsolók csak akkor élnek, ha a program **nevesített egy öntesztet** a parancssorban
+(`QCoreApplication::arguments().size() > 1`); a sima indításé a tálca és a queue. Mérve a valódi exével:
+
+```
+hwnd=21828818 visible=True
+after_close: alive=True window_exists=True window_visible=False     # WM_CLOSE → tálcára
+ping_exit=0 (instance=secondary)
+after_ping: alive=True window_visible=True                          # a parancsikon előhozta
+```
+
+Ugyanez a naplóban: `tray: ikon a tálcán (a program ikonjával)`, majd a queue magától dolgozik
+(`preview worker: preview-worker-abort … kép a profilban`).
+
+### Egy környezeti flake, javítva
+
+A teljes kapuban egyszer `capturetest=FAILED` lett (a GPU-folyamat újraindulásai közben a
+`Page.captureScreenshot` válasza elmaradt). A termék ilyenkor újrapróbál (`kCefCaptureAttempts`), ezért a
+teszt is: két újrapróbálkozás, mindegyik egy friss `navigate`-tel kér új képkockát (`capture_retry=`).
+Utána 3/3 zöld.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED** (29 önteszt, köztük `traytest ok`, + `check-repo`).
+
+## 2026-11-17 (ötvenharmadik szelet) — a háttér-előnézet munkása, és amit a második felület felszínre hozott
+
+A 52. szelet az őröket adta; ez a szelet a **végrehajtást**: a munkás a `MainWindow`-ban él, a motorház
+pedig megtanulta, ami eddig hiányzott hozzá.
+
+**Ami a munkás** (`main_window.cpp`, `previews.h` őreivel): `startPreviewWorker(id, url)` →
+`previewWorkerCanStart` → rejtett felület a `persist:preview` partíción → `navigate` → `loadFinished`
+(a *munkás* azonosítójára szűrve) → `capture` (png, 80) → a kép átmozgatása a `previews/<id>.png` alá →
+`previewConsumeBudget` → `cardUpsert` a `preview_ref`-fel → `destroySurface` → `Idle`. Megszakítja a
+kártyanyitás, a rács elhagyása és a plafon; a queue 1,2 s-mal a munkás után indítja a következő kártyát.
+A plafon `ANTIKOLT_PREVIEW_DEADLINE_MS`-sel állítható (mint a hibernációs óra), hogy a teszt mérhesse.
+
+**Ami a motorház** (ADR-042): eddig egyetlen `HostState` volt, és a `surface` mezőt csak a huzal
+ellenőrizte — minden parancs a rácsra futott. Most felületenkénti állapot van (a `create_surface`
+azonosítója a kulcs), a `WM_CLOSE` a saját felületét zárja, a `bridge_reply` a kérés tulajdonosát keresi,
+ismeretlen felületre `surface_not_found` a válasz, a harmadik felületet `engine_busy` utasítja el, és a
+`hidden` jelző felületenként adható (`create_surface { …, hidden }`).
+
+### Bizonyíték (tényleges kimenet)
+
+```
+antikolt-shell --previewworkertest <engine>
+grid_ready=ok
+deadline_start=ok
+deadline_worker=preview-worker-abort
+deadline_fired=ok
+deadline_state=idle
+deadline_no_preview=ok
+deadline_surface_gone=not-asked
+worker_start=ok attempt=1
+worker_card=preview-worker-probe
+worker_attempts=1
+worker_produced=ok
+worker_file=ok
+worker_pixels=1579x942 colours=13
+worker_ref=preview-worker-probe.png
+worker_state=idle
+worker_budget=1
+worker_surface_gone=no live surface
+abort_start=ok
+abort_state=idle
+abort_no_preview=ok
+abort_surface_gone=no live surface
+user_card_loaded=ok
+preview_worker=ok        (exit 0)
+```
+
+A `deadline_*` sorok azt bizonyítják, hogy az 5 ms-os plafon **magától** lezárja a munkát: nincs kép, a
+keret nem nő, az állapot `idle`, és a késve megérkező felület-válasz sem marad élőben (a második fázis
+ugyanezt kártyanyitással, a válasz megérkezése előtt próbálja ki). A `worker_surface_gone` kérdés a motor
+saját válasza, nem a shell hite.
+
+### Memória, mérve (a „4 MB" helyett)
+
+Ugyanabban a futásban, 150 ms-os mintavétellel a motorházi folyamatfára: **8 folyamat / 143 MB** a rácson
+állva, **9 folyamat / 167 MB** a munkás élettartamára — a második felület tehát **egy külön renderelő
+folyamat, ~24 MB**. Az ADR-041 4 MB-os ígérete téves volt; a helyesbítés az ADR-042-ben.
+
+### Amit a szigorúbb motor felszínre hozott (tíz önteszt)
+
+A motor most már *nem* szolgálja ki a nem létező felületre címzett parancsot, és ez rögtön tíz öntesztet
+buktatott meg — mindegyik valódi hiba volt, amit az eddigi „mindent kiszolgáló" motor eltakart:
+
+- **elavult felület-azonosító**: a `lifecycletest` a hibernálás után a *régi* rács-felületre címzett
+  `eval`-t (a rács új felületen jött vissza) → a teszt most követi az új azonosítót;
+- **dangling `id`**: deferred lambdák `[&]`-ban megfogták egy load-handler `id` paraméterét, és a timer
+  később szemétre mutatott (`eval` a `surface=140703778610427`-ra) — `embedtest`, `metricstest`,
+  `timeouttest`, `notetest`, `pintest`, `bridgetest`, `previewtest`, `previewgentest`, `scrollzoomtest`.
+  A javítás mindenhol `[&, id]`, a létrehozó closure élete alatt.
+
+A `metricstest` emellett fix 1200 ms helyett **kérdezgeti** a lap válaszát (`page_poll_ticks`), mert a
+híd-kérés három oda-vissza útja terhelt gépen hosszabb lehet bármely beégetett késleltetésnél — ez a
+korábbi „mért nulla" oka volt.
+
+### A felvétel, ami néha vár (környezet, nem termék)
+
+A rejtett felület első `Page.captureScreenshot`-ja ezen a gépen (GPU nélkül, szoftveres kompozitálás)
+néha **20 s-nál tovább** vár egy képkockára; a gépen a GPU-folyamat induláskor `-2147483645`-tel meghal
+(lásd `18-F0-JELENTES.md`). Ez a termékben nem hiba: a 8 s-os plafon lezárja a munkást, a kártya kimarad,
+és a queue a következő körben újrapróbálja. A teszt ugyanígy tesz (legfeljebb három menet, `worker_attempts`),
+mert a szerződés a „előbb-utóbb feltöltődik", nem az „elsőre sikerül". Két dolgot kipróbáltam és
+**elvetettem**, mert mérés nem támasztotta alá: a munkás-felület láthatóvá tétele, a `fromSurface=false`
+felvétel (fehér kép, `colours=1`) és a háttér-throttling kapcsolók.
+
+### Saját hiba a szeletben
+
+Egy PowerShell-sorral akartam beszúrni egy ideiglenes debug-sort a `main.cpp`-be; a hibás indexelés miatt
+a fájl első 1717 sora elveszett. Helyreállítás: `git checkout` a fejből + a mentett farok összefűzése, majd
+a javítások újraalkalmazása — a fájl sorvégei is visszaálltak LF-re. A tanulság: **fájlt a `edit` toollal
+kell szerkeszteni**, nem sorindexszel PowerShellből.
+
+### Kapu
+
+`pwsh -File scripts/verify.ps1` → **ALL SELF TESTS PASSED**: 29 ellenőrzés (28 önteszt, köztük
+`previewworkertest ok`, és a `check-repo`: SPDX, linkek, higiénia, `node --check`, `cargo fmt/clippy/test`
+— 78+7+2+1+15 teszt).
+
 ### A panel is mutatja is (42. szelet)
 
 A `session_list` válasz sorai most a mag által mért mennyiséget is hordozzák (`size`: sütik, bájt, service

@@ -1,12 +1,24 @@
-# Rust
+# Antikolt — .gitignore
+#
+# The rule of this file: **nothing that can be rebuilt, nothing that belongs to a user, nothing that is a secret.**
+# A public repository must be usable by a stranger (`git clone` → build) and harmless if it leaks, so the patterns
+# below are grouped by *why* the path is ignored, not by file extension alone.
+#
+# Checked in the gate: `scripts/check-repo.ps1` fails if a forbidden path is staged.
+
+# ---------------------------------------------------------------------------------------------------------------
+# 1. Build output — reproducible from source, large, and different on every machine
+# ---------------------------------------------------------------------------------------------------------------
 target/
 **/target/
-Cargo.lock.bak
-
-# Build output
 build/
+build-release/
 out/
 bin/
+dist/
+Debug/
+Release/
+x64/
 *.pdb
 *.ilk
 *.obj
@@ -16,39 +28,103 @@ bin/
 *.exe
 *.app/
 *.pkg
+*.msix
+*.msi
+*.appx
+*.nupkg
 
-# IDE
+# ---------------------------------------------------------------------------------------------------------------
+# 2. User data — a profile, a capture, a session ledger or a vault is never source
+# ---------------------------------------------------------------------------------------------------------------
+data/
+profile/
+profiles/
+blobs/
+containers/
+sessions.json
+cards.json
+workspaces.json
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-wal
+*.db-shm
+*.mhtml
+*.mht
+*.antikolt
+*.antikolt.json
+screenshots/
+*.etl
+
+# ---------------------------------------------------------------------------------------------------------------
+# 3. Secrets and machine-local configuration
+# ---------------------------------------------------------------------------------------------------------------
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.jks
+*.keystore
+secrets/
+*_secret*
+*token*.txt
+credentials.json
+CMakeUserPresets.json
+*.local.json
+
+# ---------------------------------------------------------------------------------------------------------------
+# 4. Toolchain and engine downloads — reproducible, hundreds of megabytes, and licensed separately
+# ---------------------------------------------------------------------------------------------------------------
+cef/
+cef-binaries/
+qt/
+qt-install/
+*.7z
+*.zip
+*.tar.gz
+*.tgz
+*.lnk
+
+# ---------------------------------------------------------------------------------------------------------------
+# 5. Node (the home page's tooling only) and generated caches
+# ---------------------------------------------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-error.log
+.pnpm-store/
+.eslintcache
+.cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---------------------------------------------------------------------------------------------------------------
+# 6. Measurements — reviewed baselines are tracked under perf/baseline/, raw runs are not
+# ---------------------------------------------------------------------------------------------------------------
+perf/raw/
+perf/reports/
+perf/*.csv.tmp
+*.log
+
+# ---------------------------------------------------------------------------------------------------------------
+# 7. Editors, OS noise, temporary files
+# ---------------------------------------------------------------------------------------------------------------
 .vs/
 .vscode/
 .idea/
 *.user
 *.suo
+*.swp
+*~
 compile_commands.json
-
-# Node (home page tooling only)
-node_modules/
-npm-debug.log*
-
-# Local runtime data — never commit a user profile, vault or snapshot store
-data/
-*.db
-*.db-wal
-*.db-shm
-blobs/
-containers/
-
-# Installer logs (aqtinstall and friends drop them in the working directory)
-*.log
-
-# Measurement output (keep the reviewed baselines under perf/baseline/, ignore raw runs)
-perf/raw/
-perf/reports/
-perf/*.csv.tmp
-
-# OS noise
 Thumbs.db
 desktop.ini
 .DS_Store
-
-dist/
-build-release/
+*.tmp
+*.bak
+*.orig
+*.rej

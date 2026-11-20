@@ -22,10 +22,10 @@
 
 | # | Invariáns | Ellenőrzés |
 |---|---|---|
-| I1 | Egyszerre **legfeljebb egy** kártya-renderelő fut (oldal **vagy** kezdőlap). Egyetlen kivétel: a felhasználó által indított **bejelentkezési popup** (OAuth/SSO), ami legfeljebb 60 s-ig él, és automatikusan bezárul. | mérőpad: kártya-renderelő ≤ 1 (+0–1 átmeneti popup) |
+| I1 | Egyszerre **legfeljebb egy** kártya-renderelő fut (oldal **vagy** kezdőlap). Két dokumentált kivétel: a felhasználó által indított **bejelentkezési popup** (OAuth/SSO), ami legfeljebb 60 s-ig él, és automatikusan bezárul; valamint a **háttér-előnézet munkása** (ADR-041/ADR-042): egy rövid életű, rejtett felület a `persist:preview` partíción, legfeljebb 8 s-ig, csak a rácson állva, és azonnal megszűnve, ha kártya nyílik. | mérőpad: kártya-renderelő ≤ 1 (+0–1 átmeneti popup, +0–1 munkás a rácson); `--previewworkertest` |
 | I2 | Minden kártya állapota **lemezen** van, amikor nem élő. | hibernálás után a kártyához tartozó snapshot létezik |
 | I3 | A kártya soha nem fogyaszt RAM-ot, amikor nincs megnyitva. | mérőpad: 50 kártya, 0 nyitott oldal → büdzsé |
-| I4 | Egy ablak, egy élő nézet (v1). | kód: `LiveView` singleton |
+| I4 | Egy ablak, egy élő nézet (v1). Egy felhasználónál **egy Antikolt fut**: a parancsikon másodszori megnyitása a futó ablakot hozza elő, nem indít másodikat (ADR-043). | kód: `LiveView` singleton + `InstanceGuard`; `--traytest` |
 | I5 | Titok (jelszó, TOTP) soha nem kerül a weboldal fővilágába, naplóba, hibajelentésbe. | teszt: page JS nem látja |
 | I6 | Nincs hálózati telemetria. | hálózati napló a tesztben üres |
 | I7 | A felhasználó adatai (sütik, snapshotok) az ő gépén maradnak, titkosítva, ahol titok van. | audit |

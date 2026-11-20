@@ -40,6 +40,12 @@ struct Command {
     /// JavaScript to evaluate (`eval`), executed in the page's main world.
     std::string script;
     std::string partition;
+    /// Whether the surface must stay unseen (`create_surface` config `hidden`, ADR-041).
+    ///
+    /// The background preview worker photographs a page and never shows a window for it: the user is on
+    /// the grid and a preview must not steal focus or appear over what they are reading. Same effect the
+    /// process-wide `--hidden` flag has, but per surface, so the card and the worker can differ.
+    bool hidden = false;
     /// Data control (`clear_origin_data`): the origin whose storage is cleared, and which storages —
     /// CDP `Storage.clearDataForOrigin` identifiers such as `cookies` or `local_storage`. The Rust
     /// contract (crates/antikolt-ipc `Message::ClearOriginData`) sends the list as an array.
@@ -53,6 +59,11 @@ struct Command {
     /// Site theme emulation (`set_media`, ADR-037): `auto` (no override), `dark` or `light` for
     /// `prefers-color-scheme`. Applied through DevTools, so pages that support the query follow it.
     std::string media = "auto";
+    /// Dark pages (`set_forced_dark`, ADR-044/ADR-045): the user asked for the page itself to be darkened, and
+    /// for *how* — `off`, `invert` (near black), `dim` (soft dark grey) or `warm` (warm dark grey). The engine
+    /// injects one named style element, so a mode change is a replacement and `off` removes exactly what this
+    /// host added. An empty value means "leave the page alone".
+    std::string dark_mode;
     /// Scrolling (`scroll`): the distance in CSS pixels, and whether the move is animated.
     int scroll_x = 0;
     int scroll_y = 0;

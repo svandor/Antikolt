@@ -9,6 +9,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QHash>
 #include <QMainWindow>
 #include <QSet>
 #include <QString>
@@ -16,12 +17,18 @@
 #include <functional>
 #include <QStringList>
 
+#include "previews.h"
+
 class QLabel;
 class QTimer;
 class QDockWidget;
 class QTableWidget;
 class QSpinBox;
 class QCheckBox;
+class QSystemTrayIcon;
+class QMenu;
+class QCloseEvent;
+class QToolButton;
 class EngineClient;
 class CoreClient;
 class LiveCard;
@@ -118,16 +125,86 @@ public:
     /// for the same reason the panel helpers are — the self test drives the real path.
     void setPageMedia(const QString& media);
 
+    /// Ask the engine to darken the page itself, or to stop doing it (ADR-044/ADR-045).
+    ///
+    /// The switch is the user's (toolbar), remembered in the settings and re-applied on every load. It is *not*
+    /// tied to the window theme: the site-theme query already tells a page what the system prefers, and a page
+    /// without a dark theme of its own stays light until this is asked for — which is what the user saw when
+    /// the window was amoled and the article was white.
+    void setPageDarkMode(const QString& mode);
+    /// The page-dark mode in force: `off`, `invert`, `dim` or `warm` (self test witness).
+    QString pageDarkMode() const { return page_dark_mode_; }
+    /// The page-dark modes the toolbar offers, in menu order.
+    static QStringList pageDarkModes();
+    /// The theme button of one theme, so the self test can prove it carries an icon and a tooltip
+    /// (docs/HU/08-DIZAJN.md §6: the toolbar's theme switch is icons, the words live in the tooltip).
+    QToolButton* themeButton(const QString& theme) const;
+    /// The toolbar's dark-pages button (icon + menu) and its icon for one mode.
+    QToolButton* pageDarkButton() const { return page_dark_button_; }
+
+    /// Start the background preview worker for one card (ADR-041). False when the guards refuse it.
+    ///
+    /// The worker gets its own hidden surface, loads the card's page, photographs it through the engine's
+    /// compositor, writes the file into the profile and the name onto the card record. It runs only while
+    /// the user is on the grid and yields the moment a card opens: the self test drives this directly, and
+    /// `previewWorkerAutoEnabled()` is what keeps the grid filling itself in a real run.
+    bool startPreviewWorker(const QString& cardId, const QString& url);
+    /// Where the worker is — the witness a self test reads (`Idle` once a job is over).
+    antikolt::PreviewWorker previewWorkerState() const { return worker_state_; }
+    /// The surface the last job used. Kept after it is destroyed only so a test can prove the engine no
+    /// longer knows it; nothing in the window acts on it.
+    qint64 previewWorkerLastSurface() const { return worker_last_surface_; }
+    /// Whether the grid fills its empty preview frames by itself.
+    ///
+    /// A self test drives the worker explicitly, so the automatic queue is turned off there
+    /// (`ANTIKOLT_NO_PREVIEW_WORKER`) — one probe should measure one thing.
+    static bool previewWorkerAutoEnabled();
+
+    /// Whether this window puts its icon in the system tray (ADR-043).
+    ///
+    /// False when the platform has no tray, and when `ANTIKOLT_NO_TRAY` is set: every self test except
+    /// `--traytest` turns the tray off, so closing a test window keeps meaning what it always meant.
+    static bool trayEnabled();
+
+    /// True when the icon is in the tray — which is also the reason the window survives its own close.
+    bool trayAvailable() const { return tray_ != nullptr; }
+    /// The tray menu's labels, in order (separators left out) — the witness a self test reads.
+    QStringList trayMenuLabels() const;
+
+signals:
+    /// One worker job ended. `produced` is true only when the image reached the profile *and* the record.
+    void previewWorkerFinished(const QString& cardId, bool produced);
+
 public slots:
     void startEngine();
     void loadHome();
     void freezeCard();
     /// Show one card: hibernate whatever is live, then open this URL as the live card.
     void openCard(const QString& url, const QString& title);
+    /// Bring the window back from the tray: the tray click, its "Megnyitás" item, and a second launch of
+    /// the shortcut all end up here (ADR-043).
+    void restoreFromTray();
+    /// End the process from the tray menu. After this the tray is no longer a reason to keep running, so
+    /// the window really closes.
+    void quitFromTray();
+
+protected:
+    /// The close button hides the window to the tray instead of ending the browser (ADR-043); without a
+    /// tray it closes as it always did.
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     void buildToolBar();
     void buildCardArea();
+    /// Put the icon in the tray (ADR-043). Does nothing when the platform has no tray or the tray is off.
+    void setupTray();
+    /// Hide the window, leaving the tray icon as the way back — the close button's real work.
+    void hideToTray();
+    /// Tell the grid page which theme the toolbar picked (`data-theme` in home/app.js).
+    ///
+    /// The chrome and the product's own page must never disagree about the theme: the toolbar's buttons are
+    /// the user's choice, so the grid follows them (measured: the two used to be separate switches).
+    void pushThemeToGrid(qint64 surface);
     void ensureSurface();
     void closeLiveCard();
     void handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args,
@@ -149,6 +226,17 @@ private:
     /// compositor writes it (`capture`), the shell moves it into the profile's `previews` directory, and the
     /// core stores the name. A card that already has a preview keeps it: this is not a screenshot loop.
     void producePreview(qint64 surface);
+    /// Keep the grid's previews filled: ask the core which card needs a picture (previews.h) and start one
+    /// job. Re-entered when a job finishes, so the queue drains one card at a time.
+    void schedulePreviewWork();
+    /// The worker's surface finished loading: photograph it (ADR-041).
+    void onPreviewWorkerLoaded();
+    /// One worker job's end: state back to Idle, deadline stopped, surface destroyed, witness emitted.
+    void finishPreviewWorker(bool produced, const QString& reason);
+    /// Abandon a running job because the user opened a card: the surface goes now, the record stays.
+    void abortPreviewWorker(const QString& reason);
+    /// True when the page in front is the grid — the only place a worker may run (ADR-041, point 1).
+    bool gridIsShowing() const;
     /// (Re)start the hibernation clock for the live card.
     void armIdleTimer();
     /// Any sign of the user: restarts the hibernation clock.
@@ -208,6 +296,12 @@ private:
     int previews_made_ = 0;
     /// The site theme the user asked for (`auto`, `dark`, `light`), re-applied on every surface (ADR-037).
     QString page_media_ = QStringLiteral("auto");
+    /// Force dark pages (ADR-044/ADR-045): the user's switch, remembered across runs, re-applied on every load.
+    QString page_dark_mode_ = QStringLiteral("off");
+    /// The toolbar's dark-pages button, so its icon and tooltip always show the mode in force.
+    QToolButton* page_dark_button_ = nullptr;
+    /// The four theme buttons, by theme name (icon-only, the words are in the tooltip).
+    QHash<QString, QToolButton*> theme_buttons_;
     /// The page zoom in percent, re-applied on every load (ADR-038); the label shows it.
     int zoom_percent_ = 100;
     QAction* zoom_label_ = nullptr;
@@ -218,4 +312,26 @@ private:
     QString session_policy_ = QStringLiteral("sweep");
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
+    /// ---- the background preview worker (ADR-041) ------------------------------------------------
+    /// Where the worker is. The whole protocol is this value plus `worker_surface_`: a worker that is not
+    /// `Idle` must be destroyed before another may start, and it yields the moment a card opens.
+    antikolt::PreviewWorker worker_state_ = antikolt::PreviewWorker::Idle;
+    /// The worker's own surface, 0 when none exists. Never the card's surface: those are different pages.
+    qint64 worker_surface_ = 0;
+    /// The last surface the worker held, for the self test's "the engine no longer knows it" witness.
+    qint64 worker_last_surface_ = 0;
+    QString worker_card_id_;
+    QString worker_page_url_;
+    QString worker_preview_name_;
+    /// The job's ceiling (8 s, one shot): a page that never paints must not hold the slot.
+    QTimer* worker_deadline_ = nullptr;
+    /// ---- the tray icon (ADR-043) ----------------------------------------------------------------
+    /// The icon in the notification area: the same icon the shortcut and the window carry, so "launcher"
+    /// and "running" are the same picture. Null when the platform has no tray.
+    QSystemTrayIcon* tray_ = nullptr;
+    QMenu* tray_menu_ = nullptr;
+    /// Set by `quitFromTray`: from then on the close button closes, because the tray menu already asked.
+    bool quit_requested_ = false;
+    /// The "it keeps running in the tray" hint is said once per run, not on every close.
+    bool tray_hint_shown_ = false;
 };

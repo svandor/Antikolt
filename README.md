@@ -1,14 +1,26 @@
 # Antikolt
 
-**Modern, memóriatakarékos, kártya-alapú böngésző.** Nyitott forrás, magyar és angol nyelven.
+**Modern, memóriatakarékos, kártya-alapú böngésző.** Nyitott forrás (MPL-2.0), magyar és angol nyelven.
+**A low-RAM, card-based desktop browser.** Open source (MPL-2.0), documented in Hungarian and English.
+
+> **English, in one paragraph.** Antikolt replaces the tab strip with a grid of **cards** on a home page that is
+> itself a real, editable web page. A Qt 6 shell hosts a CEF (Chromium) engine in a separate process tree, and a
+> Rust core owns the data: cards, containers (isolated cookie partitions), workspaces, the session ledger and the
+> portable profile bundle. Leaving a card **hibernates** it to disk (MHTML snapshot + scroll/anchor/form state) and
+> destroys the engine view; returning restores it offline in seconds. Measured on the current build: `verify.ps1`
+> runs **41 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **78 + 21 + 2 +
+> 1 + 15 Rust tests**), and `dist.ps1 -Release` produces a 446 MB portable build. Start with
+> [`docs/EN/README.md`](docs/EN/README.md); the authoritative plan and the decision log are Hungarian
+> ([`docs/HU/`](docs/HU/)). Licence: [`LICENSE`](LICENSE) (MPL-2.0) · authors: [`AUTHORS`](AUTHORS) ·
+> third parties: [`NOTICE`](NOTICE).
 
 > Állapot: **v0.8 — a hibernálási ciklus bezárva**. Mentés: MHTML (DOM + beágyazott erőforrások) **és**
 > állapot (görgetés, horgony, űrlapok, `sessionStorage`, média-pozíció, jelszavak nélkül); a motor
 > **61 MB RAM-ot ad vissza**. Visszaállítás: a mentett MHTML **offline** (`file://`) betöltve, az állapot
 > visszaírva — ellenőrizve: `scrollY=600`, `fields=18`, a cikk szövege megjelenik, hálózat nélkül.
-> A Rust mag 79 tesztje zöld.
 > Terv: `docs/HU/` (magyar) · angol összefoglaló: `docs/EN/` · napló:
-> [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) · F0 mérés:
+> [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) · **mért állapot**:
+> [`docs/HU/21-ALLAPOT.md`](docs/HU/21-ALLAPOT.md) · F0 mérés:
 > [`docs/HU/18-F0-JELENTES.md`](docs/HU/18-F0-JELENTES.md) · eszközlánc:
 > [`docs/HU/17-ESZKOZLANC.md`](docs/HU/17-ESZKOZLANC.md).
 
@@ -132,6 +144,9 @@ Részletek: [`docs/HU/03-MEMORIA.md`](docs/HU/03-MEMORIA.md).
 | [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md) | Fejlesztési napló: mi készült el, hogyan lett ellenőrizve, mi blokkol |
 | [`docs/HU/17-ESZKOZLANC.md`](docs/HU/17-ESZKOZLANC.md) | Eszközlánc: Qt 6, CEF, MSVC, build és a négy buktató |
 | [`docs/HU/18-F0-JELENTES.md`](docs/HU/18-F0-JELENTES.md) | **F0 mérés**: mit mérünk, mennyi, mit jelent, milyen fenntartásokkal |
+| [`docs/HU/19-FOLYTATAS.md`](docs/HU/19-FOLYTATAS.md) | Folytatási munkarend: mi kész, mi a következő |
+| [`docs/HU/20-ALASAS.md`](docs/HU/20-ALASAS.md) | Aláírás: Store és SignPath, mibe kerül, mi a teendő |
+| [`docs/HU/21-ALLAPOT.md`](docs/HU/21-ALLAPOT.md) | **Mért állapot**: mi kész és mivel van bizonyítva, mi nyitott, mihez kell ember |
 | [`proto/README.md`](proto/README.md) | A motorház–mag protokoll v1 írott specifikációja |
 | [`perf/README.md`](perf/README.md) | A mérési mérőpad terve és elfogadási küszöbei |
 | [`docs/forras/`](docs/forras/) | A kiinduló Gemini-terv (ODT + szövegkivonat) és a kutatási jegyzetek |

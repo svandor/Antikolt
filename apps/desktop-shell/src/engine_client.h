@@ -50,8 +50,11 @@ public:
     /// `parentWindow` is a native window handle (a Qt `winId()`): when non-zero the surface is
     /// embedded into that window instead of getting a window of its own, which is how the live card
     /// appears inside the shell while the engine keeps its own process (ADR-004).
+    ///
+    /// `hidden` keeps a surface the shell creates for itself unseen: the background preview worker
+    /// photographs a page and must never put a window over the grid (ADR-041).
     void createSurface(const QString& partition, int width, int height, int deviceScalePercent,
-                       quintptr parentWindow, ReplyHandler handler);
+                       quintptr parentWindow, ReplyHandler handler, bool hidden = false);
     void navigate(qint64 surface, const QString& url, ReplyHandler handler = {});
     /// Place an embedded surface; all values are physical pixels relative to the parent's client area.
     void setBounds(qint64 surface, int x, int y, int width, int height,
@@ -87,6 +90,11 @@ public:
     ///
     /// Only pages that support the query change — the browser tells them and their own CSS does the rest.
     void setMedia(qint64 surface, const QString& media, ReplyHandler handler = {});
+    /// Darken the page itself (`set_forced_dark`, ADR-044/ADR-045): `off`, `invert`, `dim` or `warm`.
+    ///
+    /// The engine injects one named style element and replaces or removes exactly that, so a mode change never
+    /// needs a reload. The user's switch, not a default — see `MainWindow::setPageDarkMode`.
+    void setPageDarkMode(qint64 surface, const QString& mode, ReplyHandler handler = {});
     /// What one surface costs: `{dom_nodes, js_heap_bytes, engine_working_set_bytes}` (ADR-036).
     ///
     /// The numbers are measured by the engine — the page's own node count and JS heap through DevTools, and

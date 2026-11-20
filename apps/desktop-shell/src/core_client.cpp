@@ -125,6 +125,73 @@ void CoreClient::cardUpsert(const QJsonObject& card, ReplyHandler handler) {
     send(QStringLiteral("card_upsert"), fields, std::move(handler));
 }
 
+void CoreClient::cardPageText(const QString& cardId, const QString& text, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("id_of_card"), cardId);
+    fields.insert(QStringLiteral("text"), text);
+    send(QStringLiteral("card_page_text"), fields, std::move(handler));
+}
+
+void CoreClient::cardDelete(const QString& cardId, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("id_of_card"), cardId);
+    send(QStringLiteral("card_delete"), fields, std::move(handler));
+}
+
+void CoreClient::containersList(ReplyHandler handler) {
+    send(QStringLiteral("containers_list"), {}, std::move(handler));
+}
+
+void CoreClient::containerUpsert(const QJsonObject& container, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("container"), container);
+    send(QStringLiteral("container_upsert"), fields, std::move(handler));
+}
+
+void CoreClient::containerDelete(const QString& containerId, const QString& moveTo,
+                                 ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("id_of_container"), containerId);
+    if (!moveTo.isEmpty()) {
+        fields.insert(QStringLiteral("move_to"), moveTo);
+    }
+    send(QStringLiteral("container_delete"), fields, std::move(handler));
+}
+
+void CoreClient::workspacesList(ReplyHandler handler) {
+    send(QStringLiteral("workspaces_list"), {}, std::move(handler));
+}
+
+void CoreClient::workspaceUpsert(const QJsonObject& workspace, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("workspace"), workspace);
+    send(QStringLiteral("workspace_upsert"), fields, std::move(handler));
+}
+
+void CoreClient::workspaceDelete(const QString& workspaceId, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("id_of_workspace"), workspaceId);
+    send(QStringLiteral("workspace_delete"), fields, std::move(handler));
+}
+
+void CoreClient::profileExport(const QString& path, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("path"), path);
+    send(QStringLiteral("profile_export"), fields, std::move(handler));
+}
+
+void CoreClient::profileImport(const QString& path, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("path"), path);
+    send(QStringLiteral("profile_import"), fields, std::move(handler));
+}
+
+void CoreClient::dbStatus(bool sync, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("sync"), sync);
+    send(QStringLiteral("db_status"), fields, std::move(handler));
+}
+
 void CoreClient::shutdown() {
     if (!isRunning()) {
         return;

@@ -77,17 +77,19 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > tovább, a shell `bridge_reply`-vel válaszol. `PROTOCOL_VERSION` = 2, mindkét oldal ellenőrzi.
 > `--bridgetest`: `asked=ok`, `search_cards=1`, `search_first_title=Wikipedia — kezdőlap`,
 > `unknown_method=rejected`, `bridge_request=ok`.
-> **A fókusz-visszaadás mérése megtörtént, a javítás nem kész:** a lap-oldali javítással (`.card` fókuszálható,
-> `focusTheCard()` a Mentés/Mégse után) a mérés továbbra is `note_focus=none` — mert a mentés után a rács
-> **újrarendereli** a kártyát, tehát a fókusz a régi elemre kerül, ami már nincs a dokumentumban. A helyes
-> javítás: a render után, kártya-azonosító alapján visszafókuszálni. A kód ezért **nincs** a fában (nem
-> félkész), csak a mérés.
-> A jegyzet-szerkesztő fókusz-visszaadása **implementálva** (render utáni, id-alapú), de a **mérés** a teszt-ablak fókusz-hiánya miatt nem lehetséges: `note_focus=` próba marad, állítás nélkül (43. szelet).\n> **A rendered jegyzet mérése** is hátra van: a `--notetest` próbája a mentés pillanatában fut, amikor a
-> kártya még nem renderelődött újra (`note_rendered=none`); a próbát a **state-válasz után** kell futtatni
-> (a `note_page` már a 1200 ms-os várakozás után olvas). A kód ezért nincs a fában.
-> **Ami hátra van:** a lap-oldali `test.hang` hook
-> dokumentáltsága a felhasználói doksiban (ma csak a shell README említi), és az, hogy a rács saját
-> keresése szándékosan lokális marad (a lap a teljes listát kapja).
+> **A fókusz-visszaadás mérve és működik (62. szelet):** a mentés után a kártya visszakapja a fókuszt, és ezt a
+> `--notetest` már *állítja*: `note_focus=01SEED…001:card`, a lánc pedig
+> `{"hasFocus":true,"activeTag":"ANTIKOLT-CARD","activeIsHost":true,"shadowActive":"card"}`. Két hiba volt a
+> korábbi mérésben: a próba a **rossz elemet** kérdezte (az első kártyát, nem a fókuszálót), és a fókusz
+> visszaadása egy 2 másodperces időzítőre támaszkodott, ami lejárhatott a mag küldte újrarenderelés előtt —
+> ilyenkor a fókusz a `body`-ra esett (`note_focus=not-host:BODY`). A javítás: az azonosító a következő
+> felhasználói eseményig marad (nem időzítőig), és a rács a render **után szinkron** is visszaadja a fókuszt, mert
+> egy háttérben lévő ablak animációs képkockát nem feltétlenül kap.
+> **A rendered jegyzet mérése is kész:** a próba a state-válasz után, pollozva olvassa a kártya shadow DOM-jából a
+> `.card-notes` szövegét (`note_rendered=probe note`).
+> **Ami hátra van ebben a fejezetben:** a `test.hang` hook említése a felhasználói doksiban (a
+> `07-FOGALMAK.md`-ben már szerepel), és hogy a rács saját keresése szándékosan lokális marad (a lap a teljes
+> listát kapja).
 
 ## 2b. Munkamenet-szabályok állítása (kész, ADR-039)
 
@@ -105,9 +107,12 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > `preview_traversal=refused`. `--previewgentest`: `preview_ref=preview-probe.png`,
 > `preview_page=loaded:1560x857`, `preview_generation=ok`.
 > A napi ≤100 korlát **tartós** (`previews/budget.json`, 38. szelet, `--previewbudget`), a 7 napos frissítés
-> kész (`--previewrefresh`), az árva fájlok takarítása kész (`--previewclean`).
-> **Ami hátra van:** a **háttérben** készített előnézetek (I1: ma csak a felhasználó által megnyitott kártya
-> kap képet), és a `sha256`-alapú blob-tár (blokkolt: nincs `sha2` crate).
+> kész (`--previewrefresh`), az árva fájlok takarítása kész (`--previewclean`), és a **háttérben** készített
+> előnézetek munkása is kész (ADR-041/ADR-042, `--previewworkertest`, lásd §9). A rács a képet **meg is
+> jeleníti**: a `home/app.js` a rekord `preview_ref`-jéből `<img src="antikolt://blob/…">`-t csinál (a
+> `--gridtest` a `naturalWidth > 0`-val méri), tehát a kör bezárult: munkás → `preview_ref` → csempe.
+> **Ami hátra van:** a `sha256`-alapú blob-tár (blokkolt: nincs `sha2` crate), és hogy a queue a *régi*
+> képeket is cserélje (a `nextPreviewCard` már sorolja az elavultat, ezt éles használatban kell mérni).
 
 **Miért:** F2 (rács-előnézet) — a `capture` primitív kész, a feldolgozó nincs.
 
@@ -115,6 +120,9 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 (`CefRegisterSchemeHandlerFactory`, a profil `previews/` mappájából, név-sanitizálással), majd egy
 ütemező: egy kártya egyszerre, 8 s limit, napi 100 frissítés (`02-ARCHITEKTURA.md` §5). A
 tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a fájlnév a kártya id-je.
+
+**Állapot:** az ütemező **kész** (52–53. szelet): `nextPreviewCard` dönt, a munkás-felület fényképez
+(ADR-041, ADR-042), a plafon és a keret a `previews.h` őreiben és a motorház két-felületű korlátjában.
 
 **Bizonyíték:** `--gridtest` második fázisa: a kártya `previewRef`-je betöltődik, a kép nem üres
 (`naturalWidth > 0`), és a `capture` fájlja a profilban van.
@@ -192,23 +200,158 @@ Javítás: a teszt megvárja a `destroy_surface` válaszát (max. 2 s), és csak
 |---|---|
 | Hordozható build + asztali/Start menü parancsikon | kész (`scripts/dist.ps1`, `-Release`) |
 | Saját ikon | kész (`assets/antikolt.icon`, `--selftest` → `icon=ok`) |
+| **Tálcaikon + egypéldányos indítás** | kész (ADR-043, `--traytest`; a `dist\Antikolt` frissítve) |
 | Aláírás-eszköz | kész (`scripts/sign.ps1`: PFX / thumbprint / self-signed / `-VerifyOnly`) |
 | Release workflow | **scaffold** (`.github/workflows/release.yml`, soha nem futott) |
-| **MSIX csomag** | kész (`scripts/msix.ps1`, `payload=ok`, 200.8 MB) |
+| **MSIX csomag** | kész (`scripts/msix.ps1`, `payload=ok`, 201.5 MB — 2026-11-18-án újratöltve a friss payloadból) |
 | Store Identity + helyi telepítés | hátra (Partner Center; tanúsítvány-kötelezettség) |
 | SignPath jelentkezés | emberi lépés (publikus repó + elbírálás) |
 
-## 9. A következő szelet receptje: a háttér-előnézet munkása (`--previewworkertest`)
+## 9. Kész: a háttér-előnézet munkása (`--previewworkertest`)
 
-Az ADR-041 dönt és a `previews.h` őrök készen vannak; a végrehajtás lépései, hogy ne kelljen újra levezetni:
+Az ADR-041 kész, a munkás a `MainWindow`-ban él, és a motorház is megtanulta, amit a második felület
+igényel (ADR-042). Ami a receptből **többletmunka** volt, és amit a következő szelet már nem talál ki újra:
 
-1. **Állapot** a `MainWindow`-ban: `PreviewWorker worker_state_ = Idle; qint64 worker_surface_ = 0; QString worker_card_id_; QTimer* worker_deadline_` (8 s, egy lövés).
-2. **Indítás** (`startPreviewWorker(const QString& id, const QString& url)`):
-   `previewWorkerCanStart(worker_state_, card_->hasSurface(), previewBudgetAllows(...), !id.isEmpty())` → ha nem, `return false`;
-   `engine_->createSurface({partition:"persist:preview"})` → válaszban `navigate`, `worker_state_ = Loading`, határidő indítása.
-3. **Betöltés**: a `loadFinished`-ben, ha `surface == worker_surface_` → `capture` (`png`, 80) → `worker_state_ = Capturing`.
-4. **Kész**: a fájl átmozgatása a `previews/` alá (mint `producePreview`), `core_->cardUpsert` a `preview_ref`-fel, `previewConsumeBudget`, majd `destroySurface` + `worker_state_ = Idle`.
-5. **Megszakítás**: a `surfaceAttached` (kártya nyílik) ágában `previewWorkerMustAbort(...)` → `destroySurface`, állapot `Idle`; a határidő lejártakor ugyanez.
-6. **Teszt**: seed kártya (probe URL) → grid betölt → `startPreviewWorker` → várni a kész jelzésre → állítások: a `previews/<id>.*` létezik, a mag rekordjában `preview_ref` beállt, `worker_state_ == Idle`, és a felület megszűnt (`live surfaces == 1`, csak a rács).
+1. **A motorház eddig egyetlen felületet tartott.** A `surface` mezőt csak a huzal ellenőrizte: minden
+   parancs a globális `HostState`-re futott, és egy nem létező felületre címzett parancs csendben a rácsot
+   szolgálta ki. Most felületenkénti állapot van (`create_surface` azonosítója a kulcs), a `bridge_reply` a
+   kérelem tulajdonosát keresi, ismeretlen felületre `surface_not_found` a válasz, és a motor **kettőnél
+   több** felületet `engine_busy`-vel utasít el. A `hidden` jelző felületenként is adható.
+2. **A shell oldala** a recept szerint készült: `PreviewWorker` állapotgép a `previews.h` őreivel, saját
+   partíció (`persist:preview`), rejtett felület, 8 s-os plafon (`ANTIKOLT_PREVIEW_DEADLINE_MS` a teszthez,
+   mint a `ANTIKOLT_HIBERNATE_MS`), megszakítás kártyanyitáskor és a plafonon, a kép átmozgatása a
+   `previews/` alá, `previewConsumeBudget`, `preview_ref` a mag rekordjában, és a rács-queue 1,2 s-mal a
+   munkás után indítja a következő kártyát.
+3. **A szigorúbb motor leleplezte a tesztjeink hibáit.** Kilenc önteszt bukott meg *azonnal*: elavult
+   felület-azonosítóra címzett `eval` (a hibernált rács után), és deferred lambdákba másolt `id`
+   paraméterek, amelyek a létrehozó closure halála után szemétre mutattak. Mindegyik valódi hiba volt,
+   amit eddig a „mindent kiszolgáló" motor eltakart; a javítás után a teljes kapu zöld.
+4. **A mérés, amit a szemét helyett kell tudni:** a rejtett felület első `Page.captureScreenshot`-ja ezen a
+   gépen (GPU nélküli, szoftveres kompozitálás) néha **20 s-nál tovább** várakozik egy képkockára. Ez a
+   termékben nem hiba: a 8 s-os plafon lezárja a munkást, a kártya kimarad, és a queue a következő körben
+   újrapróbálja. A teszt ezért ugyanígy tesz (legfeljebb három menet), és kiírja, hányra volt szükség
+   (`worker_attempts`); a szerződés a „előbb-utóbb feltöltődik", nem az „elsőre sikerül".
 
-**Csapda, amit már ismerünk:** a felület-létrehozás válasza később érkezhet, mint a `navigate` — a `surfaceAttached`/`loadFinished` párost a *worker* azonosítójára kell szűrni, különben a rács eseményeit eszi meg.
+**Bizonyíték:** `previewworkertest ok`, benne `deadline_fired=ok`, `worker_attempts=1`, `worker_pixels=1579x942
+colours=13`, `worker_ref=preview-worker-probe.png`, `worker_budget=1`, `abort_state=idle`,
+`abort_surface_gone=no live surface`, `user_card_loaded=ok` — a teljes kapu (`scripts/verify.ps1`) zölden.
+
+**Következő szelet jelöltjei** (a `04-UTEMTERV` nyitott tételei közül): a memória-büdzsé (F6) és a
+kártyánkénti bontás; a `vault` (F4) `cargo vendor`-ral egy hálózatos gépen (ADR-031 varrata kész); a
+konténerek és a kártyánkénti munkamenet-felülírás; a média-kivétel a takarításból; a virtualizált,
+500 kártyás rács. Kiadás oldalon egyetlen **emberi lépés** van: a SignPath-jelentkezés.
+
+## 10. Kész: a tálcaikon, ami egyben a futásjelző (`--traytest`, ADR-043)
+
+A felhasználói kérés: „tálcára az indítóikon, ami egyben a futás ikonja is". Két darab kellett hozzá, és
+mindkettő mérve van:
+
+1. **Egypéldányos őr** (`instance_guard.h/.cpp`): a shell indulás előtt lefoglal egy nevesített helyi
+   socketet (`antikolt-shell-<felhasználó>`). A második indítás **előbb csatlakozik**, és ha válaszol a futó
+   példány, elkéri tőle az ablakot, majd ablak és motor nélkül, 0-val kilép. A sorrend fontos: Windowson két
+   folyamat is létrehozhat pipe-példányt ugyanarra a névre, tehát a „listen sikerült" önmagában nem
+   bizonyíték (mértük: így a második is primary lett). Őr nélkül (nincs helyi socket) a program a régi
+   módon indul, csak jelez a naplóban.
+2. **Tálcaikon** a `MainWindow`-ban: a program ikonja (ugyanaz, mint a parancsikoné), „Antikolt — fut" tipp,
+   kattintásra ki-be váltás, menü: „Megnyitás" / „Kilépés". A **bezárás gomb a tálcára tesz**, nem lép ki,
+   és ezt egyszer elmagyarázza; a kilépés a menü „Kilépés" pontja. Tálca nélkül (vagy `ANTIKOLT_NO_TRAY`)
+   minden a régi — ebben a módban fut a többi önteszt.
+
+**Amit tudni kell:** a tálcára tett ablak nem ad vissza memóriát (a motor és a rács él, ~150 MB), de a nyitott
+kártya a 10 perces szabály szerint hibernál, tehát a tálcán várakozó böngésző a kártya memóriáját elengedi.
+
+**Bizonyíték:** `--traytest` → `instance_primary=ok`, `instance_second=instance=secondary exit=0` (valódi
+második folyamat!), `instance_raised=ok`, `tray_icon=ok`, `tray_hides=ok`, `tray_restores=ok`, `tray_quit=ok`,
+`fallback_tray=absent close=closed`, `tray_and_instance=ok`.
+## 11. Kész: egy ablak, és a sötét oldalak (`--themetest`, ADR-044)
+
+Három panasz, három válasz, mind mérve:
+
+1. **Plusz konzolablak.** A shell console-subsystem exe, és a Windows a parancsikonos indításhoz ad neki egy
+   saját konzolablakot (mért: `ConsoleWindowClass` a folyamat ablakai között). Most `DropOwnConsoleWindow`
+   eldobja, ha egyedül vagyunk rajta; ha egy shell is kapcsolódik hozzá (minden önteszt), az övé marad. A
+   GUI-subsystem út kipróbálva elvetve: a PowerShell nem várja meg és nem adja vissza a GUI-program kimenetét,
+   ami a kaput csendben hatástalanná tenné.
+2. **A rács nem követte a vezérlősávot** — saját `data-theme` kapcsolója volt, a shell-push pedig egy klikkel
+   le is maradt. Javítva: a vezérlősáv döntése hajtja, témaváltáskor és rácstöltéskor is.
+3. **A weboldal fehér maradt** (a Wikipedia cikke), miközben az ablak amoled volt — ez az ADR-037 szerinti
+   viselkedés volt, nem hiba. Új kapcsoló: **„🌙 Sötét oldalak"** (alapból ki, megjegyzett), ami a motor
+   `set_forced_dark` opjával egy nevesített stíluselemmel invertálja a lapot.
+
+**Bizonyíték** (`--themetest`): `theme_chrome` 244 / 58 / 40 / 13 (light/grey/dark/amoled), `grid_capture=light
+luma=240` → `grid_capture=amoled luma=50`, `grid_theme_attr=amoled`, `dark_capture=mode_off luma=251` →
+`mode_invert 4` / `mode_dim 39` / `mode_warm 33`, `dark_page_modes=ok`, `theme_wcag_aa=ok`, `theme_icons=ok`,
+`theme_check=ok`.
+
+**Amit a felhasználónak tudni kell:** a sötétítés **fokozatát** *ő* választja (Kikapcsolva / Sötét / Sötét
+szürke / Sötét meleg), a beállítás a profilban marad (`QSettings`, `ui/page_dark_mode`), az inverzió pedig
+közelítő (a kép- és videószínek visszainvertálva is eltérhetnek az eredetitől).
+
+**Kapcsolódó szabály:** `08-DIZAJN.md` §8–9 és `15-HOZZAJARULAS.md` §4 — egy látható ablak, és a saját
+konzolablak eldobása.
+
+## 12. Függőben lévő fejlesztések (2026-11-19-i állapot)
+
+Ez a lista a kód és a napló alapján készült, nem a `04-UTEMTERV` jelölőiből: az ütemterv pipái elavultak
+(több kész dolog pipa nélkül áll, lásd lent), ezért a valós állapot ez a fejezet.
+
+**Nemrég kész (a 2026-11-18/19-i szeletek):** tálcaikon + egypéldányos indítás (ADR-043), egy látható ablak
+(a saját konzolablak eldobása), a felületi témák **mérve** pixelenként + WCAG AA, a rács követi a vezérlősávot,
+az oldalak négy sötét fokozata (ADR-044/045), a **shell naplófájl** (`logs/shell.log`, rotálva), a **keresés
+ékezet-független** (ADR-047: `kave` megtalálja a `Kávézó` kártyát, az üres találat megnevezi a kifejezést), a
+**takarítás média-kivétele** (ADR-048), az **500 kártyás rács mérve** (ADR: `--gridscaletest`, 13 renderelt
+DOM-elem 503-ból), az **oldalszöveg-keresés** (ADR-049: a fagyasztáskor rögzített lap-szöveg is található),
+a **konténerek** teljes életciklusa (ADR-050…054), a **címkék** (ADR-055: a kártyán, a magban
+normalizálva, a keresés ékezet nélkül is látja), és a **munkaterületek** (ADR-056: a fül-sor a mag
+`workspaces.json`-jából, a kártya `workspace` mezője tárolt adat — a régi `index > 12` kitalálás helyett).
+
+**Termékfunkciók (nagy tételek):**
+
+- **Virtualizált rács 500 kártyával** — **mérve** (`--gridscaletest`): 503 kártya, 13 renderelt DOM-elem, 20 ms
+  az első renderig; a görgetéses ugrás ebben a harnessben nem mérhető (nincs layout-magasság), ezt a teszt
+  kimondja. Nyitott: szerkeszthető kezdőlap + `<antikolt-card>`, konténerenkénti engedély/proxy, kártyánkénti
+  munkamenet-felülírás.
+- **Munkaterületek** — **kész** (ADR-056/057/058, `--workspacetest`): a fül-sor a mag `workspaces.json`-jából jön
+  (`workspaces_list`/`workspace_upsert`/`workspace_delete`), a kártya `workspace` mezője **tárolt adat** (a régi
+  `index > 12` kitalálás javítva), a fül-soron van életciklus: `＋`, dupla kattintás = átnevezés, `×` = törlés (a
+  mag `in_use` válasza megjelenik), és a kártya munkaterülete a kártya saját választójával váltható (ADR-058).
+  Nyitott: fogd-és-vidd (a `<select>` mellett, nem helyette).
+- **Profil-költöztetés** — **kész a magban és a hídon** (ADR-059/060, `--profiletest`):
+  `profile_export`/`profile_import` egy JSON-kötegben (`schema`, `cards`, `containers`, `workspaces`,
+  `sessions`, `rules`); az ismeretlen séma elutasítás, az import előbb validál, a híd `profile.export/import`
+  útvonalat vár (a lapon `antikoltProfileWrite/Read`). Nyitott: a **gomb** és a natív fájlválasztó (a harnessben
+  nem kattintható, ezért `not-measurable`), és a köteg titkosítása (a munkamenet-sorok miatt valódi döntés).
+- **Konténerek** — **kész** (ADR-050/051/052/053, `--containertest`): a kártya színes pontja és konténer-
+  választója, a chip-legend + szűrő, a tábla a magban (`containers.json`), és a felületi életciklus: `＋`
+  konténer, dupla kattintás = átnevezés, `×` = törlés — használt konténernél **áthelyezéssel** (ADR-054:
+  a mag `move_to`-val előbb áthelyez, aztán töröl; a legenda felajánlja). Nyitott: konténerenkénti
+  engedély/proxy (F3).
+- **OAuth/SSO popup** a helyes partícióban (max. 60 s, dokumentált I1-kivétel — a mechanizmus kész, a
+  bejelentkezési folyamat nincs összekötve).
+- **Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás, összeomlás utáni helyreállítás, HU/EN felület,
+  jelszó- és könyvjelző-import, Linux (Nobara/KDE/Wayland) + RPM.**
+- **Média-kivétel a takarításból** (§2) **kész** (ADR-048, `--mediacleantest`): a játszó kártya megmarad. A(z)
+  §3-beli `test.hang` lap-oldali hook és a renderelt jegyzet mérése viszont még nyitott.
+- **Oldalszöveg-keresés** **kész** (ADR-049, `--searchtest` `search_page_text=ok`): a fagyasztott kártyák lap-
+  szövege is kereshető. Ami maradt: élő kártyánál nincs capture (a fagyasztás pillanatában készül), és a
+  SQLite-séma még nem ismeri a `page_text` mezőt (a store JSON-dokumentum, amíg nem cseréljük).
+**Széf és passkey (F4/F4b):** DEK/KEK, opcionális mesterjelszó, auto-zárás, KDBX export, kitöltés izolált
+világban origin-kötéssel, TOTP + vágólap-tisztítás, szoftveres hitelesítő (`create`/`get` teszt-RP-vel),
+őszinte tájékoztatás arról, hogy nincs hardveres védelem. **Blokkol:** `cargo vendor` kell hozzá, és ehhez
+hálózat (a függőségek lemezen nincsenek meg).
+
+**Memória (F6):** büdzsé-vezérlő sávokkal és médiaminőség-korláttal, kártyánkénti bontás, technika-létra
+luminancia-ellenőrzéssel, öt erőforrás-profil, raszter-kezdőlap (motor leállítva), hangolási riport, valamint
+a mérőpad S3/S6 állításai.
+
+**Kiadás:** SignPath-jelentkezés (**emberi lépés**: publikus repó + elbírálás) → aláírt exe; Store identity +
+helyi MSIX telepítés (Partner Center + tanúsítvány); a `release.yml` scaffold sosem futott; frissítő
+(Ed25519 aláírás) és telepítő hátra van.
+
+**Apróbb, ismert hiányosságok:**
+
+- A `--previewqueue` „elavult előnézet" ága éles használatban még nincs mérve; a `sha256` blobtár blokkolt
+  (`sha2` crate nincs a lemezen).
+- Oldalankénti téma-kivétel (§4c) szándékosan nincs; a `04-UTEMTERV` pipáit a kódhoz kell igazítani.
+- A GUI-subsystem átállás (a konzolablak helyett) a harness `Start-Process -Wait` átírásával járna — most
+  nem éri meg, dokumentálva van.

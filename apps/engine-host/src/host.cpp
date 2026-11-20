@@ -9,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <thread>
 
@@ -37,15 +38,45 @@ constexpr wchar_t kWindowClass[] = L"AntikoltEngineHostWindow";
 /// Never show a crash dialog: a failed run must exit with a code that CI can read.
 constexpr int kPumpIntervalMs = 2;
 
-/// The single host instance of this process. CEF is a process-wide singleton, so one host per
-/// process is the honest model; the window procedure needs it to translate WM_CLOSE into a request
-/// that the pump loop can act on.
-HostState* g_state = nullptr;
-
 /// True when the host runs as the shell's protocol server (stdout carries frames only).
 bool g_server_mode = false;
 
 int64_t g_next_surface_id = 1;
+
+/// Most surfaces one engine process may hold at once (ADR-041).
+///
+/// The rule this encodes belongs to the shell (invariant I1: one live card), but the engine is where it
+/// becomes unbreakable. Two is the documented, bounded exception: the user's surface and one short-lived
+/// background preview worker. A third request is refused with `engine_busy` rather than quietly growing
+/// the process.
+constexpr std::size_t kMaxSurfaces = 2;
+
+/// Native window → the surface it hosts.
+///
+/// Only the UI thread touches this. It exists because the window procedure receives a handle, not a
+/// pointer: with more than one surface per process, "which state does this WM_CLOSE belong to" has an
+/// answer, and closing the preview window must not shut the browser down.
+std::map<void*, HostState*>& WindowRegistry() {
+    static std::map<void*, HostState*> registry;
+    return registry;
+}
+
+void RegisterWindow(void* window, HostState* state) {
+    if (window != nullptr) {
+        WindowRegistry()[window] = state;
+    }
+}
+
+void ForgetWindow(void* window) {
+    if (window != nullptr) {
+        WindowRegistry().erase(window);
+    }
+}
+
+HostState* StateForWindow(void* window) {
+    const auto found = WindowRegistry().find(window);
+    return found == WindowRegistry().end() ? nullptr : found->second;
+}
 
 void Log(const char* format, ...) {
     // Diagnostics never go to stdout in server mode: stdout is the frame channel.
@@ -61,9 +92,14 @@ LRESULT CALLBACK HostWndProc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     switch (message) {
         case WM_CLOSE:
             // Do not shut down from inside the window procedure: record the intent and let the pump
-            // loop close the browser first (CefShutdown with a live browser crashes).
-            if (g_state != nullptr) {
-                g_state->quit_requested = true;
+            // loop close the browser first (CefShutdown with a live browser crashes). In server mode
+            // only *that* surface goes away; another one may be the page the user is reading.
+            if (HostState* state = StateForWindow(window)) {
+                if (g_server_mode) {
+                    state->close_requested = true;
+                } else {
+                    state->quit_requested = true;
+                }
             }
             return 0;
         case WM_SIZE: {
@@ -153,7 +189,7 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
         state->window_owned = true;
     }
     state->window = window;
-    g_state = state;
+    RegisterWindow(window, state);
 
     int origin_x = 0;
     int origin_y = 0;
@@ -179,6 +215,7 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
     if (!CefBrowserHost::CreateBrowser(window_info, client_handler, url, browser_settings, nullptr,
                                        nullptr)) {
         Log("[engine-host] CreateBrowser failed\n");
+        ForgetWindow(window);
         return false;
     }
 
@@ -299,6 +336,7 @@ void PumpWindowsMessages() {
 /// only forget the handle and let the shell's own widget teardown do the real work.
 void DestroyHostWindow(HostState* state) {
     if (state->window != nullptr) {
+        ForgetWindow(state->window);
         if (state->window_owned) {
             DestroyWindow(static_cast<HWND>(state->window));
         }
@@ -935,6 +973,91 @@ private:
     DISALLOW_COPY_AND_ASSIGN(ZoomCall);
 };
 
+/// Darkens a page that has no dark theme of its own (`set_forced_dark`, ADR-044/ADR-045).
+///
+/// This is the *user's* switch, off by default: the site theme query (ADR-037) only tells a page what the
+/// system prefers, and a page without a dark theme stays light. When the user asks for dark pages, this injects
+/// one named style element. The element is *replaced* on a mode change and removed on `off`, so switching never
+/// needs a reload and never touches anything the host did not add.
+///
+/// The modes are the same trick at different strengths — invert the page and invert images back (the classic
+/// double inversion, which keeps photographs looking like photographs) — and `contrast()` is what lifts the
+/// inverted black to a dark grey instead of pitch black.
+class ForcedDark : public CefBaseRefCounted {
+public:
+    ForcedDark(int64_t request_id, std::string mode) : request_id_(request_id), mode_(std::move(mode)) {}
+
+    /// The modes the host understands; anything else is refused, so a typo cannot paint a page white-on-white.
+    static bool IsKnownMode(const std::string& mode) {
+        return mode == "off" || mode == "invert" || mode == "dim" || mode == "warm";
+    }
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<ForcedDark> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", Script());
+        params->SetBool("returnByValue", true);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Runtime.evaluate", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) { self->OnApplied(reply); }));
+        return call->Start(browser);
+    }
+
+private:
+    /// The page filter for this mode. `off` gets no filter — the element is removed instead.
+    std::string PageFilter() const {
+        if (mode_ == "invert") {
+            return "invert(1) hue-rotate(180deg)";
+        }
+        if (mode_ == "dim") {
+            // contrast() pulls the inverted black up to a dark grey and the text down from pure white.
+            return "invert(1) hue-rotate(180deg) contrast(0.72)";
+        }
+        if (mode_ == "warm") {
+            // Sepia after the inversion is a warm tint on the darkened page, not a beige one.
+            return "invert(1) hue-rotate(180deg) contrast(0.78) sepia(0.35)";
+        }
+        return {};
+    }
+
+    std::string Script() const {
+        // One expression, so the whole switch is a single round trip. Images are always re-inverted with the
+        // plain double inversion, whatever the page filter is: a photograph must not be dimmed a second time.
+        std::string script =
+            "(function(){var id='antikolt-forced-dark';var old=document.getElementById(id);";
+        if (mode_ == "off") {
+            script += "if(old){old.remove();}return 'off';})()";
+            return script;
+        }
+        const std::string page = PageFilter();
+        script += "var css='html{filter:" + page + ";}'"
+                  "+'img,video,picture,canvas,svg,iframe{filter:invert(1) hue-rotate(180deg);}';";
+        script += "if(old){old.textContent=css;return 'on';}";
+        script += "var s=document.createElement('style');s.id=id;s.textContent=css;";
+        script += "document.documentElement.appendChild(s);return 'on';})()";
+        return script;
+    }
+
+    void OnApplied(const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            StdioLink::Instance().ReplyError(request_id_,
+                                             reply.from_protocol ? "invalid_argument" : "internal",
+                                             reply.error.c_str());
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetString("mode", mode_ == "off" ? "off" : mode_);
+        StdioLink::Instance().Reply(request_id_, result);
+    }
+
+    int64_t request_id_;
+    std::string mode_ = "off";
+
+    IMPLEMENT_REFCOUNTING(ForcedDark);
+    DISALLOW_COPY_AND_ASSIGN(ForcedDark);
+};
+
 /// Emulates the page's `prefers-color-scheme` (`set_media`, ADR-037).
 ///
 /// This is how a page that *supports* a dark theme actually gets one: the browser reports the emulated
@@ -1381,7 +1504,8 @@ constexpr const char* kBridgeScript = R"JS((function () {
     request: request,
     cards: {
       search: function (query) { return request('cards.search', { q: query }); },
-      upsert: function (card) { return request('cards.upsert', { card: card }); }
+      upsert: function (card) { return request('cards.upsert', { card: card }); },
+      delete: function (id) { return request('cards.delete', { id: id }); }
     }
   };
   window.dispatchEvent(new Event('antikolt-bridge-ready'));
@@ -1694,6 +1818,215 @@ int RunEngineHost(const HostConfig& config) {
     return (config.quit_on_first_load && !loaded) ? 1 : 0;
 }
 
+/// Serve one command that names a live surface (`navigate` … `eval`).
+///
+/// Extracted from the server loop when one engine process learned to host two surfaces (ADR-041): with
+/// more than one page alive, a command runs against the surface its `surface` field names, and a missing
+/// one is answered `surface_not_found` — never against "whatever page happens to be there". Every early
+/// exit is a `return`, because the caller's loop has to keep draining the command queue.
+void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& command,
+                          const HostConfig& config) {
+    if (command.op == "navigate") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        state.browser->GetMainFrame()->LoadURL(command.url);
+        link.Reply(command.id);
+    } else if (command.op == "snapshot") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        // `<user_data>/snapshots/surface-N-M.mhtml`: a real file the shell can verify, and later move
+        // into the content-addressed blob store.
+        std::error_code dir_error;
+        std::filesystem::create_directories(config.user_data_path + "\\snapshots", dir_error);
+        const std::string base = config.user_data_path + "\\snapshots\\surface-" +
+                                 std::to_string(state.surface_id) + "-" +
+                                 std::to_string(s_snapshot_counter++);
+        // Preferred: full MHTML plus the runtime state, through the DevTools protocol.
+        CefRefPtr<MhtmlCapture> capture(
+            new MhtmlCapture(command.id, base, state.surface_id, state.final_url, state.title));
+        if (!capture->Start(state.browser)) {
+            // Fallback: DOM only. Less useful offline, but never a missing snapshot.
+            Log("[engine-host] DevTools unavailable, falling back to a DOM-only snapshot\n");
+            CefRefPtr<SnapshotVisitor> visitor(
+                new SnapshotVisitor(command.id, base + ".html", state.final_url, state.title));
+            state.browser->GetMainFrame()->GetSource(visitor);
+        }
+        // The reply is sent by the capture object when the payload arrives.
+    } else if (command.op == "clear_origin_data") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.origin.empty()) {
+            link.ReplyError(command.id, "invalid_argument", "clear_origin_data needs an origin");
+            return;
+        }
+        CefRefPtr<ClearOriginCall> clear(
+            new ClearOriginCall(command.id, command.origin, command.storages));
+        if (!clear->Start(state.browser)) {
+            Log("[engine-host] DevTools unavailable: cannot clear origin data\n");
+            link.ReplyError(command.id, "not_supported",
+                            "clearing origin data needs the DevTools protocol");
+        }
+        // The reply is sent by the call itself once the protocol answered.
+    } else if (command.op == "scroll") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        CefRefPtr<ScrollCall> scroll(
+            new ScrollCall(command.id, command.scroll_x, command.scroll_y, command.animate));
+        if (!scroll->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot scroll");
+        }
+    } else if (command.op == "set_zoom") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.factor_percent < 25 || command.factor_percent > 500) {
+            link.ReplyError(command.id, "invalid_argument",
+                            "factor_percent must be between 25 and 500");
+            return;
+        }
+        const int width = state.bounds_width > 0 ? state.bounds_width : 1280;
+        const int height = state.bounds_height > 0 ? state.bounds_height : 800;
+        CefRefPtr<ZoomCall> zoom(new ZoomCall(command.id, command.factor_percent, width, height));
+        if (!zoom->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot zoom");
+        }
+    } else if (command.op == "set_media") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.media != "auto" && command.media != "dark" && command.media != "light") {
+            link.ReplyError(command.id, "invalid_argument", "media must be auto, dark or light");
+            return;
+        }
+        CefRefPtr<MediaEmulation> media(new MediaEmulation(command.id, command.media));
+        if (!media->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported",
+                            "DevTools is unavailable, cannot emulate media");
+        }
+        // The reply is sent by the emulation object when DevTools confirms it.
+    } else if (command.op == "set_forced_dark") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        // An empty mode means "leave the page alone" — the shell sends `off` explicitly, but a hand-written
+        // request must not be able to inject a filter by omission.
+        const std::string mode = command.dark_mode.empty() ? "off" : command.dark_mode;
+        if (!ForcedDark::IsKnownMode(mode)) {
+            link.ReplyError(command.id, "invalid_argument",
+                            "mode must be off, invert, dim or warm");
+            return;
+        }
+        CefRefPtr<ForcedDark> forced(new ForcedDark(command.id, mode));
+        if (!forced->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported",
+                            "DevTools is unavailable, cannot force dark pages");
+        }
+        // The reply is sent by the object above when DevTools confirms it.
+    } else if (command.op == "metrics") {
+        // What one surface costs: the page's own numbers plus this process's working set. Only a live
+        // surface can be measured; a hidden one has no document to count.
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        CefRefPtr<MetricsCapture> metrics(new MetricsCapture(command.id));
+        if (!metrics->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported",
+                            "DevTools is unavailable, cannot measure");
+        }
+        // The reply is sent by the metrics object when the numbers arrive.
+    } else if (command.op == "capture") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.format != "png" && command.format != "jpeg" && command.format != "webp") {
+            link.ReplyError(command.id, "invalid_argument", "format must be png, jpeg or webp");
+            return;
+        }
+        std::error_code dir_error;
+        std::filesystem::create_directories(config.user_data_path + "\\screenshots", dir_error);
+        const std::string base = config.user_data_path + "\\screenshots\\shot-" +
+                                 std::to_string(state.surface_id) + "-" +
+                                 std::to_string(s_screenshot_counter++);
+        CefRefPtr<ScreenshotCapture> shot(new ScreenshotCapture(
+            command.id, base, state.surface_id, command.format, command.quality));
+        if (!shot->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot capture");
+        }
+        // The reply is sent by the capture object when the pixels arrive.
+    } else if (command.op == "set_bounds") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+#ifdef _WIN32
+        if (state.window_owned) {
+            link.ReplyError(command.id, "not_supported",
+                            "this surface is not embedded in a parent window");
+            return;
+        }
+        state.bounds_x = command.bounds_x;
+        state.bounds_y = command.bounds_y;
+        state.bounds_width = command.bounds_width;
+        state.bounds_height = command.bounds_height;
+        state.bounds_pending = true;
+        // Applied now if Chromium's child window already exists, otherwise by the pump loop.
+        const bool applied = ApplyPendingEmbeddedBounds(&state);
+        CefRefPtr<CefDictionaryValue> placed = CefDictionaryValue::Create();
+        placed->SetBool("applied", applied);
+        link.Reply(command.id, placed);
+#else
+        link.ReplyError(command.id, "not_supported", "embedding needs a window system");
+#endif
+    } else if (command.op == "focus") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        state.browser->GetHost()->SetFocus(command.focused);
+        link.Reply(command.id);
+    } else if (command.op == "install_bridge") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        state.bridge_enabled = true;
+        state.browser->GetMainFrame()->ExecuteJavaScript(kBridgeScript, "", 0);
+        link.Reply(command.id);
+    } else if (command.op == "eval") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.script.empty()) {
+            link.ReplyError(command.id, "invalid_argument", "empty script");
+            return;
+        }
+        CefRefPtr<EvalCapture> capture(new EvalCapture(command.id, command.script));
+        if (!capture->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot evaluate");
+        }
+        // The reply is sent by EvalCapture when the value arrives.
+    } else {
+        link.ReplyError(command.id, "not_supported",
+                        "this milestone implements hello, ping, create_surface, navigate, eval, "
+                        "capture, snapshot, set_bounds, focus, install_bridge, bridge_reply, "
+                        "destroy_surface and shutdown");
+    }
+}
+
 int RunEngineHostServer(const HostConfig& config) {
     PreparePreviewDirectory(config);
 #ifdef _WIN32
@@ -1726,15 +2059,39 @@ int RunEngineHostServer(const HostConfig& config) {
     }
 #endif
 
-    HostState state;
+    // Every surface this process hosts, keyed by the id the shell knows (ADR-041 allows two: the page the
+    // user is looking at and one short-lived background preview worker). The states are heap-allocated
+    // because each browser's callbacks keep a pointer for that surface's whole lifetime, and a map node
+    // never moves; `unique_ptr` makes ownership obvious when a surface goes away.
+    std::map<int64_t, std::unique_ptr<HostState>> surfaces;
     bool shutdown_requested = false;
+
+    /// Close one surface and forget it: the browser first (its callbacks need the state alive), then the
+    /// window. The same call closes *either* surface, which is the whole point of keeping them apart.
+    const auto close_surface = [](HostState* state) {
+        DrainAndCloseBrowser(state);
+        DestroyHostWindow(state);
+    };
 
     while (!shutdown_requested && link.active()) {
         PumpWindowsMessages();
         CefDoMessageLoopWork();
+        for (auto it = surfaces.begin(); it != surfaces.end();) {
+            HostState* state = it->second.get();
 #ifdef _WIN32
-        ApplyPendingEmbeddedBounds(&state);
+            ApplyPendingEmbeddedBounds(state);
 #endif
+            // A window the user closed (WM_CLOSE) takes only its own surface with it: another one may be
+            // the page they are reading, so the process keeps running.
+            if (state->close_requested.load()) {
+                Log("[engine-host] surface %lld closed by its window\n",
+                    static_cast<long long>(it->first));
+                close_surface(state);
+                it = surfaces.erase(it);
+                continue;
+            }
+            ++it;
+        }
 
         Command command;
         while (link.TryPop(&command)) {
@@ -1756,8 +2113,11 @@ int RunEngineHostServer(const HostConfig& config) {
             } else if (command.op == "ping") {
                 link.Reply(command.id);
             } else if (command.op == "create_surface") {
-                if (state.browser || state.browser_created) {
-                    link.ReplyError(command.id, "engine_busy", "only one surface at a time");
+                if (surfaces.size() >= kMaxSurfaces) {
+                    // The documented exception is one worker, not a free-for-all: a third live surface
+                    // would be an unbounded memory promise (ADR-041).
+                    link.ReplyError(command.id, "engine_busy",
+                                    "at most two surfaces at a time (ADR-041)");
                     continue;
                 }
                 HostConfig surface_config = config;
@@ -1767,7 +2127,9 @@ int RunEngineHostServer(const HostConfig& config) {
                 if (command.height > 0) {
                     surface_config.height = command.height;
                 }
-                surface_config.hidden = config.hidden;
+                // The process-wide `--hidden` flag still applies to everything; a single surface may ask
+                // for the same effect (the preview worker photographs a page and never shows a window).
+                surface_config.hidden = config.hidden || command.hidden;
 #ifdef _WIN32
                 // Embedding is a window-handle feature: without a parent the host owns the window.
                 surface_config.parent_window =
@@ -1775,246 +2137,82 @@ int RunEngineHostServer(const HostConfig& config) {
                         ? reinterpret_cast<void*>(static_cast<uintptr_t>(command.parent_window))
                         : nullptr;
 #endif
-                state.surface_id = g_next_surface_id++;
+                auto created = std::make_unique<HostState>();
+                HostState& fresh = *created;
+                fresh.surface_id = g_next_surface_id++;
                 // A fresh surface starts at the origin of its parent, filling the rectangle the shell
                 // asked for; Chromium creates its window from these units (device independent px).
-                state.bounds_x = 0;
-                state.bounds_y = 0;
-                state.bounds_width = surface_config.width;
-                state.bounds_height = surface_config.height;
-                state.bounds_pending = surface_config.parent_window != nullptr;
-                if (!CreateSurface(surface_config, &state, command.url.empty() ? "about:blank"
+                fresh.bounds_x = 0;
+                fresh.bounds_y = 0;
+                fresh.bounds_width = surface_config.width;
+                fresh.bounds_height = surface_config.height;
+                fresh.bounds_pending = surface_config.parent_window != nullptr;
+                if (!CreateSurface(surface_config, &fresh, command.url.empty() ? "about:blank"
                                                                               : command.url)) {
                     link.ReplyError(command.id, "internal", "could not create the surface");
                     continue;
                 }
+                const int64_t surface_id = fresh.surface_id;
+                surfaces.emplace(surface_id, std::move(created));
                 CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
-                result->SetInt("surface", static_cast<int>(state.surface_id));
+                result->SetInt("surface", static_cast<int>(surface_id));
                 link.Reply(command.id, result);
-            } else if (command.op == "navigate") {
-                if (!state.browser) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                state.browser->GetMainFrame()->LoadURL(command.url);
-                link.Reply(command.id);
-            } else if (command.op == "snapshot") {
-                if (!state.browser || !state.browser->GetMainFrame()) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                // `<user_data>/snapshots/surface-N-M.mhtml`: a real file the shell can verify, and
-                // later move into the content-addressed blob store.
-                std::error_code dir_error;
-                std::filesystem::create_directories(config.user_data_path + "\\snapshots",
-                                                    dir_error);
-                const std::string base = config.user_data_path + "\\snapshots\\surface-" +
-                                         std::to_string(state.surface_id) + "-" +
-                                         std::to_string(s_snapshot_counter++);
-                // Preferred: full MHTML plus the runtime state, through the DevTools protocol.
-                CefRefPtr<MhtmlCapture> capture(new MhtmlCapture(
-                    command.id, base, state.surface_id, state.final_url, state.title));
-                if (!capture->Start(state.browser)) {
-                    // Fallback: DOM only. Less useful offline, but never a missing snapshot.
-                    Log("[engine-host] DevTools unavailable, falling back to a DOM-only snapshot\n");
-                    CefRefPtr<SnapshotVisitor> visitor(new SnapshotVisitor(
-                        command.id, base + ".html", state.final_url, state.title));
-                    state.browser->GetMainFrame()->GetSource(visitor);
-                }
-                // The reply is sent by the capture object when the payload arrives.
-            } else if (command.op == "clear_origin_data") {
-                if (!state.browser || !state.browser->GetMainFrame()) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                if (command.origin.empty()) {
-                    link.ReplyError(command.id, "invalid_argument",
-                                    "clear_origin_data needs an origin");
-                    continue;
-                }
-                CefRefPtr<ClearOriginCall> clear(new ClearOriginCall(
-                    command.id, command.origin, command.storages));
-                if (!clear->Start(state.browser)) {
-                    Log("[engine-host] DevTools unavailable: cannot clear origin data\n");
-                    link.ReplyError(command.id, "not_supported",
-                                    "clearing origin data needs the DevTools protocol");
-                }
-                // The reply is sent by the call itself once the protocol answered.
-            } else if (command.op == "scroll") {
-                if (!state.browser || !state.browser->GetMainFrame()) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                CefRefPtr<ScrollCall> scroll(
-                    new ScrollCall(command.id, command.scroll_x, command.scroll_y, command.animate));
-                if (!scroll->Start(state.browser)) {
-                    link.ReplyError(command.id, "not_supported",
-                                    "DevTools is unavailable, cannot scroll");
-                }
-            } else if (command.op == "set_zoom") {
-                if (!state.browser || !state.browser->GetMainFrame()) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                if (command.factor_percent < 25 || command.factor_percent > 500) {
-                    link.ReplyError(command.id, "invalid_argument",
-                                    "factor_percent must be between 25 and 500");
-                    continue;
-                }
-                const int width = state.bounds_width > 0 ? state.bounds_width : 1280;
-                const int height = state.bounds_height > 0 ? state.bounds_height : 800;
-                CefRefPtr<ZoomCall> zoom(
-                    new ZoomCall(command.id, command.factor_percent, width, height));
-                if (!zoom->Start(state.browser)) {
-                    link.ReplyError(command.id, "not_supported",
-                                    "DevTools is unavailable, cannot zoom");
-                }
-            } else if (command.op == "set_media") {
-                if (!state.browser || !state.browser->GetMainFrame()) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                if (command.media != "auto" && command.media != "dark" &&
-                    command.media != "light") {
-                    link.ReplyError(command.id, "invalid_argument",
-                                    "media must be auto, dark or light");
-                    continue;
-                }
-                CefRefPtr<MediaEmulation> media(new MediaEmulation(command.id, command.media));
-                if (!media->Start(state.browser)) {
-                    link.ReplyError(command.id, "not_supported",
-                                    "DevTools is unavailable, cannot emulate media");
-                }
-                // The reply is sent by the emulation object when DevTools confirms it.
-            } else if (command.op == "metrics") {
-                // What one surface costs: the page's own numbers plus this process's working set. Only a
-                // live surface can be measured; a hidden one has no document to count.
-                if (!state.browser || !state.browser->GetMainFrame()) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                CefRefPtr<MetricsCapture> metrics(new MetricsCapture(command.id));
-                if (!metrics->Start(state.browser)) {
-                    link.ReplyError(command.id, "not_supported",
-                                    "DevTools is unavailable, cannot measure");
-                }
-                // The reply is sent by the metrics object when the numbers arrive.
-            } else if (command.op == "capture") {
-                if (!state.browser || !state.browser->GetMainFrame()) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                if (command.format != "png" && command.format != "jpeg" &&
-                    command.format != "webp") {
-                    link.ReplyError(command.id, "invalid_argument",
-                                    "format must be png, jpeg or webp");
-                    continue;
-                }
-                std::error_code dir_error;
-                std::filesystem::create_directories(config.user_data_path + "\\screenshots",
-                                                    dir_error);
-                const std::string base = config.user_data_path + "\\screenshots\\shot-" +
-                                         std::to_string(state.surface_id) + "-" +
-                                         std::to_string(s_screenshot_counter++);
-                CefRefPtr<ScreenshotCapture> shot(new ScreenshotCapture(
-                    command.id, base, state.surface_id, command.format, command.quality));
-                if (!shot->Start(state.browser)) {
-                    link.ReplyError(command.id, "not_supported",
-                                    "DevTools is unavailable, cannot capture");
-                }
-                // The reply is sent by the capture object when the pixels arrive.
-            } else if (command.op == "set_bounds") {
-                if (!state.browser) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-#ifdef _WIN32
-                if (state.window_owned) {
-                    link.ReplyError(command.id, "not_supported",
-                                    "this surface is not embedded in a parent window");
-                    continue;
-                }
-                state.bounds_x = command.bounds_x;
-                state.bounds_y = command.bounds_y;
-                state.bounds_width = command.bounds_width;
-                state.bounds_height = command.bounds_height;
-                state.bounds_pending = true;
-                // Applied now if Chromium's child window already exists, otherwise by the pump loop.
-                const bool applied = ApplyPendingEmbeddedBounds(&state);
-                CefRefPtr<CefDictionaryValue> placed = CefDictionaryValue::Create();
-                placed->SetBool("applied", applied);
-                link.Reply(command.id, placed);
-#else
-                link.ReplyError(command.id, "not_supported", "embedding needs a window system");
-#endif
-            } else if (command.op == "focus") {
-                if (!state.browser) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                state.browser->GetHost()->SetFocus(command.focused);
-                link.Reply(command.id);
-            } else if (command.op == "install_bridge") {
-                if (!state.browser || !state.browser->GetMainFrame()) {
-                    link.ReplyError(command.id, "surface_not_found", "no live surface");
-                    continue;
-                }
-                state.bridge_enabled = true;
-                state.browser->GetMainFrame()->ExecuteJavaScript(kBridgeScript, "", 0);
-                link.Reply(command.id);
-            } else if (command.op == "bridge_reply") {
-                // Protocol 2: the shell's answer to a page request. An answer with no waiting page is
-                // not a protocol violation — the page may have gone away — so it is logged, not failed.
-                const auto pending = state.pending_bridge.find(command.bridge_request);
-                if (pending == state.pending_bridge.end()) {
-                    Log("[engine-host] bridge_reply for unknown request %lld\n",
-                        static_cast<long long>(command.bridge_request));
-                    link.Reply(command.id);
-                    continue;
-                }
-                CefRefPtr<CefMessageRouterBrowserSide::Callback> callback = pending->second;
-                state.pending_bridge.erase(pending);
-                if (!command.error.empty()) {
-                    callback->Failure(-5, command.error);
-                } else {
-                    callback->Success(command.json.empty() ? "{}" : command.json);
-                }
-                link.Reply(command.id);
             } else if (command.op == "destroy_surface") {
-                DrainAndCloseBrowser(&state);
-                DestroyHostWindow(&state);
+                const auto found = surfaces.find(command.surface);
+                if (found == surfaces.end()) {
+                    link.ReplyError(command.id, "surface_not_found", "no live surface");
+                    continue;
+                }
+                close_surface(found->second.get());
+                surfaces.erase(found);
                 link.Reply(command.id);
             } else if (command.op == "shutdown") {
                 shutdown_requested = true;
                 link.Reply(command.id);
-            } else if (command.op == "eval") {
-                if (!state.browser) {
+            } else if (command.op == "bridge_reply") {
+                // Protocol 2: the shell's answer to a page request. Requests belong to the surface that
+                // asked, so they are found by scanning the live surfaces; only the grid installs a bridge,
+                // and it is the surface that can hold a page promise.
+                CefRefPtr<CefMessageRouterBrowserSide::Callback> waiting;
+                for (auto& entry : surfaces) {
+                    const auto pending = entry.second->pending_bridge.find(command.bridge_request);
+                    if (pending == entry.second->pending_bridge.end()) {
+                        continue;
+                    }
+                    waiting = pending->second;
+                    entry.second->pending_bridge.erase(pending);
+                    break;
+                }
+                // An answer with no waiting page is not a protocol violation — the page may have gone
+                // away — so it is logged and acknowledged, never failed.
+                if (!waiting) {
+                    Log("[engine-host] bridge_reply for unknown request %lld\n",
+                        static_cast<long long>(command.bridge_request));
+                } else if (!command.error.empty()) {
+                    waiting->Failure(-5, command.error);
+                } else {
+                    waiting->Success(command.json.empty() ? "{}" : command.json);
+                }
+                link.Reply(command.id);
+            } else {
+                // Everything that addresses a page resolves once, here, against the surface it names.
+                const auto found = surfaces.find(command.surface);
+                if (found == surfaces.end()) {
                     link.ReplyError(command.id, "surface_not_found", "no live surface");
                     continue;
                 }
-                if (command.script.empty()) {
-                    link.ReplyError(command.id, "invalid_argument", "empty script");
-                    continue;
-                }
-                CefRefPtr<EvalCapture> capture(new EvalCapture(command.id, command.script));
-                if (!capture->Start(state.browser)) {
-                    link.ReplyError(command.id, "not_supported",
-                                    "DevTools is unavailable, cannot evaluate");
-                }
-                // The reply is sent by EvalCapture when the value arrives.
-            } else {
-                link.ReplyError(command.id, "not_supported",
-                                "this milestone implements hello, ping, create_surface, navigate, "
-                                "eval, capture, snapshot, set_bounds, focus, install_bridge, "
-                                "destroy_surface and shutdown");
+                HandleSurfaceCommand(link, *found->second, command, config);
             }
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
     }
 
-    DrainAndCloseBrowser(&state);
-    DestroyHostWindow(&state);
+    // Shutdown: every surface goes away before CEF does (CefShutdown with a live browser crashes).
+    for (auto& entry : surfaces) {
+        close_surface(entry.second.get());
+    }
+    surfaces.clear();
     Log("[engine-host] shutting down\n");
     CefShutdown();
     return 0;

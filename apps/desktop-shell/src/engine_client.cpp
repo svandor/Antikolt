@@ -134,7 +134,7 @@ void EngineClient::handshake() {
 
 void EngineClient::createSurface(const QString& partition, int width, int height,
                                  int deviceScalePercent, quintptr parentWindow,
-                                 ReplyHandler handler) {
+                                 ReplyHandler handler, bool hidden) {
     QJsonObject viewport;
     viewport.insert(QStringLiteral("width"), width);
     viewport.insert(QStringLiteral("height"), height);
@@ -144,6 +144,11 @@ void EngineClient::createSurface(const QString& partition, int width, int height
     config.insert(QStringLiteral("partition"), partition);
     config.insert(QStringLiteral("viewport"), viewport);
     config.insert(QStringLiteral("is_primary"), true);
+    if (hidden) {
+        // Additive, optional field (ADR-041): the engine keeps the surface's own window unseen, which is
+        // what lets a preview be photographed while the user is looking at the grid.
+        config.insert(QStringLiteral("hidden"), true);
+    }
     if (parentWindow != 0) {
         // Kept as a JSON number on purpose: the protocol defines the handle as an integer, and the
         // engine host rejects anything above 2^53 rather than guessing.
@@ -252,6 +257,13 @@ void EngineClient::setMedia(qint64 surface, const QString& media, ReplyHandler h
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
     fields.insert(QStringLiteral("media"), media);
     send(QStringLiteral("set_media"), fields, std::move(handler));
+}
+
+void EngineClient::setPageDarkMode(qint64 surface, const QString& mode, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("mode"), mode);
+    send(QStringLiteral("set_forced_dark"), fields, std::move(handler));
 }
 
 void EngineClient::metrics(qint64 surface, ReplyHandler handler) {

@@ -6,10 +6,17 @@
 # it (ADR-004). That keeps the UI process and the engine process separate while still showing the
 # page inside our own window.
 
+# A console-subsystem binary on purpose: every self test reads its output and its exit code from a shell, and
+# that is what PowerShell gives a console program and does *not* give a GUI one (measured: with WIN32_EXECUTABLE
+# `& $shell --test` returned at once, with no output and no exit code, which would have quietly disarmed the
+# whole gate). The console *window* that Windows creates for a shortcut launch is dropped at startup instead —
+# see `DropOwnConsoleWindow` in `main.cpp`: no extra window, and the harness keeps working.
 qt_add_executable(antikolt-shell
   src/main.cpp
   src/main_window.cpp
   src/main_window.h
+  src/instance_guard.cpp
+  src/instance_guard.h
   src/live_card.cpp
   src/live_card.h
   src/engine_client.cpp
