@@ -11,7 +11,7 @@
 > **What CI does, and what it does not.** The badge is real: `.github/workflows/ci.yml` runs on GitHub-hosted
 > machines and checks what they can check — `cargo fmt`, `clippy -D warnings`, the Rust test suite on Linux and
 > Windows, `node --check` on the home page, SPDX headers, committed build output/secrets, and every relative
-> documentation link. It does **not** build the Qt/CEF binaries or run the 41 native self tests: those need Qt 6.8
+> documentation link. It does **not** build the Qt/CEF binaries or run the 37 native self tests: those need Qt 6.8
 > and CEF (~1 GB) and a real GPU, so they run on the maintainer's machine through `scripts/verify.ps1`, and the
 > measured result is written into [`docs/HU/21-ALLAPOT.md`](docs/HU/21-ALLAPOT.md) rather than claimed by a badge.
 
@@ -20,7 +20,7 @@
 > Rust core owns the data: cards, containers (isolated cookie partitions), workspaces, the session ledger and the
 > portable profile bundle. Leaving a card **hibernates** it to disk (MHTML snapshot + scroll/anchor/form state) and
 > destroys the engine view; returning restores it offline in seconds. Measured on the current build: `verify.ps1`
-> runs **41 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **78 + 21 + 2 +
+> runs **37 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **78 + 21 + 2 +
 > 1 + 15 Rust tests**), and `dist.ps1 -Release` produces a 446 MB portable build. Start with
 > [`docs/EN/README.md`](docs/EN/README.md); the authoritative plan and the decision log are Hungarian
 > ([`docs/HU/`](docs/HU/)). Licence: [`LICENSE`](LICENSE) (MPL-2.0) · authors: [`AUTHORS`](AUTHORS) ·

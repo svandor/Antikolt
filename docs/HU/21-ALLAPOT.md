@@ -9,7 +9,7 @@
 ```
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
-41 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
+37 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
 check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+21+2+1+15 Rust-teszt)
 ```
 
@@ -26,7 +26,7 @@ tovább; a `build/` binárison ugyanez a kód zöld. Tiszta GPU-állapot mellett
 **Varga Sándor (`@svandor`)**, a leírás kétnyelvű. A távoli fán **149 fájl** van, és nincs rajta build-kimenet,
 felhasználói adat vagy titok (`build/`, `dist/`, `target/`, `node_modules/`, `*.exe`, `*.dll`, `*.sqlite3` → egy
 találat sem). A CI az első push után **zöld** lett (`completed success`, 2m12s) — a hosted gépek a Rust-teszteket,
-a JS-parse-t, az SPDX- és linkellenőrzést futtatják; a Qt/CEF binárisokat és a 41 natív öntesztet **nem** (azok
+a JS-parse-t, az SPDX- és linkellenőrzést futtatják; a Qt/CEF binárisokat és a 37 natív öntesztet **nem** (azok
 Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmény a naplóban van, nem badge-ben.
 
 ## Ami mérve kész (és mit bizonyít a teszt)
@@ -72,7 +72,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 ## Hogyan ellenőrizhető mindez öt perc alatt
 
 ```powershell
-pwsh -File scripts/verify.ps1                 # 40 önteszt + check-repo
+pwsh -File scripts/verify.ps1                 # 37 önteszt + check-repo
 pwsh -File scripts/build.ps1                  # csak a két bináris
 pwsh -File scripts/dist.ps1 -Release          # hordozható példány + parancsikon
 build/apps/desktop-shell/antikolt-shell.exe --profiletest build/apps/engine-host/antikolt-engine-host.exe

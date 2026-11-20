@@ -20,7 +20,7 @@ The authoritative plan, the decision log (ADR-001…ADR-067) and the development
 | Cards | `--addcardtest`: add a card with the `＋` form, rename the title and the URL in place, delete — each read back from the core |
 | Portable profile | `--profiletest`: export the profile to one versioned JSON bundle and import it into a fresh profile, from the page itself |
 | Storage | Rust tests + `db_status`: the SQLite mirror (`user_version=2`, WAL) is verified row by row, and the grid already reads its list from it |
-| Gate | `scripts/verify.ps1`: **41 self tests** + `check-repo` (SPDX, links, JS parse, `cargo fmt`, `clippy -D warnings`, 78 + 21 + 2 + 1 + 15 Rust tests) |
+| Gate | `scripts/verify.ps1`: **37 self tests** + `check-repo` (SPDX, links, JS parse, `cargo fmt`, `clippy -D warnings`, 78 + 21 + 2 + 1 + 15 Rust tests) |
 
 ## The idea
 

@@ -3,6 +3,29 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-20 (nyolcvannegyedik szelet) — a számok a méréshez igazítva (37 önteszt, nem 41)
+
+A publikálás után előkerestem a dokumentumokban szereplő **számokat**, és összevetettem a kapu tényleges kimenetével.
+A „41 önteszt" állítás **felfújt volt**: a kapu naplója (test-results, `ok` sorok) alapján **37 önteszt** fut
+(`gridtest` … `rulestest`), plusz a `check-repo`. A Rust-tesztek száma ellenben stimmelt: 78 + 21 + 2 + 1 + 15 = 117.
+
+Javítva: `README.md` (mindkét bekezdés), `docs/EN/README.md` (gate-sor), `docs/HU/21-ALLAPOT.md` (kapu-tábla, a
+„hogyan ellenőrizhető" szakasz és a CI-magyarázat).
+
+### Bizonyíték
+
+```
+gate log (ok sorok, `theme=` al-sorok nélkül) → 37 teszt + check-repo
+check-repo log                               → running 78 / 21 / 2 / 1 / 15 tests, mind ok
+pwsh -File scripts/check-repo.ps1            → ALL CHECKS PASSED
+```
+
+### Tanulság
+
+Egy nyilvános repóban a **szám is állítás**. A badge és a kapu zöld volt, a dokumentum pedig felült egy
+kerekítésnek — pont az a fajta „zöld, ami hazudik", amit a projekt szabálya tilt. Ezért mostantól a
+`21-ALLAPOT.md` számait a kapu naplójából kell venni, nem emlékezetből.
+
 ## 2026-11-20 (nyolcvanharmadik szelet) — a repó nyilvános: Antikolt, MPL-2.0, két nyelven
 
 A projekt kilépett a gépből: **https://github.com/svandor/Antikolt** — nyilvános repó, MPL-2.0, Varga Sándor
