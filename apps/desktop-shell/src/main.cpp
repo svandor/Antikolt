@@ -7104,6 +7104,14 @@ int runWorkspaceCheck(const QString& enginePath) {
             const QStringList before = core_cards();
             out << "add_card_before=" << before.size() << '\n';
 
+            // Step markers on stderr: when a host wedges, the last marker names the exact call that never returned.
+            // stdout carries only the measured results; this is the diagnostic channel.
+            const auto step = [](const char* name) {
+                std::fprintf(stderr, "[selftest] step=%s\n", name);
+                std::fflush(stderr);
+            };
+            step("evaluate_click_add");
+
             // The product's gesture: press `＋`, type into the two fields, submit.
             const QString url = QStringLiteral("https://proba.example/hu/cikk");
             const QString title = QStringLiteral("Próba kártya — címmel");
@@ -7128,7 +7136,9 @@ int runWorkspaceCheck(const QString& enginePath) {
                 }
                 settle(200);
             }
+            step("core_cards_after");
             const QStringList after = core_cards();
+            step("core_cards_after_done");
             const bool created = typed == QStringLiteral("submitted") && after.size() == before.size() + 1;
             out << "add_card=" << (created ? "ok" : "FAILED") << " typed=" << typed << " before="
                 << before.size() << " after=" << after.size() << " page="

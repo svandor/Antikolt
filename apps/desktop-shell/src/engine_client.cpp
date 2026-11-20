@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 #include "engine_client.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -120,8 +122,27 @@ qint64 EngineClient::send(const QString& op, const QJsonObject& fields, ReplyHan
         });
     }
 
-    process_->write(frame(envelope));
+    // Diagnostic channel (stderr), off by default: a wedged engine used to freeze the shell with no trace. With
+    // ANTIKOLT_ENGINE_TRACE=1 these markers name the exact blocking call; the frame itself is small and the markers
+    // never touch stdout's frame stream.
+    const bool trace = [] {
+        const char* value = std::getenv("ANTIKOLT_ENGINE_TRACE");
+        return value != nullptr && *value != '\0' && std::strcmp(value, "0") != 0;
+    }();
+    const auto mark = [trace](const char* stage, const QString& name, qint64 request, qint64 bytes) {
+        if (!trace) {
+            return;
+        }
+        std::fprintf(stderr, "[engine-client] op=%s id=%lld %s bytes=%lld\n", qUtf8Printable(name),
+                     static_cast<long long>(request), stage, static_cast<long long>(bytes));
+        std::fflush(stderr);
+    };
+    const QByteArray bytes = frame(envelope);
+    mark("write", op, id, bytes.size());
+    process_->write(bytes);
+    mark("wrote", op, id, bytes.size());
     process_->waitForBytesWritten(1000);
+    mark("flushed", op, id, bytes.size());
     return id;
 }
 

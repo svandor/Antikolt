@@ -3,6 +3,46 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-20 (nyolcvanhetedik szelet) — a fagyás helye kimérve (nem a híd írása)
+
+A nyolcvanhatodik szelet watchdogja megmondta, *hogy* fagyunk; ez a szelet azt mérte meg, **hol**. Két
+diagnosztikai nyom került a kódba (kikapcsolva alapból, `ANTIKOLT_ENGINE_TRACE=1`-re kapcsol):
+
+```
+[selftest] step=evaluate_click_add
+[engine-client] op=eval id=13 write bytes=317
+[engine-client] op=eval id=13 wrote bytes=317
+[engine-client] op=eval id=13 flushed bytes=317
+   … majd: GPU process exited unexpectedly (ismétlődve), és semmi válasz, semmi timer
+```
+
+**Eredmény:** a kártya-írás (frame + `write` + `waitForBytesWritten`) **lefut**, tehát nem a híd írása blokkol.
+A shell a `loop.exec()` alatt áll meg úgy, hogy a **saját `QTimer`-jei sem futnak le** — ez csak akkor lehetséges,
+ha a fő szál egy *beágyazott, blokkoló* hívásban van egy jelzéskezelőn belül, a CEF GPU-crash eseményeinek
+közepette. A következő szelet dolga ezért a `MainWindow` esemény-dispatchere (`handleEvent` → `onEngineEvent`),
+nem a `send`.
+
+### Mellékesen: a `--coretest` soha nem volt hibás
+
+A nyolcvanhatodik szelet „nem magyarázott" `core_ready=FAILED`-je **az én hibám volt**: a tesztnek az engine-host
+útvonalát adtam át a mag helyett. Helyes argumentummal:
+
+```
+--coretest <target\debug\antikolt-core-service.exe>
+core_start=ok · core_name=antikolt-core · cards=3 · session_ledger=ok · exit=0
+```
+
+### Ami mérve van
+
+```
+pwsh -File scripts/check-repo.ps1 → ALL CHECKS PASSED
+--coretest (helyes útvonallal)   → exit=0
+--addcardtest                    → a fenti nyomok; watchdog: FAILED exit=1 (nem fagyás)
+```
+
+A kapu továbbra sem fut (a CEF GPU-hiba a gép oldalán van), a kétlépéses törlés (ADR-068) továbbra is
+`not-measurable`.
+
 ## 2026-11-20 (nyolcvanhatodik szelet) — a néma fagyás helyett hangos bukás (és a környezet leállása)
 
 Újraindítás után **a CEF GPU-hiba megmaradt**, tehát nem múló állapot: a környezet nem tud GPU-kontextust
