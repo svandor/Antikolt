@@ -11,6 +11,9 @@
 // exchange is the whole point of running the browser engine in a second process.
 
 #include <QApplication>
+#include <chrono>
+#include <cstdio>
+#include <thread>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
@@ -6997,6 +7000,17 @@ int runWorkspaceCheck(const QString& enginePath) {
         int runAddCardCheck(const QString& enginePath) {
             QTextStream out(stdout);
             int failures = 0;
+            // A wedged host must not hide a result: if the engine's GPU channel cannot be created, a step can block
+            // forever *after* the earlier assertions ran. This watchdog prints what was measured, says that no verdict
+            // arrived, and leaves with a failure — a run that did not finish is not a pass.
+            std::thread([&out] {
+                std::this_thread::sleep_for(std::chrono::seconds(150));
+                out << "add_card_check=FAILED (no verdict in 150 s: the host stopped responding)\n";
+                out.flush();
+                std::fflush(stdout);
+                std::fflush(nullptr);
+                std::_Exit(1);
+            }).detach();
             qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
             qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
 
@@ -7703,6 +7717,26 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(profiletest)) {
         return runProfileCheck(parser.value(profiletest));
+    }
+
+    // One watchdog for every self test (`--*test`): the engine can wedge in a blocking call (a GPU channel that cannot
+    // be created does exactly that), and a wedged host used to mean an infinite hang with no output. A run that has a
+    // verdict returns long before this triggers; a run that does not now says so and fails.
+    bool self_test = false;
+    for (const QString& arg : QCoreApplication::arguments()) {
+        if (arg.startsWith(QStringLiteral("--")) && arg.contains(QStringLiteral("test"))) {
+            self_test = true;
+            break;
+        }
+    }
+    if (self_test) {
+        std::thread([] {
+            std::this_thread::sleep_for(std::chrono::seconds(600));
+            std::fputs("self_test=FAILED (no verdict in 600 s: the host stopped responding)\n", stdout);
+            std::fflush(stdout);
+            std::fflush(nullptr);
+            std::_Exit(1);
+        }).detach();
     }
 
     if (parser.isSet(addcardtest)) {

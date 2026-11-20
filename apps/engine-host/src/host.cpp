@@ -150,7 +150,13 @@ bool InitializeCef(const HostConfig& config, CefRefPtr<EngineApp> app) {
     // produced when a page finished loading before the loop started.
     settings.external_message_pump = true;
     settings.multi_threaded_message_loop = false;
-    settings.windowless_rendering_enabled = false;
+    // Windowless rendering is the escape hatch for a host that has no usable compositor (a broken GPU driver, a
+    // locked-down session, CI). It is an environment switch, never the product's mode: the shipped browser embeds a
+    // real window (`docs/HU/11-OSR.md` explains why both shapes exist).
+    const char* windowless = std::getenv("ANTIKOLT_ENGINE_WINDOWLESS");
+    const bool use_windowless = windowless != nullptr && *windowless != '\0' &&
+                                std::strcmp(windowless, "0") != 0;
+    settings.windowless_rendering_enabled = use_windowless;
 
     const bool initialised = CefInitialize(main_args, settings, app.get(), nullptr);
 #ifdef _WIN32
@@ -1423,6 +1429,14 @@ void EngineApp::OnBeforeCommandLineProcessing(const CefString& process_type,
         disable_gpu != nullptr && *disable_gpu != '\0' && std::strcmp(disable_gpu, "0") != 0) {
         command_line->AppendSwitch("disable-gpu");
         command_line->AppendSwitch("disable-gpu-compositing");
+        // `disable-gpu` alone still starts a GPU process and still crashes on a broken driver
+        // (`Failed to send GpuControl.CreateCommandBuffer`, then `GPU process exited unexpectedly`). Routing the
+        // compositor through SwiftShader and giving the GPU process no sandbox is what actually keeps the host
+        // alive in that environment; it is slower, which is why it stays an explicit environment switch.
+        command_line->AppendSwitch("disable-gpu-sandbox");
+        command_line->AppendSwitchWithValue("use-angle", "swiftshader");
+        command_line->AppendSwitch("disable-software-rasterizer");
+        command_line->AppendSwitch("disable-dev-shm-usage");
     }
 }
 

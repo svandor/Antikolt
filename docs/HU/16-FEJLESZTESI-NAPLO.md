@@ -3,6 +3,40 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-20 (nyolcvanhatodik szelet) — a néma fagyás helyett hangos bukás (és a környezet leállása)
+
+Újraindítás után **a CEF GPU-hiba megmaradt**, tehát nem múló állapot: a környezet nem tud GPU-kontextust
+létrehozni (`Failed to create shared context for virtualization`, `GPU process exited unexpectedly:
+exit_code=-2147483645`). Emiatt minden ablakos önteszt lefagyott — a shell egy **blokkoló** engine-hívásban várt,
+és a `QTimer` sem futott le, mert az eseményciklus maga állt meg.
+
+**Javítás (ez a szelet értéke):** minden `--*test` futás kap egy **watchdogot** (`std::thread`), amely kimenetet ír
+és **1-es kóddal kilép**, ha nem születik ítélet. A fagyás így nem tud „csendben zöld" lenni:
+
+```
+add_card_check=FAILED (no verdict in 150 s: the host stopped responding)   exit=1
+```
+
+Két további kapcsoló is bekerült az engine-hostba (környezeti, nem termék-beállítás): `ANTIKOLT_ENGINE_DISABLE_GPU=1`
+mellé `--use-angle=swiftshader --disable-gpu-sandbox` (a GPU-crash loop megszűnt: 0 `GPU process exited`),
+és `ANTIKOLT_ENGINE_WINDOWLESS=1` (CEF `windowless_rendering_enabled`) a kompozitor nélküli hostokra. **Egyik sem
+elég**: a shared context létrehozása így sem sikerül, a lap-JS első kiértékelése után a shell blokkol.
+
+### Ami mérve van ebben a szeletben
+
+```
+pwsh -File scripts/check-repo.ps1 → ALL CHECKS PASSED (SPDX, linkek, JS-parse, fmt, clippy, 78+21+2+1+15 Rust-teszt)
+antikolt-core-service.exe --data-dir … → "[core] cards=3 sessions=0 containers=4 workspaces=3" (a mag önmagában jó)
+--addcardtest → home_surface=1, add_card_before=10, majd watchdog: FAILED exit=1 (nem fagyás, nem zöld)
+--coretest     → core_ready=FAILED … exit=1 (nyitott: a mag-bináris külön fut, a shell-teszten belül nem jön létre a kapcsolat)
+```
+
+### Amit nem állítok
+
+A kapu **nem futott le**, a kétlépéses törlés (ADR-068) továbbra is **`not-measurable`**, és a `--coretest`
+hirtelen bukása **nincs megmagyarázva**. Ez a szelet a hibát nem javította meg, hanem **láthatóvá tette** — ami
+több a csendes fagyásnál, de kevesebb a zöldnél.
+
 ## 2026-11-20 (nyolcvanötödik szelet) — kétlépéses törlés (implementálva, de NEM mérve)
 
 A kártya törlése eddig egy kattintás volt — miközben a kártya nagy kattintási felület, amire a felhasználó azért
