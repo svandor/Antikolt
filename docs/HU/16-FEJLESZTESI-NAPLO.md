@@ -3,6 +3,39 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-20 (nyolcvanharmadik szelet) — a repó nyilvános: Antikolt, MPL-2.0, két nyelven
+
+A projekt kilépett a gépből: **https://github.com/svandor/Antikolt** — nyilvános repó, MPL-2.0, Varga Sándor
+(`@svandor`) néven, magyar–angol dokumentációval.
+
+- **Licenc:** `LICENSE` (MPL-2.0 teljes szöveg), `NOTICE` → `Copyright © 2026 Varga Sándor (svandor) and
+  contributors`, harmadik felek (CEF BSD, Qt LGPL-3, SQLite, crates) és az AI-közreműködés nyilatkozata; `AUTHORS`
+  a maintainer valódi nevével (a korábbi `@antikolt` placeholder kikerült).
+- **Kétnyelvű leírás:** a `README.md` tetején badge-ek (CI, licenc, platform, mért állapot) és egy **angol
+  bekezdés** a magyar állapotsor mellett; a `docs/EN/README.md` a korábbi „design phase, no runnable code"
+  állítás helyett a **mért** állapotot írja, „What is proven today" táblával.
+- **`.gitignore`:** hét ok-csoport (build, felhasználói adat, titkok, eszközlánc-letöltések, node/cache, nyers
+  mérések, editor/OS), nem vak kiterjesztés-lista.
+
+### Bizonyíték (tényleges kimenet)
+
+```
+gh repo view svandor/Antikolt → visibility PUBLIC, defaultBranch main,
+   licenseInfo mpl-2.0 ("Mozilla Public License 2.0"), leírás kitöltve
+távoli fa                    → files=149; build/, dist/, target/, node_modules/, cef/,
+                               *.exe, *.dll, *.sqlite3 → NINCS
+titok-szkennelés             → nincs találat (gho_ token, privát kulcs, api_key minta)
+git check-ignore             → build/, dist/, target/, node_modules/, .env, cef/, screenshots/ ignorálva;
+                               docs/, crates/, Cargo.lock, .github/ követve
+CI (első push)               → completed success, 2m12s
+```
+
+### Ami nyitva maradt
+
+A **telepített példány** `--addcardtest` mérése továbbra sem sikerült: az engine GPU-folyamata elhalt
+(`GPU state invalid after WaitForGetOffsetInRange`), 150 s után timeout — ugyanez a kód a `build/` binárison zöld,
+tehát ez környezeti, nem kódhiba. Tiszta GPU-állapot mellett újra kell futtatni; a `21-ALLAPOT.md` kimondja.
+
 ## 2026-11-19 (nyolcvankettedik szelet) — a rács sorrendje a váltás után is ugyanaz
 
 A store-csere csendben megváltoztatta volna a rács sorrendjét: a JSON-store Rustban rendezett, a rendezés nélküli

@@ -9,13 +9,25 @@
 ```
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
-40 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
-check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+17+2+1+15 Rust-teszt)
+41 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
+check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+21+2+1+15 Rust-teszt)
 ```
 
-A hordozható példány: `scripts/dist.ps1 -Release` → `dist/Antikolt/` (443.9 MB), asztali és Start-menü
-parancsikonnal; a telepített binárison a `--profiletest`, `--workspacetest`, `--containertest`, `--tagtest`
-külön is lefutott (`exit=0`), mert a `dist` ugyanaz a kód, de nem ugyanaz a fájl.
+A hordozható példány: `scripts/dist.ps1 -Release` → `dist/Antikolt/` (445.6 MB), asztali és Start-menü
+parancsikonnal; a telepített binárison a `--profiletest`, `--workspacetest`, `--containertest`, `--tagtest`,
+`--addcardtest` külön is lefutott (`exit=0`), mert a `dist` ugyanaz a kód, de nem ugyanaz a fájl.
+**Kivétel, kimondva:** a legutóbbi szelet után a telepített `--addcardtest` **nem volt mérhető** — az engine
+GPU-folyamata elhalt (`GPU state invalid after WaitForGetOffsetInRange`), a shell pedig 150 s után sem lépett
+tovább; a `build/` binárison ugyanez a kód zöld. Tiszta GPU-állapot mellett újra kell futtatni.
+
+## A repó nyilvános
+
+`https://github.com/svandor/Antikolt` — **PUBLIC**, GitHub szerint `licenseInfo: mpl-2.0`, a szerző
+**Varga Sándor (`@svandor`)**, a leírás kétnyelvű. A távoli fán **149 fájl** van, és nincs rajta build-kimenet,
+felhasználói adat vagy titok (`build/`, `dist/`, `target/`, `node_modules/`, `*.exe`, `*.dll`, `*.sqlite3` → egy
+találat sem). A CI az első push után **zöld** lett (`completed success`, 2m12s) — a hosted gépek a Rust-teszteket,
+a JS-parse-t, az SPDX- és linkellenőrzést futtatják; a Qt/CEF binárisokat és a 41 natív öntesztet **nem** (azok
+Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmény a naplóban van, nem badge-ben.
 
 ## Ami mérve kész (és mit bizonyít a teszt)
 

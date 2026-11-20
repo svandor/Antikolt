@@ -1,7 +1,19 @@
 # Antikolt
 
+[![CI](https://github.com/svandor/Antikolt/actions/workflows/ci.yml/badge.svg)](https://github.com/svandor/Antikolt/actions/workflows/ci.yml)
+[![Licence: MPL-2.0](https://img.shields.io/badge/licence-MPL--2.0-blue.svg)](LICENSE)
+[![Platform: Windows 11](https://img.shields.io/badge/platform-Windows%2011-lightgrey.svg)](docs/HU/17-ESZKOZLANC.md)
+[![Status: v0.8, measured](https://img.shields.io/badge/status-v0.8%20measured-brightgreen.svg)](docs/HU/21-ALLAPOT.md)
+
 **Modern, memóriatakarékos, kártya-alapú böngésző.** Nyitott forrás (MPL-2.0), magyar és angol nyelven.
 **A low-RAM, card-based desktop browser.** Open source (MPL-2.0), documented in Hungarian and English.
+
+> **What CI does, and what it does not.** The badge is real: `.github/workflows/ci.yml` runs on GitHub-hosted
+> machines and checks what they can check — `cargo fmt`, `clippy -D warnings`, the Rust test suite on Linux and
+> Windows, `node --check` on the home page, SPDX headers, committed build output/secrets, and every relative
+> documentation link. It does **not** build the Qt/CEF binaries or run the 41 native self tests: those need Qt 6.8
+> and CEF (~1 GB) and a real GPU, so they run on the maintainer's machine through `scripts/verify.ps1`, and the
+> measured result is written into [`docs/HU/21-ALLAPOT.md`](docs/HU/21-ALLAPOT.md) rather than claimed by a badge.
 
 > **English, in one paragraph.** Antikolt replaces the tab strip with a grid of **cards** on a home page that is
 > itself a real, editable web page. A Qt 6 shell hosts a CEF (Chromium) engine in a separate process tree, and a
