@@ -3,6 +3,24 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-20 (nyolcvankilencedik szelet) — a munka átadható: `HANDOVER.md`
+
+A szelet célja nem termékfunkció, hanem hogy a munka **átadható** legyen egy új munkafolyamatnak. Elkészült a
+[`HANDOVER.md`](../../HANDOVER.md) (angol + magyar): állapot, az ellenőrzés pontos parancsai, a **mért blokker**
+(CEF GPU), a következő három szelet, a nem alkudható szabályok, és egy „hol keress először" tábla. A `README.md`
+bekezdéséből is hivatkozik rá.
+
+### Bizonyíték
+
+```
+check-repo → ALL CHECKS PASSED (benne: every relative link resolves — a HANDOVER.md új hivatkozásai is)
+```
+
+### Ami nyitva maradt (változatlan)
+
+A kapu (37 önteszt) továbbra sem futott le ezen a gépen, a kétlépéses törlés (ADR-068) `not-measurable`. Az átadás
+első lépése ezért éppen ez: futtatni egy egészséges GPU-jú hoston, és az eredményt naplózni.
+
 ## 2026-11-20 (nyolcvannyolcadik szelet) — a fagyás nem fagyás: a gép lassult le
 
 A nyolcvanhetedik szelet után visszatettem egy **életjel-órát** (2 másodperces tick a stderr-re) és kilépő/ belépő

@@ -24,7 +24,7 @@
 > 1 + 15 Rust tests**), and `dist.ps1 -Release` produces a 446 MB portable build. Start with
 > [`docs/EN/README.md`](docs/EN/README.md); the authoritative plan and the decision log are Hungarian
 > ([`docs/HU/`](docs/HU/)). Licence: [`LICENSE`](LICENSE) (MPL-2.0) · authors: [`AUTHORS`](AUTHORS) ·
-> third parties: [`NOTICE`](NOTICE).
+> third parties: [`NOTICE`](NOTICE) · **picking the work up? start with [`HANDOVER.md`](HANDOVER.md)**.
 
 > Állapot: **v0.8 — a hibernálási ciklus bezárva**. Mentés: MHTML (DOM + beágyazott erőforrások) **és**
 > állapot (görgetés, horgony, űrlapok, `sessionStorage`, média-pozíció, jelszavak nélkül); a motor
