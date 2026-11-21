@@ -4703,18 +4703,24 @@ int runSearchCheck(const QString& enginePath) {
 
     // One evaluation, answered or timed out; the reply of a `JSON.stringify(...)` script is a JSON string.
     const auto evaluate_json = [client](qint64 surface, const QString& script) {
-        QEventLoop loop;
-        QJsonObject value;
-        client->evaluate(surface, script, [&](const QJsonObject& reply, const QString& error) {
+        // Same lifetime rule as the other self-test helpers: the callback outlives the stack loop
+        // on a timeout, so the loop and the value must live on the heap.
+        struct State {
+            QEventLoop loop;
+            QJsonObject value;
+        };
+        auto state = std::make_shared<State>();
+        client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
             if (error.isEmpty()) {
-                value = QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
-                            .object();
+                state->value =
+                    QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
+                        .object();
             }
-            loop.quit();
+            state->loop.quit();
         });
-        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
-        loop.exec();
-        return value;
+        QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+        state->loop.exec();
+        return state->value;
     };
     const auto settle = [](int milliseconds) {
         QEventLoop loop;
@@ -5399,18 +5405,27 @@ int runContainerCheck(const QString& enginePath) {
     qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
 
     const auto evaluate_json = [](EngineClient* client, qint64 surface, const QString& script) {
-        QEventLoop loop;
-        QJsonObject value;
-        client->evaluate(surface, script, [&](const QJsonObject& reply, const QString& error) {
+        // The reply callback can outlive this helper: when the request times out, the engine's own
+        // deadline (EngineClient::send) fires *after* our loop has already quit and destroyed `loop`
+        // and `value`. Capturing them by reference was the use-after-free in the container test
+        // (measured: ASan, `loop.quit()` on a destroyed QEventLoop). The state lives on the heap and
+        // is shared with the callback, so a late reply or deadline can never reach a dead stack.
+        struct State {
+            QEventLoop loop;
+            QJsonObject value;
+        };
+        auto state = std::make_shared<State>();
+        client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
             if (error.isEmpty()) {
-                value = QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
-                            .object();
+                state->value =
+                    QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
+                        .object();
             }
-            loop.quit();
+            state->loop.quit();
         });
-        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
-        loop.exec();
-        return value;
+        QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+        state->loop.exec();
+        return state->value;
     };
     const auto settle = [](int milliseconds) {
         QEventLoop loop;
@@ -5655,22 +5670,27 @@ int runContainerCheck(const QString& enginePath) {
     }
 
         const auto page_table = [&](const QString& expression) {
-            QEventLoop loop;
-            QStringList ids;
+            // Same lifetime rule as evaluate_json: the eval reply callback is held by the engine link
+            // (not by this loop), so `loop`/`ids` must not be captured by reference.
+            struct State {
+                QEventLoop loop;
+                QStringList ids;
+            };
+            auto state = std::make_shared<State>();
             client->evaluate(home_surface, QStringLiteral("JSON.stringify(%1)").arg(expression),
-                             [&](const QJsonObject& reply, const QString& error) {
+                             [state](const QJsonObject& reply, const QString& error) {
                                  if (error.isEmpty()) {
                                      const QJsonDocument document = QJsonDocument::fromJson(
                                          reply.value(QStringLiteral("value")).toString().toUtf8());
                                      for (const QJsonValue& value : document.array()) {
-                                         ids.append(value.toString());
+                                         state->ids.append(value.toString());
                                      }
                                  }
-                                 loop.quit();
+                                 state->loop.quit();
                              });
-            QTimer::singleShot(8000, &loop, &QEventLoop::quit);
-            loop.exec();
-            return ids;
+            QTimer::singleShot(8000, &state->loop, &QEventLoop::quit);
+            state->loop.exec();
+            return state->ids;
         };
         const auto reload_grid = [&] {
             QEventLoop loop;
@@ -5943,29 +5963,42 @@ int runTagCheck(const QString& enginePath) {
     qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
 
     const auto evaluate_json = [](EngineClient* client, qint64 surface, const QString& script) {
-        QEventLoop loop;
-        QJsonObject value;
-        client->evaluate(surface, script, [&](const QJsonObject& reply, const QString& error) {
+        // The reply callback can outlive this helper: when the request times out, the engine's own
+        // deadline (EngineClient::send) fires *after* our loop has already quit and destroyed `loop`
+        // and `value`. Capturing them by reference was the use-after-free in the container test
+        // (measured: ASan, `loop.quit()` on a destroyed QEventLoop). The state lives on the heap and
+        // is shared with the callback, so a late reply or deadline can never reach a dead stack.
+        struct State {
+            QEventLoop loop;
+            QJsonObject value;
+        };
+        auto state = std::make_shared<State>();
+        client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
             if (error.isEmpty()) {
-                value = QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
-                            .object();
+                state->value =
+                    QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
+                        .object();
             }
-            loop.quit();
+            state->loop.quit();
         });
-        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
-        loop.exec();
-        return value;
+        QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+        state->loop.exec();
+        return state->value;
     };
     const auto evaluate_text = [](EngineClient* client, qint64 surface, const QString& script) {
-        QEventLoop loop;
-        QString value;
-        client->evaluate(surface, script, [&](const QJsonObject& reply, const QString& error) {
-            value = error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
-            loop.quit();
+        // Same lifetime rule as evaluate_json: the reply callback must not capture the stack loop.
+        struct State {
+            QEventLoop loop;
+            QString value;
+        };
+        auto state = std::make_shared<State>();
+        client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
+            state->value = error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
+            state->loop.quit();
         });
-        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
-        loop.exec();
-        return value;
+        QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+        state->loop.exec();
+        return state->value;
     };
     const auto settle = [](int milliseconds) {
         QEventLoop loop;
@@ -6221,29 +6254,42 @@ int runWorkspaceCheck(const QString& enginePath) {
     qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
 
     const auto evaluate_json = [](EngineClient* client, qint64 surface, const QString& script) {
-        QEventLoop loop;
-        QJsonObject value;
-        client->evaluate(surface, script, [&](const QJsonObject& reply, const QString& error) {
+        // The reply callback can outlive this helper: when the request times out, the engine's own
+        // deadline (EngineClient::send) fires *after* our loop has already quit and destroyed `loop`
+        // and `value`. Capturing them by reference was the use-after-free in the container test
+        // (measured: ASan, `loop.quit()` on a destroyed QEventLoop). The state lives on the heap and
+        // is shared with the callback, so a late reply or deadline can never reach a dead stack.
+        struct State {
+            QEventLoop loop;
+            QJsonObject value;
+        };
+        auto state = std::make_shared<State>();
+        client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
             if (error.isEmpty()) {
-                value = QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
-                            .object();
+                state->value =
+                    QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
+                        .object();
             }
-            loop.quit();
+            state->loop.quit();
         });
-        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
-        loop.exec();
-        return value;
+        QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+        state->loop.exec();
+        return state->value;
     };
     const auto evaluate_text = [](EngineClient* client, qint64 surface, const QString& script) {
-        QEventLoop loop;
-        QString value;
-        client->evaluate(surface, script, [&](const QJsonObject& reply, const QString& error) {
-            value = error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
-            loop.quit();
+        // Same lifetime rule as evaluate_json: the reply callback must not capture the stack loop.
+        struct State {
+            QEventLoop loop;
+            QString value;
+        };
+        auto state = std::make_shared<State>();
+        client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
+            state->value = error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
+            state->loop.quit();
         });
-        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
-        loop.exec();
-        return value;
+        QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+        state->loop.exec();
+        return state->value;
     };
     const auto settle = [](int milliseconds) {
         QEventLoop loop;
@@ -7015,30 +7061,39 @@ int runWorkspaceCheck(const QString& enginePath) {
             qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
 
             const auto evaluate_json = [](EngineClient* client, qint64 surface, const QString& script) {
-                QEventLoop loop;
-                QJsonObject value;
-                client->evaluate(surface, script, [&](const QJsonObject& reply, const QString& error) {
+                // Same lifetime rule as the other self-test helpers: the callback outlives the stack
+                // loop on a timeout, so the loop and the value must live on the heap.
+                struct State {
+                    QEventLoop loop;
+                    QJsonObject value;
+                };
+                auto state = std::make_shared<State>();
+                client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
                     if (error.isEmpty()) {
-                        value = QJsonDocument::fromJson(
-                                    reply.value(QStringLiteral("value")).toString().toUtf8())
-                                    .object();
+                        state->value = QJsonDocument::fromJson(
+                                           reply.value(QStringLiteral("value")).toString().toUtf8())
+                                           .object();
                     }
-                    loop.quit();
+                    state->loop.quit();
                 });
-                QTimer::singleShot(20000, &loop, &QEventLoop::quit);
-                loop.exec();
-                return value;
+                QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+                state->loop.exec();
+                return state->value;
             };
             const auto evaluate_text = [](EngineClient* client, qint64 surface, const QString& script) {
-                QEventLoop loop;
-                QString value;
-                client->evaluate(surface, script, [&](const QJsonObject& reply, const QString& error) {
-                    value = error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
-                    loop.quit();
+                struct State {
+                    QEventLoop loop;
+                    QString value;
+                };
+                auto state = std::make_shared<State>();
+                client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
+                    state->value =
+                        error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
+                    state->loop.quit();
                 });
-                QTimer::singleShot(20000, &loop, &QEventLoop::quit);
-                loop.exec();
-                return value;
+                QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+                state->loop.exec();
+                return state->value;
             };
             const auto settle = [](int milliseconds) {
                 QEventLoop loop;

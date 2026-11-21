@@ -44,7 +44,7 @@ $missing = @()
 $checked = 0
 foreach ($pattern in $patterns) {
     Get-ChildItem -Recurse -File -Filter $pattern |
-        Where-Object { $_.FullName -notmatch '\\(target|build|build-release|dist|node_modules)\\' } |
+        Where-Object { $_.FullName -notmatch '\\(target|build|build-asan|build-release|dist|node_modules)\\' } |
         ForEach-Object {
             $checked++
             $head = (Get-Content -TotalCount 3 $_.FullName) -join "`n"
@@ -67,7 +67,7 @@ Report ("{0} source files carry the SPDX header" -f $checked) ($missing.Count -e
 Write-Host '=== Markdown links ===' -ForegroundColor Cyan
 $broken = @()
 foreach ($file in Get-ChildItem -Recurse -File -Filter '*.md' |
-        Where-Object { $_.FullName -notmatch '[\\/](dist|build|build-release|target|node_modules)[\\/]' }) {
+        Where-Object { $_.FullName -notmatch '[\\/](dist|build|build-asan|build-release|target|node_modules)[\\/]' }) {
     $text = Get-Content -Raw -Encoding utf8 $file.FullName
     foreach ($match in [regex]::Matches($text, '\]\(([^)]+)\)')) {
         $target = $match.Groups[1].Value

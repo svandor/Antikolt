@@ -7,6 +7,12 @@
 #include <cstring>
 #include <thread>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <windows.h>
+#endif
+
 #include "include/cef_parser.h"
 #include "include/internal/cef_types.h"
 
@@ -222,13 +228,53 @@ void StdioLink::Start() {
         return;
     }
     started_ = true;
+#ifdef _WIN32
+    // The frame channel must be byte-exact. The 4-byte length header can legitimately contain a 0x0A byte
+    // (the large `cards.upsert` event is 4362 = 0x110A bytes, low byte 0x0A), and the CRT's text-mode
+    // stdout would translate that lone LF into CRLF — a 4-byte header becomes 5 bytes and every frame after
+    // it is misaligned (measured on VECTOR: the shell then decoded a frame length of 1116685 instead of
+    // 4362). Reading already goes through `_fdopen(..., "rb")`; writing must be binary too.
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     std::thread([this] { ReaderLoop(); }).detach();
 }
 
 void StdioLink::ReaderLoop() {
+#ifdef _WIN32
+    // Chromium closes the browser process's inherited stdin handle once it starts launching its child
+    // processes (renderer/GPU). That surfaces as a premature EOF on the shell's pipe while the shell is
+    // still writing: `fread(stdin)` returns 0 and the host shuts down mid-conversation (measured on
+    // VECTOR — `stdin closed` right after the first page eval, while the shell kept writing frames).
+    // Read from a private duplicate instead, so a CloseHandle inside Chromium cannot tear the link down;
+    // the pipe itself stays alive as long as this duplicate and the shell's write end both exist.
+    FILE* input = nullptr;
+    const HANDLE inherited = GetStdHandle(STD_INPUT_HANDLE);
+    if (inherited != nullptr && inherited != INVALID_HANDLE_VALUE) {
+        HANDLE owned = INVALID_HANDLE_VALUE;
+        if (DuplicateHandle(GetCurrentProcess(), inherited, GetCurrentProcess(), &owned, 0, FALSE,
+                            DUPLICATE_SAME_ACCESS) &&
+            owned != INVALID_HANDLE_VALUE) {
+            const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(owned), _O_RDONLY | _O_BINARY);
+            if (fd != -1) {
+                input = _fdopen(fd, "rb");
+                if (input == nullptr) {
+                    _close(fd);
+                }
+            } else {
+                CloseHandle(owned);
+            }
+        }
+    }
+    if (input == nullptr) {
+        input = stdin;  // fallback: the standard stream, exactly as before
+    }
+#else
+    FILE* input = stdin;
+#endif
+
     for (;;) {
         unsigned char header[4] = {};
-        if (std::fread(header, 1, sizeof(header), stdin) != sizeof(header)) {
+        if (std::fread(header, 1, sizeof(header), input) != sizeof(header)) {
             break;
         }
         const uint32_t length = DecodeLength(header);
@@ -237,7 +283,7 @@ void StdioLink::ReaderLoop() {
             break;
         }
         std::string payload(length, '\0');
-        if (std::fread(payload.data(), 1, length, stdin) != length) {
+        if (std::fread(payload.data(), 1, length, input) != length) {
             break;
         }
 

@@ -16,9 +16,17 @@ check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnin
 A hordozható példány: `scripts/dist.ps1 -Release` → `dist/Antikolt/` (445.6 MB), asztali és Start-menü
 parancsikonnal; a telepített binárison a `--profiletest`, `--workspacetest`, `--containertest`, `--tagtest`,
 `--addcardtest` külön is lefutott (`exit=0`), mert a `dist` ugyanaz a kód, de nem ugyanaz a fájl.
-**Kivétel, kimondva:** a legutóbbi szelet után a telepített `--addcardtest` **nem volt mérhető** — az engine
-GPU-folyamata elhalt (`GPU state invalid after WaitForGetOffsetInRange`), a shell pedig 150 s után sem lépett
-tovább; a `build/` binárison ugyanez a kód zöld. Tiszta GPU-állapot mellett újra kell futtatni.
+**Kivétel, kimondva:** a CEF-GPU blokker **feloldva** — a `--disable-software-rasterizer` kapcsoló kapcsolta ki a
+SwiftShader-t a `ANTIKOLT_ENGINE_DISABLE_GPU=1` ágban; javítva és mérve (`--embedtest` → `exit=0` 2,6 s alatt). A
+VECTOR hardveres GPU-útja továbbra is elhal (RTX 5080 + Intel, Chromium 158 beta), ezért ezen a gépen a kapu
+`$env:ANTIKOLT_ENGINE_DISABLE_GPU='1'`-gyel fut; a hardveres út bisectelve (napló 93): a d3d11 ANGLE-háttér a hibás a
+5080-on, a `--use-angle=gl` megy. A motor stdio-hibája is feloldva (`protocol.cpp`: a `stdin`-t egy privát
+`DuplicateHandle`-másolatból olvassa, mert a Chromium bezárja az örökölt handle-t), és a keret-írás is binárissá lett
+(`_setmode(_fileno(stdout), _O_BINARY)`, mert a szöveges `stdout` a kerethossz `0x0A` bájtját CRLF-fé torzította —
+napló 94). A `containertest` Qt6Core-krachja is feloldva (`main.cpp`: az `evaluate_json`/`evaluate_text` segédek a
+saját `QEventLoop`-jukat `std::make_shared`-állapotba teszik — a gyökeret AddressSanitizer adta). **A teljes kapu így
+zöld: `ALL SELF TESTS PASSED`** (`$env:ANTIKOLT_ENGINE_DISABLE_GPU='1'`), a `--containertest` → `exit=0` 12 s, minden
+`container_*` ok. Napló 90–94. szelet.
 
 ## A repó nyilvános
 

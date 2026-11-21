@@ -12,6 +12,7 @@
 target/
 **/target/
 build/
+build-asan/
 build-release/
 out/
 bin/

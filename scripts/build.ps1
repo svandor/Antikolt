@@ -39,7 +39,8 @@ param(
     [string]$CefMarker = 'D:\Tools\cef\CEF-ROOT.txt',
     [string]$BuildDir,
     [switch]$Clean,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [switch]$Asan
 )
 
 $ErrorActionPreference = 'Stop'
@@ -179,6 +180,7 @@ $configureArgs = @(
     "-DCMAKE_CXX_COMPILER=$clFwd"
 )
 if ($cefReady) { $configureArgs += "-DANTIKOLT_CEF_ROOT=$($cefRoot.Replace('\','/'))" }
+if ($Asan) { $configureArgs += '-DANTIKOLT_ASAN=ON' }
 
 Write-Host '=== Configure ===' -ForegroundColor Cyan
 & $cmake @configureArgs

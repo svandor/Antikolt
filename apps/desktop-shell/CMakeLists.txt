@@ -50,5 +50,14 @@ if(MSVC)
   # /utf-8 matters: the source contains Hungarian text in UTF-8.
 endif()
 
+# AddressSanitizer for the shell only (the engine host is a CEF app whose child processes do not
+# play well with the ASan runtime). Enabled with -DANTIKOLT_ASAN=ON; a use-after-free then prints
+# both the use site and the free site, which is what a debugger alone cannot show.
+option(ANTIKOLT_ASAN "Build the shell with AddressSanitizer (/fsanitize=address)" OFF)
+if(ANTIKOLT_ASAN AND MSVC)
+  target_compile_options(antikolt-shell PRIVATE /fsanitize=address)
+  target_link_options(antikolt-shell PRIVATE /fsanitize=address)
+endif()
+
 # Keep the executable next to its Qt DLLs on Windows; windeployqt runs at install time, not here.
 install(TARGETS antikolt-shell RUNTIME DESTINATION bin)

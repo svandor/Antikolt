@@ -3,6 +3,208 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-20 (kilencvenötödik szelet) — az átadás a Flash-modellre: kimondva, eszkalációs szabállyal
+
+A hátralevő munka átadása a **DeepSeek V4.1 Flash**-re került a `HANDOVER.md`-be, egyértelműen: a mély natív
+hibakeresést a **DeepSeek V4 Pro** már lezárta (90–94. szelet), a Flash viszi a feature-kódot, az SQLite-first
+store-cserét, a konténer-engedély/proxy + OAuth-t és a kiadást. A lényeg egy **nem újratárgyalható eszkalációs
+szabály**: ha a Flash néhány próbálkozásból nem lokalizál egy apró natív hibát, **álljon meg és mondja ki, hogy
+„Pro modell szükséges"** a bizonyítékkal együtt — ne égessen fölösleges próbálkozásokat ugyanarra a zsákutcára.
+Az indok mérve: a V4.1 Flash kódolásban (54,2) és következtetésben (75,8) erős, de az önálló többfájlos
+hibavadászatban (agentic 39,5) gyenge — ez a rész marad a Prón. A szabály a `HANDOVER.md` 0. szakaszában és az
+„Átadás magyarul" blokkban is rögzítve, hogy egy friss munkamenet azonnal lássa.
+
+## 2026-11-20 (kilencvennegyedik szelet) — a keret-torzulás: a motor `stdout`-ja szöveges módban írt (CRLF), és a `cards.upsert` elakadt
+
+A 93. szeletben „renderer-lassúságnak" hitt `containertest`-elakadás **nem renderer-probléma volt**, hanem a
+proto­koll-keret torzulása. A nyomkövető a pontos számot adta: a shell a `cards.upsert` keretére
+**`frame length=1116685`**-öt olvasott a helyes `4362` helyett. `1116685 = 0x110A0D` → bájtok `0D 0A 11 01`:
+a `0x0A` bájtból `0D 0A` (CRLF) lett.
+
+### A gyökér (mért)
+
+A motor a kerethosszt 4 bájtban, binárisan írja (`EncodeLength`), de a **`stdout` a CRT alapértelmezett
+szöveges módjában** volt — a Windows a benne lévő `0x0A` (LF) bájtot `0x0D 0x0A`-ra (CRLF) fordítja. A
+`cards.upsert` kerete 4362 bájt (`0x110A`), aminek az **alsó hossz-bájtja pont `0x0A`** — így a 4 bájtos
+fejlécből 5 bájt lett, és minden utána következő keret elcsúszott. A kisebb keretek (37, 42, 122, 916 …)
+hosszának egyik bájtja sem `0x0A`, ezért eddig sosem ütközött ki; a `cards.upsert` volt az első keret,
+amelyiknek a hossza `0x0A`-ra végződött. Ez ugyanaz az osztály, mint a 91. szelet stdio-javítása — ott az
+**olvasást** tettem binárissá, az **írást** nem.
+
+### A javítás
+
+`apps/engine-host/src/protocol.cpp` `StdioLink::Start()`: Windows-on `_setmode(_fileno(stdout), _O_BINARY)`
+mielőtt bármely keret kiíródna. A keretcsatorna most már bájt-pontos.
+
+### Bizonyíték
+
+```
+--containertest  → exit=0 12 s   container_page=ok container_core=ok container_restored=ok
+                                 container_legend=ok container_filter=ok container_table=ok
+                                 container_created=ok container_reload=ok container_rename=ok
+                                 container_used_delete=ok container_move_delete=ok container_switch=ok
+```
+
+A trace: `frame length=4362` (a hibás `1116685` helyett) → `card_upsert` a mag felé → `bridge_reply`. A
+`containertest` tehát **szoftveres rendereléssel is zöld** — a korábbi „lassúság" illúzió volt, amit a
+kerettorzulás okozott (a lap `cards.upsert`-je sosem kapott választ, a JS-e várt, a renderer fő szála blokkolt).
+
+### A hardveres GL-kapu (a 93. szelet workaroundjával)
+
+`ANTIKOLT_ENGINE_EXTRA_SWITCHES='--use-angle=gl'`-lel a teljes kapu **36/37**: minden ablakos teszt (a
+`containertest` is), plusz `coretest`, `sessionpanel`, a preview-sor és a `check-repo` zöld. Az egyetlen bukás a
+`capturetest`, ami **elszigetelten zöld** (2,3 s, `capture=ok capture_size=ok`) — tehát terhelés alatti átmeneti
+timeout, nem kódhiba. A szoftveres-renderelésű kapu teljesen zöld.
+
+## 2026-11-20 (kilencvenharmadik szelet) — a hardveres GPU-út bisectje: a d3d11 háttér hibás a 5080-on, a GL megy
+
+A hardveres GPU-krachot (RTX 5080 + Chromium 158 beta) bisecteltem a `ANTIKOLT_ENGINE_EXTRA_SWITCHES`-csel,
+újrafordítás nélkül. Az eredmény mért:
+
+- **alapértelmezett (d3d11):** a GPU-folyamat elhal (`GPU process exited unexpectedly`, háromszor), de a
+  `--embedtest` így is `exit=0` (a teszt nem buktat a GPU-halálra — ezt a hézagot érdemes később bezárni).
+- **`--use-angle=gl`:** a GPU-folyamat **életben marad**; `--embedtest` → `embed=ok paint=ok`, a motor
+  `--selftest` → `load=ok`, egyetlen GPU-halál nélkül.
+- `--use-angle=d3d9` és `--use-gl=desktop`: `Requested GL implementation … Exiting GPU process` — nem jók.
+
+Tehát a d3d11-es ANGLE-háttér a hibás a 5080-on, a GL-háttér viszont megy. A hardveres GPU-út a VECTOR-on így
+futtatható: `$env:ANTIKOLT_ENGINE_EXTRA_SWITCHES='--use-angle=gl'`.
+
+### Amit a GL sem old meg
+
+A `containertest` a GL-lel sem zöld: a `cards.upsert` utáni újrarenderelés a rendererben **lassú** marad (a
+polling `eval`-ek válaszolnak, de ~20 s-os késéssel, a 25 próbálkozásos ciklus ezért elidőzik). Ez már nem a
+GPU-háttér hibája, hanem a lap/renderer viselkedése a konténer-váltás után — külön szeletet érdemel.
+
+## 2026-11-20 (kilencvenkettedik szelet) — a containertest krachjának forrása megtalálva (AddressSanitizer) és javítva
+
+A 91. szeletben nyitva hagyott `containertest` `0xC0000005` (Qt6Core) krachját **AddressSanitizerrel** lokalizáltam —
+nem debuggerrel, hanem a MSVC már meglévő `/fsanitize=address` flagjével. A hiba a 31. szeletben dokumentált
+„Qt-időzítő + referenciaként elfogott lambda" csapda volt, a shell teszt-segédfüggvényében.
+
+### A gyökér (mért)
+
+Az `evaluate_json` segéd (és a párja, `evaluate_text`) a saját `QEventLoop`-ját és az eredményét **referenciaként**
+(`[&]`) fogta el a motorház válasz-visszahívásában. Ha egy `eval` kifut a 20 s-ból, a segéd saját időzítője előbb
+kilépteti a hurkot (a stacken lévő `loop`/`value` megsemmisül), de a visszahívás még a `EngineClient::pending_`-ben
+ül — amikor a motorház saját 20 s-os határideje (`EngineClient::send`) utána tüzel, a visszahívás egy **már
+megsemmisült** `QEventLoop`-on hív `quit()`-ot. Az ASan-kimenet a pontos sort adta:
+
+```
+#1  runContainerCheck::<lambda>::<lambda>  main.cpp:5409          ← loop.quit() a halott loopon
+#5  EngineClient::send::<lambda>           engine_client.cpp:120  ← a 20 s-os határidő
+```
+
+### A javítás
+
+A segéd állapota (`loop` + `value`/`text`) a **heapre** kerül (`std::make_shared<State>`), és a visszahívás a
+`state`-et **értékként** fogja el — a későn érkező határidő/válasz így soha nem ér el elhalt stacket. Ugyanezt a
+mintát javítottam a többi teszt-segédben is (7 `evaluate_json`/`evaluate_text` + a `page_table`), mert ugyanaz a
+látens hiba volt bennük.
+
+### Az ASan-eszköz (először a repóban)
+
+- `apps/desktop-shell/CMakeLists.txt`: `ANTIKOLT_ASAN` opció (a shellre; MSVC-n `/fsanitize=address`).
+- `scripts/build.ps1`: `-Asan` kapcsoló → `pwsh -File scripts/build.ps1 -Asan -BuildDir build-asan`.
+- A shell ASan-eszközölt, a motorház **nem** (a CEF gyerekfolyamatai nem férnek össze az ASan runtime-mal).
+
+### Bizonyíték
+
+A `containertest` ASan alatt **nem krachel többé** (a UAF eltűnt), a másik három ablakos teszt zöld maradt:
+
+```
+searchtest  → exit=0 7.6s    search_check=ok
+notetest    → exit=0 8.7s    note_save=ok note_rendered_ok=ok
+addcardtest → exit=0 12.1s   delete_armed=ok delete_card=ok add_card_check=ok
+```
+
+### Amit a javítás után is látni kell (nem a shell hibája)
+
+A `containertest` a UAF-javítás után **nem krachel, de elakad** a `cards.upsert` utáni újrarenderelésnél: a trace
+szerint a motor **megkapja** az `eval id=19/20/21` kéréseket (`op=eval … surface=1`), de **nem válaszol** rájuk —
+a SwiftShader-rel (szoftveres renderelés) az újrarenderelés blokkolja a renderer DevTools-át. Ez ugyanaz a
+szoftveres-renderelési lassúság, mint a `notetest` kapu-timeoutja: egészséges GPU-n várhatóan nem jön elő (a
+hardveres GPU-út mérése a VECTOR-on a 90. szelet óta nyitott).
+
+## 2026-11-20 (kilencvenegyedik szelet) — a stdio-életciklus hiba feloldva (a motor már nem hal meg a teszt közepén)
+
+A 90. szeletben kimondott „nem-GPU" blokker a **motor saját stdio-jában** volt, nem a shellben. A motor a
+protokollt a `stdin`-jéből olvassa (`StdioLink::ReaderLoop`, `fread(stdin)`); a Chromium (CEF) viszont a
+gyerekfolyamatai (renderer/GPU) indításakor **bezárja a böngészőfolyamat örökölt stdin-handle-jét**. A motor ezért
+a lap első `eval`-je után korai EOF-et látott (`[engine-host] stdin closed`), és kilépett (`shutting down`, kód 0)
+— miközben a shell tovább írta a kereteket. A trace (`ANTIKOLT_ENGINE_TRACE=1`) ezt bizonyította: a shell
+`write`/`wrote`/`flushed` jelzői a motor `stdin closed`-ja **után** is futottak, tehát nem a shell zárta a csatornát.
+
+Javítás: a `StdioLink::ReaderLoop` a `stdin` helyett egy **privát duplikátumból** olvas (`DuplicateHandle` →
+`_open_osfhandle` → `_fdopen`, `apps/engine-host/src/protocol.cpp`). A Chromium hiába zárja be az eredeti
+handle-t, a duplikátum életben tartja a pipe olvasó végét, amíg a shell ír.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+--notetest    → exit=0 8.4s    note_save=ok note_write=ok note_rendered_ok=ok note_focus_ok=ok
+--searchtest  → exit=0 6.9s    search_accent=ok search_page_text=ok search_escape=ok search_check=ok
+--addcardtest → exit=0 11.9s   delete_armed=ok delete_card=ok add_card_check=ok
+```
+
+A teljes kapu (`verify.ps1`, `ANTIKOLT_ENGINE_DISABLE_GPU=1`) most már **végigfut** (nem akad el a `searchtest`-nél),
+és az eredménytáblája: **35 a 37 ablakos öntesztből ok**, plusz `coretest`, `sessionpanel`, `scrollbook`,
+`traytest`, `logtest`, `preview*`, `rulestest` és `check-repo` mind ok. A két maradék bukás **nem a motor
+életciklusa**:
+
+- `notetest` a teljes kapuban `note_save=FAILED (időtúllépés a motorház válaszára)` — elszigetelten zöld (8,4 s),
+  tehát a szoftveres renderelés + a kapu közben felhalmozott állapot lassúsága, nem a jegyzet-szerkesztő hibája.
+- `containertest` `0xC0000005`-tel (Qt6Core) száll el a lap `cards.upsert` hídhívása körül — elszigetelten is
+  reprodukálható; ez a shell híd-visszahívásának élettartam-hibája (a 31. szeletben már dokumentált
+  „Qt-timer + lambda" csapda osztálya), külön szeletet érdemel.
+
+### Amit nem állítok
+
+A kapu **nem** „ALL SELF TESTS PASSED" ezen a gépen: a `notetest` (flaky timeout) és a `containertest`
+(Qt6Core access violation) még bukik. A kettő közül a `containertest` valódi hiba; a `notetest` timeoutja a
+szoftveres renderelés sebessége miatt jön, és egészséges GPU-n várhatóan nem jön elő.
+
+## 2026-11-20 (kilencvenedik szelet) — a CEF-GPU blokker feloldva (mért), és ami mögötte volt
+
+A `HANDOVER.md` egyetlen blokkerét megszüntettem. A hiba nem a GPU-meghajtóban volt, hanem a **saját
+kódunkban**: a `ANTIKOLT_ENGINE_DISABLE_GPU=1` ág `--use-angle=swiftshader`-t kért, de közvetlenül utána
+`--disable-software-rasterizer`-t is bekapcsolt — az utóbbi **kikapcsolja** a SwiftShader-t, tehát a software-
+fallback épp az ellenkezőjét tette, mint amit a neve ígért. A `--disable-gpu --disable-gpu-compositing` mellett
+ez a két, egymásnak ellentmondó kapcsoló adta a dokumentált hibát: `ContextResult::kFatalFailure: Failed to
+create shared context for virtualization`. Javítás: a `--disable-software-rasterizer` (és a Windows-on semmit
+sem tevő `--disable-dev-shm-usage`) kikerült az `apps/engine-host/src/host.cpp`-ból.
+
+A VECTOR gépen a **hardveres** GPU-út maga is elhal (RTX 5080 + Intel iGPU, Chromium 158 beta; a GPU-folyamat
+`0x80000003` breakpointtal lép ki, a `--use-angle=d3d11` sem segít), ezért ezen a gépen a szoftveres út kell —
+erre való a `ANTIKOLT_ENGINE_DISABLE_GPU=1`, ami a javítás után már működik.
+
+### Bizonyíték (a tényleges kimenet)
+
+```
+antikolt-engine-host --selftest        (ANTIKOLT_ENGINE_DISABLE_GPU=1):
+    exit=0   gpu_exited=0   shared_context_fail=0   load=ok   status=200
+antikolt-shell --embedtest <motor>     (ANTIKOLT_ENGINE_DISABLE_GPU=1):
+    exit=0   elapsed=2.6s   embed=ok   viewport_match=ok   paint=ok   focus=ok   capture_size_match=ok
+```
+
+A `--embedtest` korábban 150 s watchdog-timeoutot kapott; a javítás után **2,6 s** alatt zöld, valódi
+pixelekkel (`capture_colours=25`).
+
+### Ami ezzel láthatóvá vált (és nyitva maradt)
+
+A kapu (`verify.ps1`) most már **fut** (a GPU-crash loop megszűnt), de nem ér a „ALL SELF TESTS PASSED"-ig: a
+18. ablakos tesztnél (`searchtest`) megáll, és a `notetest` is elbukik. A közös jel: a motorház a teszt közepén
+`stdin closed`-ot jelent, majd kilép (`shutting down`, kód 0), a shell pedig ezután hiába kérdez — a
+`note_save=FAILED (a motorház kilépett (kód 0))`, a `--addcardtest` pedig az `evaluate_click_add` lépésnél ragad.
+Ez **nem GPU-hiba**, hanem a shell↔motor stdio-életciklus hibája, amit a GPU-blokker eddig eltakart. Külön
+szeletet érdemel.
+
+### Amit nem állítok
+
+A kapu teljes zöldje **nincs kimérve** ebben a szeletben (a `searchtest` elakadása miatt), és a kétlépéses törlés
+(ADR-068) mérése (`--addcardtest`) is ezen a stdio-hibán áll meg — az ADR-068 tehát most már **mérhető**, de nem
+zöld, hanem „mért, és a stdio-életciklus-hibát mutatja".
+
 ## 2026-11-20 (nyolcvankilencedik szelet) — a munka átadható: `HANDOVER.md`
 
 A szelet célja nem termékfunkció, hanem hogy a munka **átadható** legyen egy új munkafolyamatnak. Elkészült a

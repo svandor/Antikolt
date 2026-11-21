@@ -1435,8 +1435,29 @@ void EngineApp::OnBeforeCommandLineProcessing(const CefString& process_type,
         // alive in that environment; it is slower, which is why it stays an explicit environment switch.
         command_line->AppendSwitch("disable-gpu-sandbox");
         command_line->AppendSwitchWithValue("use-angle", "swiftshader");
-        command_line->AppendSwitch("disable-software-rasterizer");
-        command_line->AppendSwitch("disable-dev-shm-usage");
+        // Do NOT append `disable-software-rasterizer` here: it turns SwiftShader off again, so the shared
+        // context for virtualization fails (`ContextResult::kFatalFailure: Failed to create shared context
+        // for virtualization`, measured on VECTOR — RTX 5080 + Intel, Chromium 158). `disable-dev-shm-usage`
+        // is Linux-only and does nothing on Windows, so it is not appended either.
+    }
+
+    // Diagnostic escape hatch for a host whose GPU process crash-loops: space separated extra
+    // Chromium switches from the environment, applied last so they win. It exists so a broken
+    // GPU stack can be bisected (ANGLE backend, sandbox, blocklist) without a rebuild per attempt;
+    // like the switch above it is an environment switch, never a product setting, and it must not
+    // be used for a release measurement (docs/HU/18-F0-JELENTES.md).
+    if (const char* extra = std::getenv("ANTIKOLT_ENGINE_EXTRA_SWITCHES");
+        extra != nullptr && *extra != '\0') {
+        std::istringstream tokens(extra);
+        std::string token;
+        while (tokens >> token) {
+            const std::string::size_type equals = token.find('=');
+            if (equals == std::string::npos) {
+                command_line->AppendSwitch(token);
+            } else {
+                command_line->AppendSwitchWithValue(token.substr(0, equals), token.substr(equals + 1));
+            }
+        }
     }
 }
 
