@@ -214,6 +214,29 @@ pub enum LoginState {
     Unknown,
 }
 
+impl LoginState {
+    /// The value stored in the `sessions.state` column (ADR-070). The same strings the JSON ledger wrote, so a
+    /// profile migrated from `sessions.json` reads back exactly as it was.
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::LoggedIn => "logged_in",
+            Self::LoggedOut => "logged_out",
+            Self::Expired => "expired",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "logged_in" => Some(Self::LoggedIn),
+            "logged_out" => Some(Self::LoggedOut),
+            "expired" => Some(Self::Expired),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
 /// Signals the injected watcher can observe without reading any secret.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct LoginSignals {

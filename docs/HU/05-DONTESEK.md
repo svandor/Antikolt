@@ -3,6 +3,44 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-070 — Mind a négy store SQLite-first (séma 0004) (2026-11-21)
+
+**Kontextus:** az ADR-069 a kártyákat tette adatbázissá, a konténerek, munkaterületek és munkamenetek viszont
+JSON-dokumentumok maradtak: a tábláikat csak a `db_status(sync)` frissítette, és semmi nem olvasta őket. Így a rács
+konténerlistája, a fül-sor és a munkamenet-panel minden kérése továbbra is teljes listát olvasott, a `container_delete`
+után pedig a tükör-táblák elavulhattak. A csere érett: a táblák és a séma megvoltak.
+
+**Döntés:**
+
+1. **Mind a négy store a `antikolt.sqlite3`-ból olvas és ír**; a négy `*.json` (kártyák, konténerek, munkaterületek,
+   munkamenetek) **export**: az átvétel, a leállás és a `db_status(sync)` írja, atomikusan, és a kapcsoló előtti
+   profilon kívül semmi nem olvassa vissza.
+2. **Az átvétel store-onként, a `meta` táblában jelölve** (`adopted:cards`, `adopted:containers`,
+   `adopted:workspaces`, `adopted:sessions`). A `user_version` csak a sémát jelenti (`0004`); az átvétel állapota nem
+   függ attól, melyik store nyílt meg előbb (a négy store négy kapcsolatot nyit ugyanarra a fájlra). A `0004` migráció
+   egy v3 fájlban `adopted:cards`-ot rögzít, mert ott a kártyák már átvételre kerültek — enélkül a `cards.json`
+   visszaíródhatna az újabb sorok fölé.
+3. **A munkamenet-tábla a ledger teljes sorát hordozza** (állapot, házirend, cookie/háttértár-méretek, service
+   workerek, `last_seen`/`last_verified`, RAM, `keep_alive`), a házirendek egy egy-soros `session_rules` táblában; az
+   enumerációk a `as_db`/`from_db` leképezéssel, ismeretlen érték **hangos hiba**, nem tipp.
+4. **Egy store átvétele:** a dokumentum nyer (az volt az író); hiányzó dokumentum → seed (4 konténer, 3 munkaterület,
+   üres ledger); üres dokumentum → üres marad; olvashatatlan → a mag **eláll** (`*Error::Legacy`, a fájlnévvel), nem
+   seedel az adat fölé.
+5. **A `db_status` mind a négy exportot ellenőrzi soronként** (`checked`, `mismatches`, `verified`); olvashatatlan
+   export `-1` (`not measured`), soha nem „egyezik”.
+6. **A sorrendek** a felületéi: konténerek és munkaterületek a beszúrás (legend/tükör) sorrendjében (`ORDER BY rowid`),
+   munkamenetek origin szerint.
+
+**Következmény:** (+) nincs több kézi tükrözés — a `sync_reference_tables` megszűnt, mert nincs mit tükrözni; (+)
+minden lista- és panelkérés indexelt olvasás; (+) az átvétel store-onként újraindítható, és egy korrupt dokumentum nem
+viszi magával a többit; (−) négy kapcsolat nyílik ugyanarra a fájlra (WAL mellett rendben; a séma-migráció egyszer fut);
+(−) a régi build egy v4 fájlt `user_version=4`-gyel olvas, de a JSON-t írná tovább, tehát a visszafelé ugrás nem
+támogatott.
+
+## ADR-069 — A kártyatár SQLite-first: a JSON export lesz (2026-11-21)
+
+**Állapot:** az 1–5. pont él; a 6. pontot (a másik három store egyelőre JSON marad) az ADR-070 váltotta fel.
+
 ## ADR-069 — A kártyatár SQLite-first: a JSON export lesz (2026-11-21)
 
 **Kontextus:** az ADR-064…066 egy tükröt épített: a JSON-fájl írt, az adatbázis követte. Ez bizonyította a migrációt
@@ -1029,11 +1067,11 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-049 | Az oldalszöveg a fagyasztáskor a kártyarekordba kerül (`card_page_text`, max. 16 000 karakter), és a keresés mindhárom rétegben látja | Elfogadva |
 | ADR-050 | A konténer-váltás a kártyán, natív `<select>`-tel; az írás a magon át megy, a lap csak azt mutatja, amit a mag elfogadott | Elfogadva |
 | ADR-051 | A konténer-jelmagyarázat egyben a szűrő: chipek színes ponttal és a keresés szerinti darabszámmal, `aria-pressed`-szel | Elfogadva |
-| ADR-052 | A konténer-tábla a magban él (`containers.json`), pushban érkezik a lapra, és nem törölhető, amíg kártya használja | Elfogadva |
+| ADR-052 | A konténer-tábla a magban él (`containers.json`, ma SQLite-tábla az ADR-070 szerint), pushban érkezik a lapra, és nem törölhető, amíg kártya használja | Elfogadva |
 | ADR-053 | A konténer szerkesztése helyben, dialógus nélkül (`＋`, dupla kattintás, `×`), a mag válasza megjelenik | Elfogadva |
 | ADR-054 | A használt konténer törlése `move_to`-val: előbb áthelyezés, aztán törlés; a felület felajánlja, nem kényszerít | Elfogadva |
 | ADR-055 | A címkék a kártyarekordban (`tags`), a mag normalizálja (trim, dedup, 12×32), a keresés ékezet nélkül is látja | Elfogadva |
-| ADR-056 | A munkaterület-tábla a magban él (`workspaces.json`); a kártya `workspace` mezője tárolt adat, nem a lap indexe | Elfogadva |
+| ADR-056 | A munkaterület-tábla a magban él (`workspaces.json`, ma SQLite-tábla az ADR-070 szerint); a kártya `workspace` mezője tárolt adat, nem a lap indexe | Elfogadva |
 | ADR-057 | A munkaterület életciklusa a fül-soron, ugyanazzal a gesztussal, mint a konténereké (`＋`, dupla kattintás, `×`), dialógus nélkül | Elfogadva |
 | ADR-058 | A kártya munkaterülete a kártyán váltható, natív `<select>`-tel (nem drag: a virtualizált rácsban törékeny és billentyűzettel használhatatlan) | Elfogadva |
 | ADR-059 | A profil egy hordozható JSON-kötegben utazik (`profile_export`/`profile_import`), `schema`-számmal; az ismeretlen séma elutasítás | Elfogadva |
@@ -1046,7 +1084,8 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-066 | A tükör soronként követi az írásokat (`mirror_card`/`mirror_delete`), a lista már csak olvas; több-kártyás op külön tükröz | Elavult (ADR-069) |
 | ADR-067 | Az adatbázis a store sorrendjében adja a kártyákat (`ORDER BY last_opened_at_ms DESC, LOWER(title)`), teszt védi | Elfogadva |
 | ADR-068 | Kétlépéses törlés a kártyán (`×` → `Biztos?` → törlés 5 s-en belül); mért és zöld (`delete_armed=ok delete_card=ok add_card_check=ok`) | Elfogadva |
-| ADR-069 | A kártyatár SQLite-first (`user_version=3`): egy író a `antikolt.sqlite3`, a `cards.json` export; egyszeri átvétel a kapcsoló előtti profilból; a `db_status` a DB ↔ export egyezést méri soronként | Elfogadva |
+| ADR-069 | A kártyatár SQLite-first (`user_version=3`): egy író a `antikolt.sqlite3`, a `cards.json` export; egyszeri átvétel a kapcsoló előtti profilból; a `db_status` a DB ↔ export egyezést méri soronként | Részben elavult (6. pont: ADR-070) |
+| ADR-070 | Mind a négy store SQLite-first (`user_version=4`): a négy JSON export; store-onkénti átvétel a `meta` táblában; a ledger teljes sora + egy-soros `session_rules`; a `db_status` mind a négy exportot soronként ellenőrzi | Elfogadva |
 
 ---
 

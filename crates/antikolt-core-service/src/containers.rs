@@ -7,14 +7,20 @@
 //! JSON constant and the colour a card showed was decided by whichever layer drew it. This store moves the table
 //! where every other fact lives: the core.
 //!
-//! Like the card store it is one JSON document, rewritten atomically, and additive: a profile that predates it
-//! is seeded with the four containers the product shipped with, so nothing the user sees disappears.
+//! Since ADR-070 the table is **SQLite-first**: the rows are the truth, and `containers.json` is a derived export —
+//! written on adoption, on shutdown and when `db_status` asks for a sync, and read only once, to adopt a profile
+//! whose JSON document was still the writer of record.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::persist::write_json_atomic;
+use crate::sqlite_store::{Db, DbError};
+
+/// The export beside the database: the legacy document, and the readable copy this build keeps.
+pub const FILE_NAME: &str = "containers.json";
 
 /// One container, as the grid draws it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,8 +37,18 @@ pub enum ContainerError {
     Io(#[from] std::io::Error),
     #[error("the container store is not valid JSON: {0}")]
     Json(#[from] serde_json::Error),
+    /// The pre-switch document could not be read: it was the only copy of the containers at that moment, so the core
+    /// stops instead of replacing it with the seeds.
+    #[error("cannot read the container list written by an earlier version ({path}): {source}")]
+    Legacy {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("invalid container: {0}")]
     Invalid(String),
+    #[error("the database refused the container table: {0}")]
+    Db(#[from] DbError),
 }
 
 /// The containers the product ships with. Ids are stable and referenced by the cards that already exist.
@@ -61,36 +77,39 @@ fn seed_containers() -> Vec<Container> {
     ]
 }
 
-/// The container table, backed by one JSON file.
+/// The container table: rows in SQLite, with `containers.json` as a derived export.
 #[derive(Debug)]
 pub struct ContainerStore {
-    path: PathBuf,
-    containers: Vec<Container>,
+    data_dir: PathBuf,
+    db: Db,
 }
 
 impl ContainerStore {
-    /// Open (or create) the store next to the cards.
+    /// Open the store, adopting the pre-switch `containers.json` once (ADR-070).
+    ///
+    /// A missing document is seeded with the four containers the product shipped with; a document that exists — even
+    /// an empty one — is adopted as it is, because the user may have deleted every container they had.
     pub fn open(directory: &Path) -> Result<Self, ContainerError> {
         fs::create_dir_all(directory)?;
-        let path = directory.join("containers.json");
-        let containers = match fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str::<Vec<Container>>(&text)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let seeded = seed_containers();
-                let store = Self {
-                    path,
-                    containers: seeded,
-                };
-                store.save()?;
-                return Ok(store);
-            }
-            Err(error) => return Err(error.into()),
+        let db = Db::open(directory)?;
+        let mut store = Self {
+            data_dir: directory.to_path_buf(),
+            db,
         };
-        Ok(Self { path, containers })
+        if !store.db.was_adopted("containers")? {
+            store.adopt_legacy()?;
+            store.db.mark_adopted("containers")?;
+        }
+        Ok(store)
     }
 
-    pub fn list(&self) -> Vec<Container> {
-        self.containers.clone()
+    /// The export's path inside the profile.
+    pub fn path(&self) -> PathBuf {
+        self.data_dir.join(FILE_NAME)
+    }
+
+    pub fn list(&self) -> Result<Vec<Container>, ContainerError> {
+        Ok(self.db.all_containers()?)
     }
 
     /// Create or replace one container. The id must look like a container id (`c-…`) and the name must not be
@@ -112,53 +131,76 @@ impl ContainerStore {
         if !is_color(&container.color) {
             container.color = color_for(&container.id);
         }
-        match self
-            .containers
-            .iter_mut()
-            .find(|entry| entry.id == container.id)
-        {
-            Some(existing) => *existing = container.clone(),
-            None => self.containers.push(container.clone()),
-        }
-        self.save()?;
+        self.db.upsert_container(&container)?;
         Ok(container)
     }
 
     /// Remove one container. Refuses while a card still points at it: deleting the group of a card that the
     /// caller did not look at would silently move it, and a silent move is how "my cards disappeared" bugs start.
     pub fn delete(&mut self, container_id: &str) -> Result<bool, ContainerError> {
-        let Some(index) = self
-            .containers
-            .iter()
-            .position(|entry| entry.id == container_id)
-        else {
-            return Ok(false);
-        };
-        self.containers.remove(index);
-        self.save()?;
-        Ok(true)
+        Ok(self.db.delete_container(container_id)?)
     }
 
     /// Replace the whole table, for an import (`profile_import`, ADR-059).
     pub fn replace_all(&mut self, containers: Vec<Container>) -> Result<usize, ContainerError> {
-        self.containers = containers;
-        let count = self.containers.len();
-        self.save()?;
+        let count = containers.len();
+        self.db.replace_containers(&containers)?;
         Ok(count)
     }
 
-    fn save(&self) -> Result<(), ContainerError> {
-        let text = serde_json::to_string_pretty(&self.containers)?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
+    /// Write `containers.json` from the rows. A derived copy: nothing reads it after the switch, and a failure is
+    /// reported to the caller instead of failing a user's write.
+    pub fn export_json(&self) -> Result<PathBuf, ContainerError> {
+        let path = self.path();
+        write_json_atomic(&path, &self.list()?)?;
+        Ok(path)
+    }
+
+    /// Compare the export with the rows: `(checked, mismatches)`, where `mismatches = -1` means the file could not be
+    /// read at all — `not measured`, never agreement.
+    pub fn verify_export(&self) -> Result<(i64, i64), ContainerError> {
+        let expected = self.list()?;
+        let checked = expected.len() as i64;
+        let text = match fs::read_to_string(self.path()) {
+            Ok(text) => text,
+            Err(_) => return Ok((checked, -1)),
+        };
+        let exported: Vec<Container> = match serde_json::from_str(&text) {
+            Ok(exported) => exported,
+            Err(_) => return Ok((checked, -1)),
+        };
+        let mut mismatches = 0i64;
+        if exported.len() != expected.len() {
+            mismatches += 1;
         }
-        let temporary = self.path.with_extension("json.tmp");
-        {
-            let mut file = fs::File::create(&temporary)?;
-            file.write_all(text.as_bytes())?;
-            file.sync_all()?;
+        for container in &expected {
+            match exported.iter().find(|row| row.id == container.id) {
+                Some(row) if row == container => {}
+                _ => mismatches += 1,
+            }
         }
-        fs::rename(&temporary, &self.path)?;
+        Ok((checked, mismatches))
+    }
+
+    /// Take the pre-switch document over exactly once: the JSON was the writer of record until this build, so it
+    /// wins — and a corrupt one stops the core instead of being replaced with seeds.
+    fn adopt_legacy(&mut self) -> Result<(), ContainerError> {
+        let path = self.path();
+        let containers = if path.exists() {
+            let text = fs::read_to_string(&path)?;
+            serde_json::from_str::<Vec<Container>>(&text).map_err(|source| {
+                ContainerError::Legacy {
+                    path: path.clone(),
+                    source,
+                }
+            })?
+        } else {
+            seed_containers()
+        };
+        self.db.replace_containers(&containers)?;
+        // The adopted document is rewritten at once, so a fresh profile still has its readable copy and the adopted
+        // one carries exactly the rows the store now holds.
+        self.export_json()?;
         Ok(())
     }
 }
@@ -217,13 +259,84 @@ mod tests {
         dir
     }
 
+    fn custom(id: &str, name: &str) -> Container {
+        Container {
+            id: id.to_string(),
+            name: name.to_string(),
+            color: "#123456".to_string(),
+        }
+    }
+
     #[test]
-    fn a_fresh_store_is_seeded_with_the_shipped_containers() {
+    fn a_fresh_store_is_seeded_in_the_database_and_exported() {
         let dir = temp_dir("seed");
         let store = ContainerStore::open(&dir).expect("open");
-        let ids: Vec<String> = store.list().into_iter().map(|entry| entry.id).collect();
+        let ids: Vec<String> = store
+            .list()
+            .expect("list")
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
         assert_eq!(ids, vec!["c-work", "c-private", "c-money", "c-dev"]);
-        assert!(dir.join("containers.json").exists(), "the seed is on disk");
+        assert!(
+            dir.join(FILE_NAME).exists(),
+            "the export is written beside the database"
+        );
+        // Reopening reads the rows, not the file: the list is the same and nothing is re-seeded.
+        let reopened = ContainerStore::open(&dir).expect("reopen");
+        assert_eq!(reopened.list().expect("list").len(), 4);
+        drop(reopened);
+        drop(store);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_pre_switch_document_is_adopted_once_and_emptying_it_stays_empty() {
+        let dir = temp_dir("adopt");
+        fs::write(
+            dir.join(FILE_NAME),
+            serde_json::to_string_pretty(&vec![custom("c-egy", "Egy"), custom("c-ketto", "Kettő")])
+                .expect("json"),
+        )
+        .expect("write the legacy document");
+
+        let store = ContainerStore::open(&dir).expect("open");
+        assert_eq!(
+            store.list().expect("list"),
+            vec![custom("c-egy", "Egy"), custom("c-ketto", "Kettő")],
+            "the document is adopted instead of being seeded over, in its own order"
+        );
+        drop(store);
+
+        // The switch is recorded, so the export is not adopted again — even when the user deletes every container.
+        let mut reopened = ContainerStore::open(&dir).expect("reopen");
+        for container in reopened.list().expect("list") {
+            assert!(reopened.delete(&container.id).expect("delete"));
+        }
+        assert!(reopened.list().expect("list").is_empty());
+        drop(reopened);
+        let again = ContainerStore::open(&dir).expect("reopen emptied");
+        assert!(
+            again.list().expect("list").is_empty(),
+            "an emptied container table is respected, not re-seeded"
+        );
+        drop(again);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn an_unreadable_legacy_document_stops_the_core() {
+        let dir = temp_dir("corrupt");
+        fs::write(dir.join(FILE_NAME), "{ not a container list").expect("write");
+        let error = ContainerStore::open(&dir).expect_err("the open must fail loudly");
+        assert!(
+            matches!(error, ContainerError::Legacy { .. }),
+            "the failure names the document: {error}"
+        );
+        assert!(
+            dir.join(FILE_NAME).exists(),
+            "the unreadable file is kept for the user to fix"
+        );
         fs::remove_dir_all(dir).ok();
     }
 
@@ -240,7 +353,7 @@ mod tests {
             .expect("create");
         assert_eq!(created.name, "Próba", "the name is trimmed");
         assert!(is_color(&created.color), "a missing colour is generated");
-        assert_eq!(store.list().len(), 5);
+        assert_eq!(store.list().expect("list").len(), 5);
 
         // A rename keeps the id and can change the colour; the id itself is the identity.
         store
@@ -252,6 +365,7 @@ mod tests {
             .expect("rename");
         let renamed = store
             .list()
+            .expect("list")
             .into_iter()
             .find(|entry| entry.id == "c-proba")
             .expect("still there");
@@ -260,7 +374,12 @@ mod tests {
 
         assert!(store.delete("c-proba").expect("delete"), "deleted");
         assert!(!store.delete("c-proba").expect("delete"), "already gone");
-        assert_eq!(store.list().len(), 4);
+        assert_eq!(store.list().expect("list").len(), 4);
+
+        drop(store);
+        let reopened = ContainerStore::open(&dir).expect("reopen");
+        assert_eq!(reopened.list().expect("list").len(), 4);
+        drop(reopened);
         fs::remove_dir_all(dir).ok();
     }
 
@@ -303,6 +422,28 @@ mod tests {
             color_for("c-szin"),
             "the colour is deterministic"
         );
+        drop(store);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_export_is_written_from_the_rows_and_can_be_checked() {
+        let dir = temp_dir("export");
+        let mut store = ContainerStore::open(&dir).expect("open");
+        store.upsert(custom("c-uj", "Új konténer")).expect("create");
+        let path = store.export_json().expect("export");
+        assert!(path.exists());
+        let checked = store.verify_export().expect("verify");
+        assert_eq!(checked, (5, 0), "every row agrees with the export");
+
+        // A file that no longer matches is reported, and a missing one is `not measured` rather than agreement.
+        fs::write(&path, "[]").expect("clobber");
+        let stale = store.verify_export().expect("verify");
+        assert_eq!(stale.0, 5);
+        assert!(stale.1 > 0);
+        fs::remove_file(&path).expect("remove");
+        assert_eq!(store.verify_export().expect("verify").1, -1);
+        drop(store);
         fs::remove_dir_all(dir).ok();
     }
 }

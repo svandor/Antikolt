@@ -7386,9 +7386,9 @@ int runWorkspaceCheck(const QString& enginePath) {
                 ++failures;
             }
 
-            // The storage report, on the product path (ADR-064 → ADR-069): the page asks the shell, the shell asks the
-            // core, and the core says whether the cards really live in SQLite and whether the export written from them
-            // parses back into exactly the same rows.
+            // The storage report, on the product path (ADR-064 → ADR-070): the page asks the shell, the shell asks the
+            // core, and the core says whether all four stores really live in SQLite and whether the exports written
+            // from them parse back into exactly the same rows.
             const auto db_status = [&](const QString& slot, bool sync) {
                 const QString kick = QStringLiteral("window.%1 = null;"
                                                    " window.antikoltDbStatus(%2)"
@@ -7412,16 +7412,20 @@ int runWorkspaceCheck(const QString& enginePath) {
                 return QJsonObject{};
             };
             const QJsonObject mirrored = db_status(QStringLiteral("__dbSync"), true);
-            const bool db_ok = mirrored.value(QStringLiteral("schema")).toInt() >= 2 &&
+            const bool db_ok = mirrored.value(QStringLiteral("schema")).toInt() >= 4 &&
                               mirrored.value(QStringLiteral("verified")).toBool(false) &&
                               mirrored.value(QStringLiteral("cards")).toInt() >= 11 &&
+                              mirrored.value(QStringLiteral("containers")).toInt() >= 4 &&
+                              mirrored.value(QStringLiteral("workspaces")).toInt() >= 3 &&
                               !mirrored.value(QStringLiteral("path")).toString().isEmpty();
             out << "db_status=" << (db_ok ? "ok" : "FAILED") << " schema="
                 << mirrored.value(QStringLiteral("schema")).toInt() << " cards="
                 << mirrored.value(QStringLiteral("cards")).toInt() << " verified="
                 << (mirrored.value(QStringLiteral("verified")).toBool(false) ? "yes" : "no")
                 << " containers=" << mirrored.value(QStringLiteral("containers")).toInt()
-                << " workspaces=" << mirrored.value(QStringLiteral("workspaces")).toInt() << '\n';
+                << " workspaces=" << mirrored.value(QStringLiteral("workspaces")).toInt()
+                << " sessions=" << mirrored.value(QStringLiteral("sessions")).toInt()
+                << " checked=" << mirrored.value(QStringLiteral("checked")).toInt() << '\n';
             if (!db_ok) {
                 ++failures;
             }

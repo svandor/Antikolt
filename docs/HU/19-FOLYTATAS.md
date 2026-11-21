@@ -322,15 +322,15 @@ normalizálva, a keresés ékezet nélkül is látja), és a **munkaterületek**
   útvonalat vár (a lapon `antikoltProfileWrite/Read`). Nyitott: a **gomb** és a natív fájlválasztó (a harnessben
   nem kattintható, ezért `not-measurable`), és a köteg titkosítása (a munkamenet-sorok miatt valódi döntés).
 - **Konténerek** — **kész** (ADR-050/051/052/053, `--containertest`): a kártya színes pontja és konténer-
-  választója, a chip-legend + szűrő, a tábla a magban (`containers.json`), és a felületi életciklus: `＋`
+  választója, a chip-legend + szűrő, a tábla a magban (SQLite-sorok, ADR-070), és a felületi életciklus: `＋`
   konténer, dupla kattintás = átnevezés, `×` = törlés — használt konténernél **áthelyezéssel** (ADR-054:
   a mag `move_to`-val előbb áthelyez, aztán töröl; a legenda felajánlja). Nyitott: konténerenkénti
   engedély/proxy (F3).
-- **Kártyatár** — **kész** (ADR-069, napló 96): a kártyák **SQLite-sorok** (`antikolt.sqlite3`, `user_version=3`,
-  WAL), a `card_upsert`/`card_open`/`card_page_text`/`card_delete`, a konténer-áthelyezés és a profil-import mind
-  oda ír, a `cards.json` **export** (átvételkor, leálláskor, `db_status(sync)`-ra); a kapcsoló előtti profil egyszer
-  átvételre kerül, egy olvashatatlan régi JSON megállítja a magot ahelyett hogy felülírná, az üres profil pedig nem
-  seedel újra. Nyitott: a konténerek, munkaterületek és munkamenetek cseréje.
+- **Tároló** — **kész** (ADR-069/070, napló 96–97): mind a négy store **SQLite-sorok** (`antikolt.sqlite3`,
+  `user_version=4`, WAL) — kártyák, konténerek, munkaterületek, munkamenetek; a négy `*.json` **export** (átvételkor,
+  leálláskor, `db_status(sync)`-ra); a kapcsoló előtti profil store-onként egyszer átvételre kerül (`meta` jelölők),
+  egy olvashatatlan régi dokumentum megállítja a magot ahelyett hogy felülírná, az üres profil pedig nem seedel újra;
+  a `db_status` mind a négy exportot soronként ellenőrzi. Nyitott: a hardveres GPU-út (VECTOR), F3 és az OAuth.
 - **OAuth/SSO popup** a helyes partícióban (max. 60 s, dokumentált I1-kivétel — a mechanizmus kész, a
   bejelentkezési folyamat nincs összekötve).
 - **Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás, összeomlás utáni helyreállítás, HU/EN felület,

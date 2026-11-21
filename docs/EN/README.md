@@ -5,7 +5,7 @@ Fedora/Nobara + KDE Wayland (later). Open source, **MPL-2.0** ([`LICENSE`](../..
 Status: **v0.8 — runnable, measured**. The repo is not a design document any more: it builds two native
 binaries (a Qt 6 shell and a CEF engine host) and a Rust core, and a gate proves the behaviour.
 
-The authoritative plan, the decision log (ADR-001…ADR-067) and the development log are Hungarian under
+The authoritative plan, the decision log (ADR-001…ADR-070) and the development log are Hungarian under
 [`docs/HU/`](../HU/); this page is the condensed English version, and
 [`docs/HU/21-ALLAPOT.md`](../HU/21-ALLAPOT.md) is the measured "where the product stands" page.
 
@@ -19,8 +19,8 @@ The authoritative plan, the decision log (ADR-001…ADR-067) and the development
 | Workspaces | `--workspacetest`: the tab row is the core's table, a card's workspace is a stored field, tab lifecycle (`＋`, double click, `×`) |
 | Cards | `--addcardtest`: add a card with the `＋` form, rename the title and the URL in place, delete — each read back from the core |
 | Portable profile | `--profiletest`: export the profile to one versioned JSON bundle and import it into a fresh profile, from the page itself |
-| Storage | Rust tests + `db_status`: the cards are SQLite rows (`user_version = 3`, WAL), `cards.json` is the export, and the report proves database and export agree row by row; a pre-switch profile is adopted once from JSON (ADR-069) |
-| Gate | `scripts/verify.ps1`: **37 self tests** + `check-repo` (SPDX, links, JS parse, `cargo fmt`, `clippy -D warnings`, 78 + 31 + 4 + 1 + 15 Rust tests) |
+| Storage | Rust tests + `db_status`: all four stores are SQLite rows (`user_version = 4`, WAL) — cards, containers, workspaces, sessions — and the four `*.json` documents are derived exports; the report proves every export agrees with the rows, and a pre-switch profile is adopted once per store (ADR-069/070) |
+| Gate | `scripts/verify.ps1`: **37 self tests** + `check-repo` (SPDX, links, JS parse, `cargo fmt`, `clippy -D warnings`, 78 + 45 + 5 + 1 + 15 Rust tests) |
 
 ## The idea
 

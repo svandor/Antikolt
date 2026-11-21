@@ -175,11 +175,15 @@ fn the_database_is_the_store_and_the_report_proves_the_export() {
 
     let status = service.request("db_status", json!({ "sync": true }));
     assert_eq!(status["ok"], true, "db_status answered: {status}");
-    assert_eq!(status["data"]["schema"], json!(3));
+    assert_eq!(status["data"]["schema"], json!(4));
     assert_eq!(status["data"]["verified"], true);
-    assert_eq!(status["data"]["checked"], json!(3), "every row is checked");
+    // Three cards, four containers, three workspaces and the rules of an empty ledger: every store's export is checked.
+    assert_eq!(status["data"]["checked"], json!(11), "every row is checked");
     assert_eq!(status["data"]["mismatches"], json!(0));
     assert_eq!(status["data"]["cards"], json!(3));
+    assert_eq!(status["data"]["containers"], json!(4));
+    assert_eq!(status["data"]["workspaces"], json!(3));
+    assert_eq!(status["data"]["sessions"], json!(0));
     assert!(
         status["data"]["path"]
             .as_str()
@@ -220,6 +224,88 @@ fn the_database_is_the_store_and_the_report_proves_the_export() {
             .any(|row| row["id"] == id && row["title"] == "Adatbázis-átnevezés"),
         "the export carries the rename from the database"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_container_workspace_and_session_documents_are_adopted_once_and_then_rows() {
+    // ADR-070: the three documents that used to be the writers are adopted on the first start and stay rows after it —
+    // including a cleanup policy, which is part of the profile a user chose.
+    let dir = temp_dir("adopt-three");
+    std::fs::write(
+        dir.join("containers.json"),
+        serde_json::to_string_pretty(&json!([
+            { "id": "c-sajat", "name": "Saját", "color": "#123456" }
+        ]))
+        .expect("json"),
+    )
+    .expect("write containers");
+    std::fs::write(
+        dir.join("workspaces.json"),
+        serde_json::to_string_pretty(&json!([
+            { "id": "w-sajat", "name": "Saját tér" }
+        ]))
+        .expect("json"),
+    )
+    .expect("write workspaces");
+    std::fs::write(
+        dir.join("sessions.json"),
+        serde_json::to_string_pretty(&json!({
+            "rules": { "container_default": "wipe", "ttl_ms": 7200000, "wipe_on_app_lock": true },
+            "entries": [{
+                "container_id": "c-sajat",
+                "origin": "https://pelda.hu",
+                "state": "expired",
+                "policy": "wipe",
+                "cookie_count": 3,
+                "cookie_bytes": 1024,
+                "storage_bytes": 2048,
+                "service_worker_count": 0,
+                "last_seen_ms": 1,
+                "last_verified_ms": null,
+                "live_ram_bytes": null,
+                "keep_alive": false
+            }]
+        }))
+        .expect("json"),
+    )
+    .expect("write sessions");
+
+    let mut service = Service::start(&dir);
+    let containers = service.request("containers_list", json!({}));
+    assert_eq!(containers["data"]["containers"][0]["id"], "c-sajat");
+    let workspaces = service.request("workspaces_list", json!({}));
+    assert_eq!(workspaces["data"]["workspaces"][0]["id"], "w-sajat");
+    let sessions = service.request("session_list", json!({}));
+    assert_eq!(
+        sessions["data"]["sessions"].as_array().expect("rows").len(),
+        1
+    );
+    assert_eq!(
+        sessions["data"]["rules"]["container_default"], "wipe",
+        "the profile's cleanup policy came over with the ledger"
+    );
+
+    let status = service.request("db_status", json!({ "sync": true }));
+    assert_eq!(status["data"]["verified"], true);
+    assert_eq!(status["data"]["containers"], json!(1));
+    assert_eq!(status["data"]["workspaces"], json!(1));
+    assert_eq!(status["data"]["sessions"], json!(1));
+    service.stop();
+
+    // A restart reads the rows, and the exports it wrote on the way out agree with them.
+    let mut again = Service::start(&dir);
+    let sessions = again.request("session_list", json!({}));
+    assert_eq!(
+        sessions["data"]["sessions"].as_array().expect("rows").len(),
+        1
+    );
+    let status = again.request("db_status", json!({}));
+    assert_eq!(
+        status["data"]["verified"], true,
+        "the exports agree after a restart"
+    );
+    again.stop();
     let _ = std::fs::remove_dir_all(&dir);
 }
 

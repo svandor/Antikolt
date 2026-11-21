@@ -10,7 +10,7 @@
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
 37 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
-check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+31+4+1+15 Rust-teszt)
+check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+45+5+1+15 Rust-teszt)
 ```
 
 A hordozható példány: `scripts/dist.ps1 -Release` → `dist/Antikolt/` (445.6 MB), asztali és Start-menü
@@ -42,12 +42,12 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Terület | Teszt | Mit bizonyít (mért kimenet) |
 |---|---|---|
 | Rács, 500 kártya | `--gridscaletest` | 503 kártya, **13** renderelt DOM-elem, 20 ms az első renderig; a görgetéses ugrás `not-measurable` (nincs layout-magasság a harnessben) |
-| Kártyatár | Rust-tesztek, `--addcardtest` | a kártyák **SQLite-sorok** (`user_version=3`, WAL); a `cards.json` export; `db_status=ok … verified=yes` a DB ↔ export egyezést soronként méri; a kapcsoló előtti profil egyszer átvételre kerül (ADR-069, napló 96) |
+| Tároló (négy store) | Rust-tesztek, `--addcardtest` | mind a négy store **SQLite-sorok** (`user_version=4`, WAL): kártyák, konténerek, munkaterületek, munkamenetek; a négy `*.json` származtatott export; `db_status=ok schema=4 … verified=yes` mind a négyet soronként méri; a kapcsoló előtti profil store-onként egyszer átvételre kerül (ADR-070, napló 97) |
 | Keresés | `--searchtest`, `--tagtest` | ékezet-független cím/webcím/jegyzet/címke, és az **oldalszöveg** is (`search_page_text=ok`) |
 | Konténerek | `--containertest` | színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, használt konténer törlése **áthelyezéssel** |
-| Munkaterületek | `--workspacetest` | fül-sor a mag `workspaces.json`-jából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó |
+| Munkaterületek | `--workspacetest` | fül-sor a magban tárolt munkaterület-táblából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó |
 | Címkék | `--tagtest` | címke a kártyán, mag-normalizálás (trim/dedup/12×32), kereshető |
-| Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), átnevezés a cím-szerkesztő `Enter`-jével (`wrote_by=gesture`), webcím-átírás, tároló-ellenőrzés (`db_status=ok schema=3 … verified=yes`), törlés; a teszt kitakarít maga után |
+| Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), átnevezés a cím-szerkesztő `Enter`-jével (`wrote_by=gesture`), webcím-átírás, tároló-ellenőrzés (`db_status=ok schema=4 … verified=yes`), törlés; a teszt kitakarít maga után |
 | Profil-költöztetés | `--profiletest` | export → import friss profilba → visszaolvasás **fájlból**; ismeretlen séma elutasítva |
 | Munkamenetek | `--sessionpanel`, `--scrollbook`, `--wipetest`, `--cleanuptest` | látszik, mi van életben, mennyi RAM/lemez; `keep`/`sweep`/`wipe` végrehajtás |
 | Előnézet | `--preview*` | a háttér-worker szabályai (ADR-041) és az ütemező mérve |
@@ -59,18 +59,15 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 1. **A kártya szerkesztése** — létrehozás (`＋`, ADR-061), törlés, **átnevezés** (ADR-062) és **webcím-átírás**
    (ADR-063) működik a felületen, mind mérve (`wrote_by=gesture`, `edit_card_url=ok`). Nyitott: a törlés
    megerősítése, és hogy a webcím-váltás után a rögzített oldalszöveg a régi tartalom marad.
-2. **A store-csere második fele: a konténerek, munkaterületek és munkamenetek** — a **kártyák már SQLite-first**
-   (ADR-069, napló 96: egy író, a `cards.json` export, egyszeri átvétel, `db_status` soronként ellenőriz). A másik
-   három store továbbra is JSON-dokumentum, és a `db_status` referenciatáblái csak igény szerint frissülnek; a mag
-   `sessions`/`containers`/`workspaces` tábláit még semmi nem olvassa.
-3. **Konténerenkénti engedély/proxy (F3)** — a konténer ma szűrő és címke, nem izolációs határ.
-4. **OAuth/SSO popup** — a mechanizmus kész (I1-kivétel, 60 s), a bejelentkezési folyamat nincs összekötve.
-5. **A köteg felületi gombja** — a mag, a híd (`profile.export/import`) és a lap-út (`antikoltProfileWrite/Read`)
+2. **A konténerenkénti engedély/proxy (F3)** — a konténer ma szűrő és címke, nem izolációs határ; ez a következő
+   nagy szelet a tároló-csere (ADR-070, napló 97) után. A négy store már mind SQLite-sor, a négy `*.json` csak export.
+3. **OAuth/SSO popup** — a mechanizmus kész (I1-kivétel, 60 s), a bejelentkezési folyamat nincs összekötve.
+4. **A köteg felületi gombja** — a mag, a híd (`profile.export/import`) és a lap-út (`antikoltProfileWrite/Read`)
    kész és mérve (ADR-059/060); a **natív fájlválasztó** hiányzik, mert a harness nem tud dialógust kattintani —
    ez a lépés önmagában `not-measurable`.
-6. **A profil-köteg titkosítása** — a köteg munkamenet-sorokat is tartalmaz; ez valódi döntés, nem kényelmi
+5. **A profil-köteg titkosítása** — a köteg munkamenet-sorokat is tartalmaz; ez valódi döntés, nem kényelmi
    kérdés.
-7. **Fogd-és-vidd a munkaterületekhez** — a `<select>` mellett, nem helyette (ADR-058).
+6. **Fogd-és-vidd a munkaterületekhez** — a `<select>` mellett, nem helyette (ADR-058).
 
 ## Amihez emberi lépés kell (nem kód)
 

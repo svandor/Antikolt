@@ -3,6 +3,85 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-21 (kilencvenhetedik szelet) — mind a négy store SQLite-first (ADR-070)
+
+A 96. szelet a kártyákat tette adatbázissá; a konténerek, munkaterületek és munkamenetek JSON-dokumentumok maradtak, a
+tábláikat csak a `db_status(sync)` frissítette, és semmi nem olvasta őket. Ez volt az utolsó „második írás": a
+`sync_reference_tables` a tükör utolsó maradéka. Ez a szelet a négy store-t egységesen SQLite-first teszi.
+
+### Mi változott
+
+- `sqlite_store.rs`: séma **`0004`**. A `sessions` tábla most a ledger teljes sorát hordozza (állapot, házirend,
+  cookie/háttértár-méretek, service workerek, `last_seen`/`last_verified`, RAM, `keep_alive`), a házirendek egy
+  egy-soros `session_rules` táblában. Az új `meta` tábla store-onkénti átvétel-jelölőket tart
+  (`adopted:cards`, `adopted:containers`, …), mert a négy store négy kapcsolatot nyit ugyanarra a fájlra, és nem
+  függhet attól, melyik nyílt meg előbb; a `user_version` így már csak a sémát jelenti. A `0004` egy v3 fájlban
+  `adopted:cards`-ot rögzít, különben a `cards.json` visszaíródna az újabb sorok fölé. A `sessions` újraépítése a
+  `policy` oszlopra próbál, tehát egy második megnyitás nem dobhatja el a már átvett sorokat. `sync_reference_tables`
+  **törölve**; helyette `upsert_/delete_/replace_all_` műveletek konténerre, munkaterületre, munkamenetre.
+- `containers.rs`, `workspaces.rs`, `sessions.rs`: a store a `Db`-n olvas és ír; `list()` most `Result` (a hiba nem
+  nézhet ki üres listának), `export_json()` a sorokból ír, `verify_export()` soronként hasonlít (`-1` = nem mérhető).
+  A kapcsoló előtti dokumentum átvétele store-onként, a `meta` jelölővel; olvashatatlan dokumentum → `*Error::Legacy`
+  (a mag eláll, nem seedel), üres dokumentum → üres marad, hiányzó → seed (4 konténer / 3 munkaterület / üres ledger).
+- `antikolt-core`: `LoginState::as_db`/`from_db` a `SessionPolicy` mintájára, hogy a JSON-ledger értékei pontosan
+  olvasódjanak vissza; ismeretlen érték a magban hangos hiba.
+- `persist.rs` (új): az atomi JSON-export egy helyen (temp fájl → `fsync` → rename), mind a négy store ezt használja.
+- `main.rs`: a `db_status` a **négy exportot** ellenőrzi (`exports`, `checked` összeg, `mismatches`, `verified`; ha
+  bármelyik export olvashatatlan, `mismatches = -1` = `not measured`); `export_all` ír leálláskor, import után és a
+  `db_status(sync)`-ra; a `session_list`/`session_due`/`profile_export` a `Result`-okat hibaként adja tovább.
+- `apps/desktop-shell/src/main.cpp`: az `--addcardtest` storage-ellenőrzése most `schema ≥ 4`, `containers ≥ 4`,
+  `workspaces ≥ 3` is elvár, és kiírja a `sessions=` / `checked=` számot — a kapu a négy store-ra mér, nem csak a
+  kártyákra.
+
+### Bizonyíték (mért)
+
+```
+cargo test (offline)     → 144 teszt zöld: 78 + 45 + 5 + 1 + 15
+check-repo               → ALL CHECKS PASSED
+--- teljes kapu (szoftveres renderelés) ---
+1. futás (6:41-kor indult): 1 CHECK(S) FAILED — egyedül a `traytest` egy-példány ágai: közben egy portábilis
+   Antikolt futott a gépen (`instance_primary=FAILED`, `instance_raised=FAILED`, mert a kérés a futó idegen
+   példányhoz ment; az `instance_second=instance=secondary exit=0` és a `tray_*` tételek zöldek) — nem a kódból
+   jött, az egy-példány-őr helyesen szólt.
+2. futás (6:58:29–7:02:49, a futó példány bezárása után): ALL SELF TESTS PASSED, 4m20s, 37 önteszt + check-repo
+
+addcardtest:
+  add_card=ok typed=submitted before=10 after=11 page=11 error=""
+  db_status=ok schema=4 cards=11 verified=yes containers=4 workspaces=3 sessions=16 checked=35
+  add_card_check=ok
+containertest:
+  container_used_delete=ok shown="1 kártya még ebben a konténerben van" move=offered
+  container_move_delete=ok container_gone=yes card_in=c-private
+rulestest: session_rules=ok
+traytest:  tray_and_instance=ok
+```
+
+A `checked=35` a kapu-profil négy exportjának soronkénti összege (11 kártya + 4 konténer + 3 munkaterület + 16
+munkamenet-sor a korábbi futásokból + 1 házirend-tétel), és mind a 35 egyezik. **A valódi profilon is mért átvétel:**
+a `%APPDATA%\Antikolt Project\Antikolt\core` fájlja most `user_version=4` (a fejléc `00 00 00 04`), a négy `*.json`
+exportként íródott ki leálláskor (7:02:46), és a 10 meglévő kártya megmaradt (`before=10`).
+
+### Új tesztek
+
+`containers_round_trip_in_legend_order_and_a_replace_drops_rows`, `workspaces_round_trip_in_tab_order_and_a_replace_drops_rows`,
+`a_session_row_round_trips_with_every_ledger_field`, `the_session_rules_are_one_row_that_starts_absent`,
+`replacing_the_ledger_takes_rows_and_rules_together`, `a_fresh_database_migrates_to_the_current_schema_and_remembers_its_adoptions`,
+`a_v2_file_has_no_adoption_markers_and_a_v3_file_already_adopted_the_cards` (a `Db`-n), store-onként
+`a_fresh_store_is_seeded_in_the_database_and_exported`, `a_pre_switch_document_is_adopted_once_and_emptying_it_stays_empty`,
+`an_unreadable_legacy_document_stops_the_core`, `the_export_is_written_from_the_rows_and_can_be_checked`,
+`a_pre_switch_ledger_is_adopted_with_its_rules_once`, `a_fresh_ledger_is_empty_and_survives_a_reopen`, e2e:
+`the_container_workspace_and_session_documents_are_adopted_once_and_then_rows`, és az `an_export_replaces_the_file_in_one_step_and_leaves_no_temporary`.
+
+### Ami nyitva maradt (kimondva)
+
+- A hardveres GPU-út továbbra is a VECTOR-on nyitott; a kapu ezen a gépen szoftveres rendereléssel fut
+  (`ANTIKOLT_ENGINE_DISABLE_GPU=1`).
+- A konténerenkénti engedély/proxy (F3) és az OAuth-popup a következő nagy szelet.
+- A négy `*.json` export `sync` nélkül elavulhat — ezt a `db_status` ki is mondja (`verified: no`), nem hazudik
+  egyezést; a leállás és az import után viszont mindig friss.
+- A `checked` darabszám a munkamenet-házirendeket egy tételnek számolja (a dokumentum egy objektumot ír le rájuk),
+  a sorokat egyenként.
+
 ## 2026-11-21 (kilencvenhatodik szelet) — a kártyatár SQLite-first: a JSON export lesz (ADR-069)
 
 A 64–66. szelet egy **tükröt** épített: a JSON-fájl írt, az adatbázis követte, és a kettő szinkronját kézzel kellett

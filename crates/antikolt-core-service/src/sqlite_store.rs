@@ -1,23 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The card store's home: one SQLite file instead of a JSON document (ADR-064 → ADR-069).
+//! The store's home: one SQLite file instead of four JSON documents (ADR-064 → ADR-069 → ADR-070).
 //!
 //! Why: the JSON files are atomic and readable, but nothing *queries* them. Every "which cards are in this
 //! container", "what does this session hold", "what is due" question walks the whole list in the core. That is fine
 //! for 10 cards and wrong for 5 000, and it is the reason the roadmap listed the store swap as the next big step.
 //!
-//! Since ADR-069 the **cards are SQLite-first**: `cards.json` is a derived export, written when the core starts,
-//! shuts down, or is asked to (`db_status` with `sync: true`), and read only once — to migrate a profile that was
-//! written before the switch. The containers, workspaces and sessions are still JSON documents; their tables exist
-//! here and are refreshed on demand, but nothing reads them yet.
+//! Since ADR-069 the **cards are SQLite-first**; since ADR-070 the **containers, workspaces and sessions are too**.
+//! The four JSON documents are derived exports now: written from the rows on adoption, on shutdown, and when
+//! `db_status` asks for a sync, and read exactly once — to migrate a profile written before the switch. Each store
+//! owns its own `user_version` threshold, so a store never adopts its own export back (a stale `cards.json` must not
+//! roll the database back once the cards have moved).
 //!
 //! The schema version is a number in `PRAGMA user_version` — not a table — because it is the SQLite idiom and it
-//! survives any table rename: `0002` adds `page_text`, `tags` and `workspace`; `0003` records the switch itself (the
-//! file is no longer a mirror of `cards.json`, so that document must not be imported again).
+//! survives any table rename: `0002` adds `page_text`, `tags` and `workspace`; `0003` records the card switch; `0004`
+//! reshapes `sessions` to the ledger row and adds `session_rules` for the other three stores' switch.
 
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
+
+use antikolt_core::session::{LoginState, SessionLedgerEntry, SessionPolicy, SessionRules};
 
 use crate::containers::Container;
 use crate::store::Card;
@@ -27,8 +30,13 @@ use crate::workspaces::Workspace;
 pub const DB_FILE_NAME: &str = "antikolt.sqlite3";
 
 /// The schema this core writes. Bumped only with a migration; `0001` was the JSON files, `0002` added `page_text`,
-/// `tags` and `workspace`, `0003` is the card-store switch (ADR-069).
-pub const SCHEMA_VERSION: i64 = 3;
+/// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070).
+pub const SCHEMA_VERSION: i64 = 4;
+
+/// The schema version that means "the cards are SQLite-first" (ADR-069). A file at least this version already has the
+/// cards' adoption behind it, which the `0004` migration records in `meta` (the per-store adoption markers live there,
+/// not in `user_version`, because the four stores open one after another and must not depend on their order).
+pub const CARD_SWITCH_VERSION: i64 = 3;
 
 /// The tags travel as a JSON array in one column: SQLite has no array type, and a join table for a 12-item list
 /// would cost more than it explains.
@@ -36,9 +44,8 @@ pub const SCHEMA_VERSION: i64 = 3;
 pub struct Db {
     path: PathBuf,
     connection: Connection,
-    /// The `user_version` the file reported *before* this open migrated it. It is how the core knows that the file
-    /// predates the switch, so `cards.json` was still the writer of record and has to be read one last time
-    /// (ADR-069).
+    /// The `user_version` the file reported *before* this open migrated it. It is how each store knows whether its
+    /// JSON document is still the writer of record (and has to be adopted) or already an export (ADR-069/070).
     opened_at_version: i64,
 }
 
@@ -76,12 +83,11 @@ impl Db {
         &self.path
     }
 
-    /// True when this file was written by a pre-switch build (`user_version` below [`SCHEMA_VERSION`]) *at the moment
-    /// it was opened*: back then `cards.json` was the truth and this file was its mirror, so the JSON document wins
-    /// one last time and is imported (ADR-069). A file created by this build reports `false`, so an export is never
-    /// imported back.
-    pub fn was_upgraded(&self) -> bool {
-        self.opened_at_version < SCHEMA_VERSION
+    /// The `user_version` the file reported *before* this open migrated it: which migrations ran (and, in the `0004`
+    /// step, whether the cards' adoption was already behind the file).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn opened_at_version(&self) -> i64 {
+        self.opened_at_version
     }
 
     /// The migration. Idempotent, and written so that a later version can add a step instead of rewriting this one.
@@ -131,17 +137,85 @@ impl Db {
                  COMMIT;",
             )?;
         }
-        // Version 3 has no table of its own: the number says "this file is the writer, not a mirror of `cards.json`".
-        // It is written by [`Db::mark_switched`] *after* the JSON import, never here — a failed import must leave the
-        // file pre-switch so the next start retries instead of silently ignoring cards that were never read.
+        if self.opened_at_version < SCHEMA_VERSION {
+            // 0004: the ledger row is what `sessions.json` always held, and the container-wide rules get a one-row
+            // table. The 0002 `sessions` table is rebuilt only when it still has the *old* shape: four stores open in a
+            // row before any of them writes, and a rebuild on every open would lose the rows an earlier store adopted.
+            // The probe is the `policy` column, which only 0004 adds.
+            let already_shaped: i64 = self.connection.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'policy'",
+                [],
+                |row| row.get(0),
+            )?;
+            self.connection.execute_batch("BEGIN;")?;
+            if already_shaped == 0 {
+                self.connection
+                    .execute_batch("DROP TABLE IF EXISTS sessions;")?;
+            }
+            self.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS sessions (
+                     container_id        TEXT NOT NULL,
+                     origin              TEXT NOT NULL,
+                     state               TEXT NOT NULL,
+                     policy              TEXT NOT NULL,
+                     cookie_count        INTEGER NOT NULL DEFAULT 0,
+                     cookie_bytes        INTEGER NOT NULL DEFAULT 0,
+                     storage_bytes       INTEGER NOT NULL DEFAULT 0,
+                     service_worker_count INTEGER NOT NULL DEFAULT 0,
+                     last_seen_ms        INTEGER,
+                     last_verified_ms    INTEGER,
+                     live_ram_bytes      INTEGER,
+                     keep_alive          INTEGER NOT NULL DEFAULT 0,
+                     PRIMARY KEY (container_id, origin)
+                 );
+                 CREATE TABLE IF NOT EXISTS session_rules (
+                     id                INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                     container_default TEXT NOT NULL,
+                     ttl_ms            INTEGER NOT NULL,
+                     wipe_on_app_lock  INTEGER NOT NULL DEFAULT 0
+                 );
+                 -- The per-store adoption markers live here, not in `user_version`: the four stores open one after
+                 -- another and each must be able to finish its own adoption without depending on the order.
+                 CREATE TABLE IF NOT EXISTS meta (
+                     key   TEXT PRIMARY KEY,
+                     value TEXT NOT NULL
+                 );
+                 PRAGMA user_version = 4;
+                 COMMIT;",
+            )?;
+            if self.opened_at_version >= CARD_SWITCH_VERSION {
+                // A file from the card switch (ADR-069) already has the cards' adoption behind it; recording that here
+                // is what stops the new build from reading `cards.json` back over newer rows.
+                self.mark_adopted("cards")?;
+            }
+        }
         Ok(())
     }
 
-    /// Record that the one-time migration from `cards.json` finished (ADR-069). Until this is called the file keeps
-    /// reporting the pre-switch version, so a crash (or an unreadable JSON document) cannot make the core believe an
-    /// import already happened when it did not.
-    pub fn mark_switched(&self) -> Result<(), DbError> {
-        self.connection.execute_batch("PRAGMA user_version = 3;")?;
+    /// Has this store's pre-switch document already been adopted? The marker is written after the adoption succeeded, so
+    /// a crash (or an unreadable document) leaves the question open and the next start retries instead of serving a
+    /// half-adopted profile (ADR-069/070).
+    pub fn was_adopted(&self, store: &str) -> Result<bool, DbError> {
+        let key = format!("adopted:{store}");
+        let value: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value.as_deref() == Some("1"))
+    }
+
+    /// Record that `store` adopted its pre-switch document. Idempotent.
+    pub fn mark_adopted(&self, store: &str) -> Result<(), DbError> {
+        let key = format!("adopted:{store}");
+        self.connection.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, '1')
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![key],
+        )?;
         Ok(())
     }
 
@@ -284,32 +358,253 @@ impl Db {
         )?)
     }
 
-    /// Bring the two reference tables in step with the JSON stores that still own them (containers, workspaces).
+    /// Every container, in the order it was inserted — the legend's order (ADR-070). The old JSON list kept that order,
+    /// and a `SELECT` without `ORDER BY` on a table with a TEXT primary key happens to return rowid order, which is not
+    /// something a UI order should rest on; `rowid` is named here so a future index cannot reorder the chips.
+    pub fn all_containers(&self) -> Result<Vec<Container>, DbError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name, color FROM containers ORDER BY rowid")?;
+        let rows = statement.query_map([], |row| {
+            Ok(Container {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                color: row.get(2)?,
+            })
+        })?;
+        let mut containers = Vec::new();
+        for container in rows {
+            containers.push(container?);
+        }
+        Ok(containers)
+    }
+
+    pub fn upsert_container(&self, container: &Container) -> Result<(), DbError> {
+        self.connection.execute(
+            "INSERT INTO containers (id, name, color) VALUES (?1, ?2, ?3)
+             ON CONFLICT (id) DO UPDATE SET name = excluded.name, color = excluded.color",
+            params![container.id, container.name, container.color],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_container(&self, container_id: &str) -> Result<bool, DbError> {
+        let removed = self.connection.execute(
+            "DELETE FROM containers WHERE id = ?1",
+            params![container_id],
+        )?;
+        Ok(removed > 0)
+    }
+
+    /// Replace the whole container table in one transaction, for an adoption or a profile import.
     ///
-    /// Nothing reads these tables yet: the containers and workspaces switch to the database in a later slice
-    /// (ADR-069 keeps the scope to the cards). Refreshing them on demand — instead of on every card write — keeps
-    /// the database an honest preview of what the migration will hold, without pretending the switch already
-    /// happened for stores it did not.
-    pub fn sync_reference_tables(
-        &mut self,
-        containers: &[Container],
-        workspaces: &[Workspace],
-    ) -> Result<(), DbError> {
+    /// The insertion order is the legend's order, so the rows go in the list's order.
+    pub fn replace_containers(&mut self, containers: &[Container]) -> Result<(), DbError> {
         let transaction = self.connection.transaction()?;
         transaction.execute("DELETE FROM containers", [])?;
-        transaction.execute("DELETE FROM workspaces", [])?;
         for container in containers {
             transaction.execute(
                 "INSERT INTO containers (id, name, color) VALUES (?1, ?2, ?3)",
                 params![container.id, container.name, container.color],
             )?;
         }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Every workspace, in insertion (tab-row) order — the same rule as the containers.
+    pub fn all_workspaces(&self) -> Result<Vec<Workspace>, DbError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name FROM workspaces ORDER BY rowid")?;
+        let rows = statement.query_map([], |row| {
+            Ok(Workspace {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?;
+        let mut workspaces = Vec::new();
+        for workspace in rows {
+            workspaces.push(workspace?);
+        }
+        Ok(workspaces)
+    }
+
+    pub fn upsert_workspace(&self, workspace: &Workspace) -> Result<(), DbError> {
+        self.connection.execute(
+            "INSERT INTO workspaces (id, name) VALUES (?1, ?2)
+             ON CONFLICT (id) DO UPDATE SET name = excluded.name",
+            params![workspace.id, workspace.name],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_workspace(&self, workspace_id: &str) -> Result<bool, DbError> {
+        let removed = self.connection.execute(
+            "DELETE FROM workspaces WHERE id = ?1",
+            params![workspace_id],
+        )?;
+        Ok(removed > 0)
+    }
+
+    /// Replace the whole workspace table in one transaction (adoption, profile import), keeping the tab order.
+    pub fn replace_workspaces(&mut self, workspaces: &[Workspace]) -> Result<(), DbError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute("DELETE FROM workspaces", [])?;
         for workspace in workspaces {
             transaction.execute(
                 "INSERT INTO workspaces (id, name) VALUES (?1, ?2)",
                 params![workspace.id, workspace.name],
             )?;
         }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// The ledger rows, ordered by origin — the panel's and the reply's stable order (the JSON ledger sorted the same
+    /// way). A row whose `state` or `policy` text the core does not know is refused loudly instead of being guessed at:
+    /// a ledger that lies is worse than a ledger that is missing a row (ADR-033).
+    pub fn all_sessions(&self) -> Result<Vec<SessionLedgerEntry>, DbError> {
+        let mut statement = self.connection.prepare(
+            "SELECT container_id, origin, state, policy, cookie_count, cookie_bytes, storage_bytes,
+                    service_worker_count, last_seen_ms, last_verified_ms, live_ram_bytes, keep_alive
+             FROM sessions ORDER BY origin",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let state_text: String = row.get(2)?;
+            let policy_text: String = row.get(3)?;
+            let state = LoginState::from_db(&state_text).ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    2,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::other(format!(
+                        "unknown session state `{state_text}`"
+                    ))),
+                )
+            })?;
+            let policy = SessionPolicy::from_db(&policy_text).ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::other(format!(
+                        "unknown session policy `{policy_text}`"
+                    ))),
+                )
+            })?;
+            Ok(SessionLedgerEntry {
+                container_id: row.get(0)?,
+                origin: row.get(1)?,
+                state,
+                policy,
+                cookie_count: row.get::<_, i64>(4)? as u32,
+                cookie_bytes: row.get::<_, i64>(5)? as u64,
+                storage_bytes: row.get::<_, i64>(6)? as u64,
+                service_worker_count: row.get::<_, i64>(7)? as u32,
+                last_seen_ms: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
+                last_verified_ms: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
+                live_ram_bytes: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+                keep_alive: row.get::<_, i64>(11)? != 0,
+            })
+        })?;
+        let mut sessions = Vec::new();
+        for session in rows {
+            sessions.push(session?);
+        }
+        Ok(sessions)
+    }
+
+    pub fn upsert_session(&self, entry: &SessionLedgerEntry) -> Result<(), DbError> {
+        upsert_session_row(&self.connection, entry)?;
+        Ok(())
+    }
+
+    pub fn delete_session(&self, container_id: &str, origin: &str) -> Result<bool, DbError> {
+        let removed = self.connection.execute(
+            "DELETE FROM sessions WHERE container_id = ?1 AND origin = ?2",
+            params![container_id, origin],
+        )?;
+        Ok(removed > 0)
+    }
+
+    /// The container-wide rules, or `None` while the profile has not stored any (the caller uses the policy module's
+    /// defaults). `None` is not an empty policy: it says "nothing was ever chosen".
+    pub fn session_rules(&self) -> Result<Option<SessionRules>, DbError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT container_default, ttl_ms, wipe_on_app_lock FROM session_rules WHERE id = 1",
+                [],
+                |row| {
+                    let default_text: String = row.get(0)?;
+                    Ok((
+                        default_text,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)? != 0,
+                    ))
+                },
+            )
+            .optional()?;
+        Ok(match row {
+            Some((default_text, ttl_ms, wipe_on_app_lock)) => {
+                let container_default = SessionPolicy::from_db(&default_text).ok_or_else(|| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::other(format!(
+                            "unknown session policy `{default_text}`"
+                        ))),
+                    )
+                })?;
+                Some(SessionRules {
+                    container_default,
+                    ttl_ms: ttl_ms as u64,
+                    wipe_on_app_lock,
+                })
+            }
+            None => None,
+        })
+    }
+
+    pub fn set_session_rules(&self, rules: &SessionRules) -> Result<(), DbError> {
+        self.connection.execute(
+            "INSERT INTO session_rules (id, container_default, ttl_ms, wipe_on_app_lock)
+             VALUES (1, ?1, ?2, ?3)
+             ON CONFLICT (id) DO UPDATE SET
+                 container_default = excluded.container_default, ttl_ms = excluded.ttl_ms,
+                 wipe_on_app_lock = excluded.wipe_on_app_lock",
+            params![
+                rules.container_default.as_db(),
+                rules.ttl_ms as i64,
+                i64::from(rules.wipe_on_app_lock)
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Replace the whole ledger — rows and rules together, because an imported profile's cleanup policy is part of the
+    /// profile (ADR-059) — in one transaction.
+    pub fn replace_sessions(
+        &mut self,
+        entries: &[SessionLedgerEntry],
+        rules: &SessionRules,
+    ) -> Result<(), DbError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute("DELETE FROM sessions", [])?;
+        for entry in entries {
+            upsert_session_row(&transaction, entry)?;
+        }
+        transaction.execute(
+            "INSERT INTO session_rules (id, container_default, ttl_ms, wipe_on_app_lock)
+             VALUES (1, ?1, ?2, ?3)
+             ON CONFLICT (id) DO UPDATE SET
+                 container_default = excluded.container_default, ttl_ms = excluded.ttl_ms,
+                 wipe_on_app_lock = excluded.wipe_on_app_lock",
+            params![
+                rules.container_default.as_db(),
+                rules.ttl_ms as i64,
+                i64::from(rules.wipe_on_app_lock)
+            ],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -359,6 +654,40 @@ fn upsert_card_row(connection: &Connection, card: &Card) -> Result<(), rusqlite:
     Ok(())
 }
 
+/// One `INSERT … ON CONFLICT` used by both the single-session write and the whole-ledger replace.
+fn upsert_session_row(
+    connection: &Connection,
+    entry: &SessionLedgerEntry,
+) -> Result<(), rusqlite::Error> {
+    connection.execute(
+        "INSERT INTO sessions (container_id, origin, state, policy, cookie_count, cookie_bytes,
+                               storage_bytes, service_worker_count, last_seen_ms, last_verified_ms,
+                               live_ram_bytes, keep_alive)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         ON CONFLICT (container_id, origin) DO UPDATE SET
+             state = excluded.state, policy = excluded.policy, cookie_count = excluded.cookie_count,
+             cookie_bytes = excluded.cookie_bytes, storage_bytes = excluded.storage_bytes,
+             service_worker_count = excluded.service_worker_count, last_seen_ms = excluded.last_seen_ms,
+             last_verified_ms = excluded.last_verified_ms, live_ram_bytes = excluded.live_ram_bytes,
+             keep_alive = excluded.keep_alive",
+        params![
+            entry.container_id,
+            entry.origin,
+            entry.state.as_db(),
+            entry.policy.as_db(),
+            i64::from(entry.cookie_count),
+            entry.cookie_bytes as i64,
+            entry.storage_bytes as i64,
+            i64::from(entry.service_worker_count),
+            entry.last_seen_ms.map(|value| value as i64),
+            entry.last_verified_ms.map(|value| value as i64),
+            entry.live_ram_bytes.map(|value| value as i64),
+            i64::from(entry.keep_alive)
+        ],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,32 +720,38 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_migrates_to_the_current_schema_and_keeps_it() {
+    fn a_fresh_database_migrates_to_the_current_schema_and_remembers_its_adoptions() {
         let dir = temp_dir("migrate");
         let db = Db::open(&dir).expect("open");
         assert!(db.path().exists());
         let (cards, containers, workspaces, sessions) = db.counts().expect("counts");
         assert_eq!((cards, containers, workspaces, sessions), (0, 0, 0, 0));
-        // A brand-new file is "upgraded" (0 → tables): the core still has to decide where the first cards come from.
-        assert!(db.was_upgraded(), "a brand-new file reports its upgrade");
-        // The switch is recorded only after that decision — see `mark_switched`.
-        db.mark_switched().expect("mark");
+        // A brand-new file reports version 0 on open (it was created now) and is at the current schema afterwards.
+        assert_eq!(db.opened_at_version(), 0);
         assert_eq!(db.schema_version().expect("version"), SCHEMA_VERSION);
+        // Every store still has to decide where its first rows come from: nothing is marked as adopted yet.
+        for store in ["cards", "containers", "workspaces", "sessions"] {
+            assert!(!db.was_adopted(store).expect("adopted?"), "{store}");
+        }
+        db.mark_adopted("cards").expect("mark the cards");
+        assert!(db.was_adopted("cards").expect("adopted?"));
+        assert!(!db.was_adopted("containers").expect("adopted?"));
         drop(db);
-        // Opening again must not run the migration twice or lose the version.
+
+        // Opening again must not run the migration twice or lose the version or the markers.
         let again = Db::open(&dir).expect("reopen");
         assert_eq!(again.schema_version().expect("version"), SCHEMA_VERSION);
+        assert!(again.was_adopted("cards").expect("adopted?"));
         assert!(
-            !again.was_upgraded(),
-            "a file this build already wrote is not imported from JSON again"
+            !again.was_adopted("containers").expect("adopted?"),
+            "an adoption marker is per store"
         );
         std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
-    fn a_pre_switch_database_reports_itself_as_an_upgrade() {
-        // The old builds wrote `user_version = 2` with a mirror of the JSON files. That file must be recognisable
-        // as pre-switch on open, because its `cards.json` is still the writer of record (ADR-069).
+    fn a_v2_file_has_no_adoption_markers_and_a_v3_file_already_adopted_the_cards() {
+        // A v2 file predates both switches: every store must adopt its own JSON document.
         let dir = temp_dir("v2");
         {
             let connection = Connection::open(dir.join(DB_FILE_NAME)).expect("raw open");
@@ -428,15 +763,42 @@ mod tests {
                 .expect("write a v2 file");
         }
         let db = Db::open(&dir).expect("open");
-        assert!(db.was_upgraded(), "a v2 file predates the switch");
-        db.mark_switched().expect("mark");
+        assert_eq!(db.opened_at_version(), 2);
         assert_eq!(db.schema_version().expect("version"), SCHEMA_VERSION);
-        drop(db);
-        let again = Db::open(&dir).expect("reopen");
         assert!(
-            !again.was_upgraded(),
-            "the switch is recorded on disk, so the import happens once"
+            !db.was_adopted("cards").expect("adopted?"),
+            "cards were still a mirror at v2, so the JSON document wins"
         );
+        drop(db);
+
+        // A v3 file (the card switch, ADR-069) already adopted the cards: the marker must say so, or the new build
+        // would read `cards.json` back over newer rows.
+        let dir = temp_dir("v3");
+        {
+            let connection = Connection::open(dir.join(DB_FILE_NAME)).expect("raw open");
+            connection
+                .execute_batch(
+                    "CREATE TABLE cards (
+                         id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL,
+                         container TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'unknown',
+                         pinned INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '',
+                         preview_ref TEXT NOT NULL DEFAULT '', last_opened_at_ms INTEGER NOT NULL DEFAULT 0,
+                         page_text TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '',
+                         tags TEXT NOT NULL DEFAULT '[]');
+                     PRAGMA user_version = 3;",
+                )
+                .expect("write a v3 file");
+        }
+        let db = Db::open(&dir).expect("open");
+        assert_eq!(db.opened_at_version(), 3);
+        assert!(
+            db.was_adopted("cards").expect("adopted?"),
+            "the migration records that v3 already switched the cards"
+        );
+        assert!(!db.was_adopted("containers").expect("adopted?"));
+        assert!(!db.was_adopted("workspaces").expect("adopted?"));
+        assert!(!db.was_adopted("sessions").expect("adopted?"));
+        assert_eq!(db.schema_version().expect("version"), SCHEMA_VERSION);
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -552,29 +914,202 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn the_reference_tables_are_refreshed_from_the_json_stores() {
-        let dir = temp_dir("tables");
-        let mut db = Db::open(&dir).expect("open");
-        db.sync_reference_tables(
-            &[Container {
-                id: "c-proba".to_string(),
-                name: "Próba".to_string(),
-                color: "#123456".to_string(),
-            }],
-            &[Workspace {
-                id: "w-proba".to_string(),
-                name: "Próba-tér".to_string(),
-            }],
-        )
-        .expect("sync");
-        let (_, containers, workspaces, _) = db.counts().expect("counts");
-        assert_eq!((containers, workspaces), (1, 1));
+    fn sample_container(id: &str) -> Container {
+        Container {
+            id: id.to_string(),
+            name: format!("Konténer {id}"),
+            color: "#123456".to_string(),
+        }
+    }
 
-        // A refresh is a replace, not an append: a deleted container must leave the table too.
-        db.sync_reference_tables(&[], &[]).expect("empty sync");
-        let (_, containers, workspaces, _) = db.counts().expect("counts");
-        assert_eq!((containers, workspaces), (0, 0));
+    fn sample_workspace(id: &str) -> Workspace {
+        Workspace {
+            id: id.to_string(),
+            name: format!("Tér {id}"),
+        }
+    }
+
+    fn sample_session(origin: &str) -> SessionLedgerEntry {
+        SessionLedgerEntry {
+            container_id: "c-private".to_string(),
+            origin: origin.to_string(),
+            state: LoginState::Expired,
+            policy: SessionPolicy::Sweep,
+            cookie_count: 12,
+            cookie_bytes: 4096,
+            storage_bytes: 65536,
+            service_worker_count: 1,
+            last_seen_ms: Some(1_700_000_000_000),
+            last_verified_ms: None,
+            live_ram_bytes: Some(48_000_000),
+            keep_alive: false,
+        }
+    }
+
+    #[test]
+    fn containers_round_trip_in_legend_order_and_a_replace_drops_rows() {
+        let dir = temp_dir("containers");
+        let mut db = Db::open(&dir).expect("open");
+        let first = sample_container("c-egy");
+        let second = sample_container("c-ketto");
+        db.replace_containers(&[first.clone(), second.clone()])
+            .expect("seed");
+        // The legend order is the insertion order, not the alphabet: the page draws the chips in this order.
+        assert_eq!(
+            db.all_containers().expect("list"),
+            vec![first.clone(), second.clone()]
+        );
+
+        let mut renamed = first.clone();
+        renamed.name = "Átnevezve".to_string();
+        renamed.color = "#ABCDEF".to_string();
+        db.upsert_container(&renamed).expect("rename");
+        assert_eq!(
+            db.all_containers().expect("list")[0].name,
+            "Átnevezve",
+            "an upsert replaces the row with the same id"
+        );
+        assert_eq!(db.all_containers().expect("list").len(), 2);
+
+        assert!(db.delete_container("c-ketto").expect("delete"));
+        assert!(!db.delete_container("c-ketto").expect("delete again"));
+        assert_eq!(
+            db.all_containers().expect("list"),
+            vec![renamed.clone()],
+            "a deleted container leaves the table"
+        );
+
+        // A replace is a replace, not an append: rows that are gone must not survive it.
+        db.replace_containers(std::slice::from_ref(&second))
+            .expect("replace");
+        assert_eq!(db.all_containers().expect("list"), vec![second]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn workspaces_round_trip_in_tab_order_and_a_replace_drops_rows() {
+        let dir = temp_dir("workspaces");
+        let mut db = Db::open(&dir).expect("open");
+        let home = sample_workspace("w-home");
+        let work = sample_workspace("w-work");
+        db.replace_workspaces(&[home.clone(), work.clone()])
+            .expect("seed");
+        assert_eq!(
+            db.all_workspaces().expect("list"),
+            vec![home.clone(), work.clone()]
+        );
+
+        let mut renamed = work.clone();
+        renamed.name = "Munka 2".to_string();
+        db.upsert_workspace(&renamed).expect("rename");
+        assert_eq!(db.all_workspaces().expect("list")[1].name, "Munka 2");
+        assert!(db.delete_workspace("w-home").expect("delete"));
+        assert!(!db.delete_workspace("w-home").expect("delete again"));
+        assert_eq!(
+            db.all_workspaces().expect("list"),
+            vec![renamed.clone()],
+            "a deleted workspace leaves the table"
+        );
+
+        db.replace_workspaces(&[home]).expect("replace");
+        assert_eq!(
+            db.all_workspaces().expect("list"),
+            vec![sample_workspace("w-home")]
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_session_row_round_trips_with_every_ledger_field() {
+        let dir = temp_dir("sessions");
+        let db = Db::open(&dir).expect("open");
+        let entry = sample_session("https://example.org");
+        db.upsert_session(&entry).expect("write");
+        assert_eq!(
+            db.all_sessions().expect("list"),
+            vec![entry.clone()],
+            "every ledger field survives the round trip"
+        );
+
+        // The pair (container, origin) is the key: a second write replaces the row.
+        let mut changed = entry.clone();
+        changed.state = LoginState::LoggedIn;
+        changed.policy = SessionPolicy::Wipe;
+        changed.keep_alive = true;
+        changed.last_verified_ms = Some(1_700_000_001_000);
+        changed.live_ram_bytes = None;
+        db.upsert_session(&changed).expect("update");
+        let (_, _, _, sessions) = db.counts().expect("counts");
+        assert_eq!(sessions, 1, "no duplicate row was created");
+        assert_eq!(db.all_sessions().expect("list"), vec![changed]);
+
+        // A different origin is a different row, and the list is ordered by origin — the panel's stable order.
+        db.upsert_session(&sample_session("https://a.example"))
+            .expect("second row");
+        let origins: Vec<String> = db
+            .all_sessions()
+            .expect("list")
+            .into_iter()
+            .map(|row| row.origin)
+            .collect();
+        assert_eq!(origins, vec!["https://a.example", "https://example.org"]);
+
+        assert!(db
+            .delete_session("c-private", "https://a.example")
+            .expect("close"));
+        assert!(!db
+            .delete_session("c-private", "https://a.example")
+            .expect("close again"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_session_rules_are_one_row_that_starts_absent() {
+        let dir = temp_dir("session-rules");
+        let db = Db::open(&dir).expect("open");
+        assert_eq!(
+            db.session_rules().expect("read"),
+            None,
+            "nothing was ever chosen, so the policy module's defaults apply"
+        );
+        let rules = SessionRules {
+            container_default: SessionPolicy::Wipe,
+            ttl_ms: 3_600_000,
+            wipe_on_app_lock: true,
+        };
+        db.set_session_rules(&rules).expect("write");
+        assert_eq!(db.session_rules().expect("read"), Some(rules));
+        let kept = SessionRules {
+            container_default: SessionPolicy::Keep,
+            ttl_ms: 7_200_000,
+            wipe_on_app_lock: false,
+        };
+        db.set_session_rules(&kept).expect("update");
+        assert_eq!(
+            db.session_rules().expect("read"),
+            Some(kept),
+            "the rules are one row, not an append"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn replacing_the_ledger_takes_rows_and_rules_together() {
+        let dir = temp_dir("replace-ledger");
+        let mut db = Db::open(&dir).expect("open");
+        db.upsert_session(&sample_session("https://stale.example"))
+            .expect("stale row");
+        let rules = SessionRules {
+            container_default: SessionPolicy::Wipe,
+            ttl_ms: 3_600_000,
+            wipe_on_app_lock: true,
+        };
+        let first = sample_session("https://one.example");
+        let second = sample_session("https://two.example");
+        db.replace_sessions(&[first.clone(), second.clone()], &rules)
+            .expect("replace");
+        assert_eq!(db.all_sessions().expect("list"), vec![first, second]);
+        assert_eq!(db.session_rules().expect("read"), Some(rules));
         std::fs::remove_dir_all(dir).ok();
     }
 }

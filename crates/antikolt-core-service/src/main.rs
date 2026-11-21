@@ -18,6 +18,7 @@
 
 mod bundle;
 mod containers;
+mod persist;
 mod sessions;
 mod sqlite_store;
 mod store;
@@ -78,16 +79,30 @@ fn run() -> Result<(), String> {
             data_dir.display()
         )
     })?;
+    // Every store adopted its pre-switch JSON document (if there was one) and recorded that in the database, so a failed
+    // adoption anywhere above leaves the question open and the next start retries it (ADR-069/070).
     let card_count = store
         .list()
         .map_err(|error| format!("cannot read the card store: {error}"))?
         .len();
+    let session_count = sessions
+        .list()
+        .map_err(|error| format!("cannot read the session ledger: {error}"))?
+        .len();
+    let container_count = containers
+        .list()
+        .map_err(|error| format!("cannot read the container store: {error}"))?
+        .len();
+    let workspace_count = workspaces
+        .list()
+        .map_err(|error| format!("cannot read the workspace store: {error}"))?
+        .len();
     eprintln!(
         "[core] cards={} sessions={} containers={} workspaces={} dir={}",
         card_count,
-        sessions.list().len(),
-        containers.list().len(),
-        workspaces.list().len(),
+        session_count,
+        container_count,
+        workspace_count,
         data_dir.display()
     );
 
@@ -137,13 +152,26 @@ fn write_frame(output: &mut impl Write, value: &Value) -> Result<(), String> {
         .map_err(|error| format!("stdout write failed: {error}"))
 }
 
-/// Write the card export beside the database, best effort.
+/// Write the four derived JSON exports beside the database, best effort.
 ///
-/// Since ADR-069 the database is the only truth and `cards.json` is a derived document: a failure to write it must not
-/// fail the user's write, but it must not be silent either.
-fn log_export_failure(store: &CardStore) {
-    if let Err(error) = store.export_json() {
-        eprintln!("[core] store_export_failed: {error}");
+/// Since ADR-069/070 the database is the only truth and every `*.json` is a derived document: a failure to write one
+/// must not fail the user's write, but it must not be silent either.
+fn export_all(
+    store: &CardStore,
+    sessions: &SessionStore,
+    containers: &ContainerStore,
+    workspaces: &WorkspaceStore,
+) {
+    let results: [Result<PathBuf, String>; 4] = [
+        store.export_json().map_err(|error| error.to_string()),
+        containers.export_json().map_err(|error| error.to_string()),
+        workspaces.export_json().map_err(|error| error.to_string()),
+        sessions.export_json().map_err(|error| error.to_string()),
+    ];
+    for result in results {
+        if let Err(error) = result {
+            eprintln!("[core] store_export_failed: {error}");
+        }
     }
 }
 
@@ -270,12 +298,12 @@ fn handle(
             }
         }
         // ---- workspace table ------------------------------------------------------------------
-        // The tabs the grid shows live here (ADR-056). The page used to invent the assignment, which meant the
-        // thirteenth card silently claimed to be in "Olvasnivaló".
-        "workspaces_list" => (
-            ok_reply(id, json!({ "workspaces": workspaces.list() })),
-            true,
-        ),
+        // The tabs the grid shows live here (ADR-056), in the database since ADR-070. The page used to invent the
+        // assignment, which meant the thirteenth card silently claimed to be in "Olvasnivaló".
+        "workspaces_list" => match workspaces.list() {
+            Ok(list) => (ok_reply(id, json!({ "workspaces": list })), true),
+            Err(error) => (error_reply(id, "internal", &error.to_string()), true),
+        },
         "workspace_upsert" => {
             let Some(workspace) = request.get("workspace") else {
                 return (
@@ -338,12 +366,13 @@ fn handle(
             }
         }
         // ---- container table ------------------------------------------------------------------
-        // The colours and names the grid draws live here, not in a JSON constant in the page (ADR-052): a rename
-        // must survive a reload, and the "same" container must not mean two different things in two layers.
-        "containers_list" => (
-            ok_reply(id, json!({ "containers": containers.list() })),
-            true,
-        ),
+        // The colours and names the grid draws live here, not in a JSON constant in the page (ADR-052), in the database
+        // since ADR-070: a rename must survive a reload, and the "same" container must not mean two different things in
+        // two layers.
+        "containers_list" => match containers.list() {
+            Ok(list) => (ok_reply(id, json!({ "containers": list })), true),
+            Err(error) => (error_reply(id, "internal", &error.to_string()), true),
+        },
         "container_upsert" => {
             let Some(container) = request.get("container") else {
                 return (
@@ -412,7 +441,11 @@ fn handle(
                         true,
                     );
                 }
-                if !containers.list().iter().any(|entry| entry.id == move_to) {
+                let target_known = match containers.list() {
+                    Ok(list) => list.iter().any(|entry| entry.id == move_to),
+                    Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+                };
+                if !target_known {
                     return (
                         error_reply(id, "not_found", "a move_to konténer nem létezik"),
                         true,
@@ -450,8 +483,13 @@ fn handle(
         "session_list" => {
             // Each row carries the *measured* size of what a cleanup would remove (session::SessionSize) and
             // whether it holds a login: the panel must be able to warn before the button, not after.
-            let rows: Vec<serde_json::Value> = sessions
-                .list()
+            let (entry_list, rules) = match (sessions.list(), sessions.rules()) {
+                (Ok(entries), Ok(rules)) => (entries, rules),
+                (Err(error), _) | (_, Err(error)) => {
+                    return (error_reply(id, "internal", &error.to_string()), true)
+                }
+            };
+            let rows: Vec<serde_json::Value> = entry_list
                 .into_iter()
                 .map(|entry| {
                     let size = entry.size();
@@ -471,7 +509,7 @@ fn handle(
                 })
                 .collect();
             (
-                ok_reply(id, json!({ "sessions": rows, "rules": sessions.rules() })),
+                ok_reply(id, json!({ "sessions": rows, "rules": rules })),
                 true,
             )
         }
@@ -556,10 +594,10 @@ fn handle(
                 .get("app_locked")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            (
-                ok_reply(id, json!({ "now_ms": at, "due": sessions.due(at, locked) })),
-                true,
-            )
+            match sessions.due(at, locked) {
+                Ok(due) => (ok_reply(id, json!({ "now_ms": at, "due": due })), true),
+                Err(error) => (error_reply(id, "internal", &error.to_string()), true),
+            }
         }
         // ---- the portable bundle -----------------------------------------------------------------
         // The user's data in one file, so a profile can be carried to another machine (ADR-059). Export reads the
@@ -575,13 +613,29 @@ fn handle(
                 Ok(cards) => cards,
                 Err(reply) => return (reply, true),
             };
+            let container_list = match containers.list() {
+                Ok(list) => list,
+                Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+            };
+            let workspace_list = match workspaces.list() {
+                Ok(list) => list,
+                Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+            };
+            let session_list = match sessions.list() {
+                Ok(list) => list,
+                Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+            };
+            let rules = match sessions.rules() {
+                Ok(rules) => rules,
+                Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+            };
             let bundle = Bundle::new(
                 now_ms(),
                 cards,
-                containers.list(),
-                workspaces.list(),
-                sessions.list(),
-                sessions.rules(),
+                container_list,
+                workspace_list,
+                session_list,
+                rules,
             );
             let (cards, containers_count, workspaces_count, sessions_count) = bundle.counts();
             match bundle.write(std::path::Path::new(path)) {
@@ -661,9 +715,9 @@ fn handle(
                     );
                 }
             }
-            // The cards are rows now, so the export beside them must not describe the list the profile had before the
-            // import (ADR-069). A failed export is logged, not fatal: the database is the truth and it was written.
-            log_export_failure(store);
+            // Every store is a row store now, so each of the four exports must describe what the import actually wrote
+            // (ADR-069/070). A failed export is logged, not fatal: the database is the truth and it was written.
+            export_all(store, sessions, containers, workspaces);
             (
                 ok_reply(
                     id,
@@ -679,51 +733,102 @@ fn handle(
                 true,
             )
         }
-        // ---- the storage report (ADR-064 → ADR-069) -----------------------------------------------
-        // The cards are SQLite-first now; this op is how the shell and the gate see that the switch really happened
-        // and that the export beside the database still describes it. `sync` refreshes the derived copies — the JSON
-        // export from the cards, and the two reference tables (containers, workspaces) from the stores that still own
-        // them — and then checks the export row by row. Without `sync` it only reports what is already on disk.
+        // ---- the storage report (ADR-064 → ADR-070) -----------------------------------------------
+        // All four stores are SQLite-first now; this op is how the shell and the gate see that the switch really
+        // happened and that the exports beside the database still describe the rows. `sync` writes the four exports
+        // from the rows, then every export is read back and compared row by row. Without `sync` it reports what is
+        // already on disk.
         "db_status" => {
             let sync = request
                 .get("sync")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             if sync {
-                if let Err(error) =
-                    store.sync_reference_tables(&containers.list(), &workspaces.list())
-                {
-                    return (error_reply(id, "internal", &error.to_string()), true);
+                export_all(store, sessions, containers, workspaces);
+            }
+            let (cards, containers_count, workspaces_count, sessions_count) = match store.counts() {
+                Ok(counts) => counts,
+                Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+            };
+            let schema = match store.schema_version() {
+                Ok(version) => version,
+                Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+            };
+            // The check is the *export* direction: the rows are the truth, so "verified" means "the files this core
+            // writes can be parsed back into exactly these rows". A store's unreadable export makes the whole answer
+            // `not measured` (`mismatches: -1`) instead of a fake agreement.
+            let mut checked = 0i64;
+            let mut mismatches = 0i64;
+            let mut unreadable = false;
+            let checks: [Result<(i64, i64), String>; 4] = [
+                store.verify_export().map_err(|error| error.to_string()),
+                containers
+                    .verify_export()
+                    .map_err(|error| error.to_string()),
+                workspaces
+                    .verify_export()
+                    .map_err(|error| error.to_string()),
+                sessions.verify_export().map_err(|error| error.to_string()),
+            ];
+            for check in checks {
+                match check {
+                    Ok((rows, bad)) => {
+                        checked += rows;
+                        if bad < 0 {
+                            unreadable = true;
+                        } else {
+                            mismatches += bad;
+                        }
+                    }
+                    Err(error) => {
+                        return (error_reply(id, "internal", &error), true);
+                    }
                 }
             }
-            match store.storage_report(sync) {
-                Ok(report) => (
-                    ok_reply(
-                        id,
-                        json!({
-                            "path": report.path.display().to_string(),
-                            "export": report.export_path.display().to_string(),
-                            "schema": report.schema,
-                            "synced": sync,
-                            "checked": report.checked,
-                            "verified": report.verified,
-                            "mismatches": report.mismatches,
-                            "cards_in_workspace": report.cards_in_workspace,
-                            "cards": report.cards,
-                            "containers": report.containers,
-                            "workspaces": report.workspaces,
-                            "sessions": report.sessions,
-                        }),
-                    ),
-                    true,
-                ),
-                Err(error) => (error_reply(id, "internal", &error.to_string()), true),
+            if unreadable {
+                mismatches = -1;
             }
+            let cards_in_workspace = match store.list() {
+                Ok(list) => match list.first() {
+                    Some(card) => store.cards_in_workspace(&card.workspace).unwrap_or(0),
+                    None => 0,
+                },
+                Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+            };
+            let exports: Vec<String> = [
+                store.path(),
+                containers.path(),
+                workspaces.path(),
+                sessions.path(),
+            ]
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect();
+            (
+                ok_reply(
+                    id,
+                    json!({
+                        "path": store.db_path().display().to_string(),
+                        "exports": exports,
+                        "schema": schema,
+                        "synced": sync,
+                        "checked": checked,
+                        "verified": mismatches == 0,
+                        "mismatches": mismatches,
+                        "cards_in_workspace": cards_in_workspace,
+                        "cards": cards,
+                        "containers": containers_count,
+                        "workspaces": workspaces_count,
+                        "sessions": sessions_count,
+                    }),
+                ),
+                true,
+            )
         }
         "shutdown" => {
-            // One last export, so the readable document next to the database is never older than the last write.
-            // A failure is logged rather than refusing the shutdown: the rows are already on disk.
-            log_export_failure(store);
+            // One last export of all four documents, so the readable copies next to the database are never older than
+            // the last write. A failure is logged rather than refusing the shutdown: the rows are already on disk.
+            export_all(store, sessions, containers, workspaces);
             (ok_reply(id, json!({})), false)
         }
         other => (

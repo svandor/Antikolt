@@ -7,18 +7,17 @@
 //! **export** — written when a profile is adopted, when the core shuts down, and whenever `db_status` is asked to
 //! sync — and is read exactly once, to adopt a profile written before the switch.
 //!
-//! The switch is deliberately one-way and one-time: the file reports `user_version = 3` only after the adoption
-//! finished, so an unreadable or half-written export can never be imported back over newer cards.
+//! The switch is deliberately one-way and one-time: the database records that the cards were adopted (the `meta` table)
+//! only after the adoption finished, so an unreadable or half-written export can never be imported back over newer
+//! cards.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::containers::Container;
+use crate::persist::write_json_atomic;
 use crate::sqlite_store::{Db, DbError};
-use crate::workspaces::Workspace;
 
 /// How much of a page's text one card may keep (`card_page_text`, ADR-049). The cap is a promise about the store, not
 /// about the page's length.
@@ -102,24 +101,6 @@ pub enum StoreError {
     Db(#[from] DbError),
 }
 
-/// What `db_status` reports: the database's own numbers, and how well the export it just wrote agrees with them.
-#[derive(Debug, Clone)]
-pub struct StorageReport {
-    pub path: PathBuf,
-    pub schema: i64,
-    pub cards: i64,
-    pub containers: i64,
-    pub workspaces: i64,
-    pub sessions: i64,
-    pub export_path: PathBuf,
-    /// How many rows were compared against the export — the card count, not one sample.
-    pub checked: i64,
-    /// How many rows disagreed; `-1` means the export could not be read at all (unknown, not zero).
-    pub mismatches: i64,
-    pub verified: bool,
-    pub cards_in_workspace: i64,
-}
-
 /// The card store: the cards in SQLite, with the JSON document as a derived export.
 #[derive(Debug)]
 pub struct CardStore {
@@ -137,16 +118,15 @@ impl CardStore {
     pub fn open(data_dir: &Path) -> Result<Self, StoreError> {
         fs::create_dir_all(data_dir)?;
         let db = Db::open(data_dir)?;
-        let upgraded = db.was_upgraded();
         let mut store = Self {
             data_dir: data_dir.to_path_buf(),
             db,
         };
-        if upgraded {
+        if !store.db.was_adopted("cards")? {
             store.adopt_legacy_profile()?;
-            // Only now is the switch recorded: if the adoption failed above, the file still says "pre-switch" and the
+            // Only now is the card switch recorded: if the adoption failed above, the marker is still missing and the
             // next start tries again instead of serving a half-adopted profile.
-            store.db.mark_switched()?;
+            store.db.mark_adopted("cards")?;
             // The adopted document is rewritten once so it carries the store's normalisation (tags trimmed, page text
             // capped) instead of the raw bytes of an older build. A normal start does **not** rewrite it: the export is
             // derived, and serialising every card on every launch would put the old O(n) write back in the startup path.
@@ -260,90 +240,65 @@ impl CardStore {
         Ok(count)
     }
 
+    /// The export's path inside the profile.
+    pub fn path(&self) -> PathBuf {
+        self.data_dir.join(JSON_FILE_NAME)
+    }
+
     /// Write the legacy JSON document from the database: one atomic file, pretty-printed, in the grid's order.
     ///
     /// It is an export, not a store: nothing reads it (except the one-time adoption of a pre-switch profile), and a
     /// failure here never fails a user's write — the caller logs it.
     pub fn export_json(&self) -> Result<PathBuf, StoreError> {
-        let cards = self.list()?;
-        let text = serde_json::to_string_pretty(&cards)?;
-        let path = self.data_dir.join(JSON_FILE_NAME);
-        let temporary = path.with_extension("json.tmp");
-        {
-            let mut file = fs::File::create(&temporary)?;
-            file.write_all(text.as_bytes())?;
-            // The rename below is only atomic if the bytes really reached the disk first.
-            file.sync_all()?;
-        }
-        fs::rename(&temporary, &path)?;
+        let path = self.path();
+        write_json_atomic(&path, &self.list()?)?;
         Ok(path)
     }
 
-    /// Refresh the two reference tables the cards do not own yet (containers, workspaces). Called from
-    /// `db_status(sync: true)`, because nothing reads those tables until their own switch.
-    pub fn sync_reference_tables(
-        &mut self,
-        containers: &[Container],
-        workspaces: &[Workspace],
-    ) -> Result<(), StoreError> {
-        Ok(self.db.sync_reference_tables(containers, workspaces)?)
-    }
-
-    /// The numbers `db_status` reports, and — when `export` is set — the write-then-read-back proof that the export
-    /// agrees with the database row by row.
-    ///
-    /// The check is deliberately the *export* direction now: the database is the truth, so "verified" means "the file
-    /// this core just wrote can be parsed back into exactly these cards". An unreadable export is reported as
-    /// `mismatches = -1` (`not measured`), never as agreement.
-    pub fn storage_report(&mut self, export: bool) -> Result<StorageReport, StoreError> {
-        let export_path = if export {
-            self.export_json()?
-        } else {
-            self.data_dir.join(JSON_FILE_NAME)
+    /// Compare the export with the rows: `(checked, mismatches)`, `-1` meaning the file is unreadable
+    /// (`not measured`), never agreement (ADR-069).
+    pub fn verify_export(&self) -> Result<(i64, i64), StoreError> {
+        let expected = self.list()?;
+        let checked = expected.len() as i64;
+        let text = match fs::read_to_string(self.path()) {
+            Ok(text) => text,
+            Err(_) => return Ok((checked, -1)),
         };
-        let cards = self.list()?;
+        let exported: Vec<Card> = match serde_json::from_str(&text) {
+            Ok(exported) => exported,
+            Err(_) => return Ok((checked, -1)),
+        };
         let mut mismatches = 0i64;
-        match fs::read_to_string(&export_path) {
-            Ok(text) => match serde_json::from_str::<Vec<Card>>(&text) {
-                Ok(exported) => {
-                    if exported.len() != cards.len() {
-                        mismatches += 1;
-                    }
-                    for card in &cards {
-                        match exported.iter().find(|row| row.id == card.id) {
-                            Some(row) if row == card => {}
-                            _ => mismatches += 1,
-                        }
-                    }
-                }
-                Err(error) => {
-                    eprintln!("[core] db_export_parse_failed: {error}");
-                    mismatches = -1;
-                }
-            },
-            Err(error) => {
-                eprintln!("[core] db_export_read_failed: {error}");
-                mismatches = -1;
+        if exported.len() != expected.len() {
+            mismatches += 1;
+        }
+        for card in &expected {
+            match exported.iter().find(|row| row.id == card.id) {
+                Some(row) if row == card => {}
+                _ => mismatches += 1,
             }
         }
-        let (stored, containers, workspaces, sessions) = self.db.counts()?;
-        let cards_in_workspace = cards
-            .first()
-            .map(|card| self.db.cards_in_workspace(&card.workspace).unwrap_or(0))
-            .unwrap_or(0);
-        Ok(StorageReport {
-            path: self.db.path().to_path_buf(),
-            schema: self.db.schema_version()?,
-            cards: stored,
-            containers,
-            workspaces,
-            sessions,
-            export_path,
-            checked: cards.len() as i64,
-            mismatches,
-            verified: mismatches == 0,
-            cards_in_workspace,
-        })
+        Ok((checked, mismatches))
+    }
+
+    /// The database's path, for the `db_status` reply.
+    pub fn db_path(&self) -> &Path {
+        self.db.path()
+    }
+
+    /// The schema version the file reports, for `db_status` and for the gate.
+    pub fn schema_version(&self) -> Result<i64, StoreError> {
+        Ok(self.db.schema_version()?)
+    }
+
+    /// The four row counts, in `db_status`'s order: cards, containers, workspaces, sessions.
+    pub fn counts(&self) -> Result<(i64, i64, i64, i64), StoreError> {
+        Ok(self.db.counts()?)
+    }
+
+    /// How many cards say they are in one workspace (the query the database does better than a JSON walk).
+    pub fn cards_in_workspace(&self, workspace: &str) -> Result<i64, StoreError> {
+        Ok(self.db.cards_in_workspace(workspace)?)
     }
 
     /// Adopt the pre-switch profile exactly once (ADR-069): `cards.json` was the writer of record until this build,
@@ -799,22 +754,31 @@ mod tests {
         card.page_text = "export-próba".to_string();
         store.upsert(card.clone()).expect("write");
 
-        let report = store.storage_report(true).expect("report");
-        assert!(report.verified, "the export round-trips: {report:?}");
-        assert_eq!(report.checked, 3, "every row is compared, not a sample");
-        assert_eq!(report.mismatches, 0);
-        assert_eq!(report.schema, 3);
+        let path = store.export_json().expect("export");
+        assert_eq!(
+            store.verify_export().expect("verify"),
+            (3, 0),
+            "every row is compared, not a sample"
+        );
+        assert_eq!(
+            store.schema_version().expect("schema"),
+            4,
+            "the migration brings the file to the current schema; the adoption markers say what is still to adopt"
+        );
 
         // The file really contains the cards, and in the grid's order.
-        let text = fs::read_to_string(&report.export_path).expect("read the export");
+        let text = fs::read_to_string(&path).expect("read the export");
         let exported: Vec<Card> = serde_json::from_str(&text).expect("parse");
         assert_eq!(exported, store.list().expect("list"));
 
-        // A file that no longer agrees is caught row by row instead of being called agreement.
-        fs::write(&report.export_path, "[]").expect("clobber the export");
-        let stale = store.storage_report(false).expect("report");
-        assert!(!stale.verified);
-        assert!(stale.mismatches > 0);
+        // A file that no longer agrees is caught row by row instead of being called agreement, and a missing one is
+        // "not measured".
+        fs::write(&path, "[]").expect("clobber the export");
+        let stale = store.verify_export().expect("verify");
+        assert_eq!(stale.0, 3);
+        assert!(stale.1 > 0);
+        fs::remove_file(&path).expect("remove");
+        assert_eq!(store.verify_export().expect("verify").1, -1);
         let _ = fs::remove_dir_all(&dir);
     }
 }

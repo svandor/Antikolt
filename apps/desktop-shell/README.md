@@ -171,9 +171,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   (ADR-062) and reports *which* path wrote it — `edit_card_title=ok gesture=typed wrote_by=gesture …`, so a silently
   dead editor cannot hide behind a working fallback. The URL is edited the same way through the domain span
   (ADR-063): `edit_card_url=ok gesture=typed stored="https://proba.example/masik-cikk"`, read back from the core.
-  The check also asks the storage through the page (ADR-064 → ADR-069): `db_status=ok schema=3 cards=11 verified=yes`,
-  which means the cards are SQLite rows (`user_version = 3`), the export written from them parses back into exactly the
-  same rows, and the database's reference tables hold the containers and workspaces the JSON stores still own.
+  The check also asks the storage through the page (ADR-064 → ADR-070): `db_status=ok schema=4 cards=11 verified=yes`,
+  which means all four stores are SQLite rows (`user_version = 4`): the four exports written from them parse back into
+  exactly the same rows, and no store is left behind.
 - `--profiletest` — the portable bundle (ADR-059): `profile_export` writes the whole profile (cards, containers,
   workspaces, sessions, rules) into one versioned JSON file, and `profile_import` reads it back into a *fresh*
   profile. The check needs no window: it runs two core processes with two throw-away data directories, exports
@@ -188,7 +188,8 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   the tagged card among the matches, and finally clicks the chip's `×` and expects the core to be clean again.
   Measured: `tag_add=ok`, `tag_core=ok`, `tag_search=ok … term=kavezo`, `tag_remove=ok`.
 - `--workspacetest` — the tab row is the core's workspace table, and a card's workspace is a stored field
-  (ADR-056). The check compares the page's tab row and the DOM tabs with the core's `workspaces.json`, asserts
+  (ADR-056). The check compares the page's tab row and the DOM tabs with the core's workspace table (SQLite rows since
+  ADR-070), asserts
   that every card's workspace is one the table knows (the old `index > 12` fiction could invent "Olvasnivaló"
   for the thirteenth card), moves one card through the page's own write path (`antikoltMoveToWorkspace` →
   `cards.upsert` → core), and puts it back. Measured: `workspace_table=ok`, `workspace_cards=ok`,
