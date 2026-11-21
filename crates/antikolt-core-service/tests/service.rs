@@ -142,8 +142,12 @@ fn the_store_is_on_disk_and_survives_a_restart() {
     service.stop();
 
     assert!(
+        dir.join("antikolt.sqlite3").exists(),
+        "the cards are rows in the database, not a JSON document"
+    );
+    assert!(
         dir.join("cards.json").exists(),
-        "the card list is a real file"
+        "the export is written beside the database"
     );
 
     let mut again = Service::start(&dir);
@@ -159,5 +163,91 @@ fn the_store_is_on_disk_and_survives_a_restart() {
         "the timestamp written before the restart is still there"
     );
     again.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_database_is_the_store_and_the_report_proves_the_export() {
+    // ADR-069: the card writes land in SQLite, and `db_status` is the measured statement that the export beside it
+    // still describes them row by row.
+    let dir = temp_dir("db-status");
+    let mut service = Service::start(&dir);
+
+    let status = service.request("db_status", json!({ "sync": true }));
+    assert_eq!(status["ok"], true, "db_status answered: {status}");
+    assert_eq!(status["data"]["schema"], json!(3));
+    assert_eq!(status["data"]["verified"], true);
+    assert_eq!(status["data"]["checked"], json!(3), "every row is checked");
+    assert_eq!(status["data"]["mismatches"], json!(0));
+    assert_eq!(status["data"]["cards"], json!(3));
+    assert!(
+        status["data"]["path"]
+            .as_str()
+            .expect("path")
+            .ends_with("antikolt.sqlite3"),
+        "the reply names the database file"
+    );
+
+    // A rename goes through the product op; the database is what changes, and the export follows on shutdown.
+    let listed = service.request("cards_list", json!({}));
+    let mut card = listed["data"]["cards"].as_array().expect("cards")[0].clone();
+    let id = card["id"].as_str().expect("id").to_string();
+    card["title"] = json!("Adatbázis-átnevezés");
+    let upserted = service.request("card_upsert", json!({ "card": card }));
+    assert_eq!(upserted["ok"], true);
+    assert_eq!(upserted["data"]["card"]["title"], "Adatbázis-átnevezés");
+
+    // The export on disk is stale until it is written again — and `db_status` says exactly that instead of claiming
+    // agreement it did not measure.
+    let unsynced = service.request("db_status", json!({}));
+    assert_eq!(unsynced["ok"], true);
+    assert_eq!(unsynced["data"]["verified"], false);
+    assert!(
+        unsynced["data"]["mismatches"].as_i64().unwrap_or(0) > 0,
+        "the stale export is reported as a mismatch"
+    );
+
+    let synced = service.request("db_status", json!({ "sync": true }));
+    assert_eq!(synced["data"]["verified"], true, "re-export agrees again");
+    service.stop();
+
+    // And the shutdown export is the database, not the list from before the rename.
+    let text = std::fs::read_to_string(dir.join("cards.json")).expect("read the export");
+    let exported: Vec<serde_json::Value> = serde_json::from_str(&text).expect("parse");
+    assert!(
+        exported
+            .iter()
+            .any(|row| row["id"] == id && row["title"] == "Adatbázis-átnevezés"),
+        "the export carries the rename from the database"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_profile_written_before_the_switch_is_adopted_not_reseeded() {
+    // A real user upgrading: only `cards.json` exists. The first start must take those cards over instead of seeding
+    // the examples next to them.
+    let dir = temp_dir("adopt");
+    let legacy = json!([
+        {
+            "id": "01UPGRADE000000000000001",
+            "title": "Korábbi profil kártyája",
+            "url": "https://pelda.hu/regi",
+            "notes": "ez a régi fájlból jött"
+        }
+    ]);
+    std::fs::write(
+        dir.join("cards.json"),
+        serde_json::to_string_pretty(&legacy).expect("json"),
+    )
+    .expect("write the legacy profile");
+
+    let mut service = Service::start(&dir);
+    let listed = service.request("cards_list", json!({}));
+    let cards = listed["data"]["cards"].as_array().expect("cards");
+    assert_eq!(cards.len(), 1, "the legacy card list is adopted");
+    assert_eq!(cards[0]["title"], "Korábbi profil kártyája");
+    assert_eq!(cards[0]["notes"], "ez a régi fájlból jött");
+    service.stop();
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -17,8 +17,9 @@ currently blocks the full test suite on the machine the work was built on.
 
 The remaining work is handed to **DeepSeek V4.1 Flash**. The deep native debugging is already **closed** on
 DeepSeek V4 Pro (dev logs 90–94: the CEF-GPU flag, the stdio handle, the use-after-free, and the text-mode
-frame corruption). Flash takes the rest: the SQLite-first store switch, the container permission/proxy + OAuth
-work, the remaining product features, and release engineering.
+frame corruption). Flash takes the rest: the other three stores (containers, workspaces, sessions), the container
+permission/proxy + OAuth work, the remaining product features, and release engineering. The card store itself is
+**done** — SQLite-first with a JSON export (ADR-069, dev log 96).
 
 **Escalation rule — do not loop.** If Flash hits a subtle native failure it cannot localise in a few attempts
 (a crash with a varying stack, a use-after-free, a frame/pipe corruption, an AddressSanitizer report it cannot
@@ -32,9 +33,10 @@ back up, not looped on. This rule is the whole point of the handover.
 A runnable Windows build: a **Qt 6 shell** + a **CEF engine host** + a **Rust core** that owns the data. The grid is a
 virtualised card view (503 cards → 13 DOM elements), a card hibernates to disk (MHTML + scroll/anchor/form state) and
 restores offline, containers and workspaces are first-class, the profile is portable as one JSON bundle, and the
-SQLite store (schema `user_version = 2`, WAL) already serves the grid's card list while the JSON files remain the
-writer. Decisions are recorded as **ADR-001 … ADR-068** in [`docs/HU/05-DONTESEK.md`](docs/HU/05-DONTESEK.md); the
-development log runs to slice **88** in [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md).
+**cards live in SQLite** (schema `user_version = 3`, WAL) as their only writer — `cards.json` is a derived export and a
+pre-switch profile is adopted from it exactly once (ADR-069). Decisions are recorded as **ADR-001 … ADR-069** in
+[`docs/HU/05-DONTESEK.md`](docs/HU/05-DONTESEK.md); the development log runs to slice **96** in
+[`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md).
 
 ## 2. How to verify (do this first, in a fresh session)
 
@@ -42,7 +44,7 @@ development log runs to slice **88** in [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs
 git clone https://github.com/svandor/Antikolt && cd Antikolt
 
 # 1. Fast, needs only Rust + Node: the same checks CI runs.
-pwsh -File scripts/check-repo.ps1        # SPDX, links, JS parse, cargo fmt, clippy -D warnings, 78+21+2+1+15 Rust tests
+pwsh -File scripts/check-repo.ps1        # SPDX, links, JS parse, cargo fmt, clippy -D warnings, 78+31+4+1+15 Rust tests
 
 # 2. The full gate: builds both native binaries and runs the 37 self tests (needs Qt 6.8 + CEF).
 pwsh -File scripts/verify.ps1            # ends with "ALL SELF TESTS PASSED"
@@ -100,9 +102,11 @@ got a reply and its JS blocked the renderer. Fixed with `_setmode(_fileno(stdout
    and the single miss is `capturetest`, which passes in isolation in 2.3 s (`capture=ok capture_size=ok`) — so it is a
    load-related transient timeout under the full gate, not a defect. A newer NVIDIA driver or forcing the Intel iGPU is
    still worth trying; the software-rendering gate is already fully green.
-2. **Finish the store switch:** the writes still go to the JSON files, and every multi-card op has to mirror by hand
-   (`container_delete` with `move_to` needed exactly that fix, dev log 81). Next: `card_upsert`/`card_open`/
-   `card_page_text`/`card_delete` write **SQLite first**, JSON becomes an export, and `Db::mirror` disappears.
+2. **Finish the store switch for the other three stores** — the cards are done (ADR-069, dev log 96: one writer, JSON
+   export, one-time adoption, `db_status` verifies row by row). The containers, workspaces and sessions still live in
+   JSON; their tables exist in the database and are refreshed on demand by `db_status(sync: true)`, but nothing reads
+   them yet. Next: `container_upsert`/`container_delete`, `workspace_*` and `session_*` write SQLite first the same
+   way, with their JSON documents becoming exports.
 3. **Container-level permission/proxy (F3)**, then the OAuth popup — the last two structural pieces before a release
    story (SignPath signing is a human step; see `docs/HU/20-ALASAS.md`).
 
@@ -112,7 +116,9 @@ got a reply and its JS blocked the renderer. Fixed with `_setmode(_fileno(stdout
 - **Never a green that lies:** a check prints what it measured, and `not-measurable` with a reason beats a fake pass.
 - **Write order matters:** an editor writes first and restores the DOM afterwards (ADR-062) — the `blur` handler
   re-enters otherwise and swallows the save.
-- **Multi-card writes must mirror explicitly** while two stores exist (ADR-066): equal row counts hide stale rows.
+- **The cards have one writer** (ADR-069): SQLite. `cards.json` is an export, never imported once the file reports
+  `user_version = 3`; a write that closed the database and then filled the JSON would be the old mirror bug again.
+  The other three stores are still JSON and write through their own store — do not mix the two directions.
 - **Numbers in the docs come from the gate log**, never from memory.
 - **Escalate instead of looping** (handover §0): the remaining work runs on DeepSeek V4.1 Flash; if a subtle native
   bug resists a few localisation attempts, stop and say „Pro modell szükséges" with the evidence — never burn
@@ -138,8 +144,9 @@ got a reply and its JS blocked the renderer. Fixed with `_setmode(_fileno(stdout
 
 **Modell-átadás (ezt olvasd először):** a hátralevő munka a **DeepSeek V4.1 Flash**-re van bízva. A mély natív
 hibakeresést a **DeepSeek V4 Pro** már lezárta (napló 90–94: a CEF-GPU kapcsoló, a stdio-handle, a use-after-free és a
-szöveges-mód keret-torzulás). A Flash viszi a többit: az SQLite-first store-csere, a konténer-engedély/proxy + OAuth, a
-maradék termékfunkciók és a kiadás.
+szöveges-mód keret-torzulás). A Flash viszi a többit: a maradék három store cseréje (konténerek, munkaterületek,
+munkamenetek), a konténer-engedély/proxy + OAuth, a maradék termékfunkciók és a kiadás. A kártyatár maga **kész** —
+SQLite-first, JSON-exporttal (ADR-069, napló 96).
 
 **Eszkalációs szabály — ne ismételj fölöslegesen.** Ha a Flash olyan apró natív hibába ütközik, amit néhány
 próbálkozásból nem tud lokalizálni (változó stackű krach, use-after-free, keret/pipe-torzulás, megmagyarázhatatlan
@@ -153,7 +160,7 @@ mi a kész, mi **mért**, mi **nem mért**, milyen parancsokkal lehet ellenőriz
 ezen a gépen megállítja a teljes kaput.
 
 **Állapot:** a repó nyilvános (`github.com/svandor/Antikolt`), a `main` ág zöld CI-val, MPL-2.0 licenccel, magyar
-(tekintélyes) és angol (összefoglaló) dokumentációval; a döntések ADR-001…068, a napló 91 szeletig.
+(tekintélyes) és angol (összefoglaló) dokumentációval; a döntések ADR-001…069, a napló 96 szeletig.
 
 **Első lépés az új munkafolyamatban:** `pwsh -File scripts/check-repo.ps1` (gyors, Rust+Node kell csak), majd a
 teljes kapu **ezen a gépen**, szoftveres rendereléssel: `$env:ANTIKOLT_ENGINE_DISABLE_GPU='1'; pwsh -File
@@ -184,12 +191,24 @@ loopon hívott `quit()`-ot. Javítva (`apps/desktop-shell/src/main.cpp`, `std::m
 (`protocol.cpp`: `_setmode(_fileno(stdout), _O_BINARY)`). **A teljes kapu most zöld: `ALL SELF TESTS PASSED`**
 (`$env:ANTIKOLT_ENGINE_DISABLE_GPU='1'`), a `--containertest` → `exit=0` 12 s, minden `container_*` ok.
 
+**A kártyatár kész (mért) — a store-csere második fele:** a kártyák **egyetlen írója** a `antikolt.sqlite3`
+(séma `user_version=3`, WAL), a `cards.json` **export** (átvételkor, leálláskor, `db_status(sync)`-ra), a tükör
+(`Db::mirror`, `mirror_card`, `mirror_delete`) megszűnt, a konténer-áthelyezés egyetlen SQL-`UPDATE`. A kapcsoló
+előtti profil egyszer átvételre kerül (a JSON volt az igazság), egy olvashatatlan régi JSON megállítja a magot
+ahelyett hogy felülírná, az üres profil pedig nem seedel újra, és a sorokat eldobó átvétel előtt az adatbázis
+`VACUUM INTO` mentést kap (`antikolt.pre-adoption.sqlite3`). Mérve: `cargo test` **117 → 129** teszt zöld
+(78+31+4+1+15), köztük az átvétel, a „kiürített profil nem seedel", a korrupt JSON, az elavult tükör-sor, a
+mentés és a DB ↔ export egyezés esete; a valódi, kapcsoló előtti profilon az átvétel után mind a 10 kártya
+megmaradt és a fájl `user_version=3`. ADR-069, napló 96. szelet.
+
 **Következő szeletek:** (1) a hardveres GPU-út a VECTOR-on — bisectelve (93. szelet): a d3d11 ANGLE-háttér a hibás
 a 5080-on, a `--use-angle=gl` megy (`$env:ANTIKOLT_ENGINE_EXTRA_SWITCHES='--use-angle=gl'`); a maradék driver-szintű
-(frissebb NVIDIA-driver vagy az Intel iGPU kényszerítése); (2) az írás átállítása SQLite-ra (a JSON legyen export);
-(3) konténerenkénti engedély/proxy (F3), majd OAuth-popup — utána a kiadás (SignPath, emberi lépés).
+(frissebb NVIDIA-driver vagy az Intel iGPU kényszerítése); (2) a **másik három store** cseréje (konténerek,
+munkaterületek, munkamenetek) ugyanerre a mintára; (3) konténerenkénti engedély/proxy (F3), majd OAuth-popup —
+utána a kiadás (SignPath, emberi lépés).
 
 **Szabályok, amiket nem szabad újranyitni:** nincs dialógus a lapon (ADR-053); soha nem hazudó zöld (a
-`not-measurable` jobb a hamis passznál); az editor előbb ír, aztán állítja vissza a DOM-ot (ADR-062); több-kártyás
-írást kézzel kell tükrözni, amíg két store van (ADR-066); a dokumentumok számait a kapu naplójából kell venni; és
+`not-measurable` jobb a hamis passznál); az editor előbb ír, aztán állítja vissza a DOM-ot (ADR-062); a
+**kártyáknak egy írójuk van** (ADR-069: az adatbázis; a `cards.json` export, és `user_version=3` után soha nem
+importálunk vissza belőle); a dokumentumok számait a kapu naplójából kell venni; és
 **PowerShell `Replace`-csel előállított szöveget soha nem szabad vakon kiírni** — ez a projektben háromszor törölt fájlt.

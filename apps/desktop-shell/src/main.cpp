@@ -7386,8 +7386,9 @@ int runWorkspaceCheck(const QString& enginePath) {
                 ++failures;
             }
 
-            // The database mirror, on the product path (ADR-064): the page asks the shell, the shell asks the core,
-            // and the core reports the schema, the counts and whether the first card survived the copy intact.
+            // The storage report, on the product path (ADR-064 → ADR-069): the page asks the shell, the shell asks the
+            // core, and the core says whether the cards really live in SQLite and whether the export written from them
+            // parses back into exactly the same rows.
             const auto db_status = [&](const QString& slot, bool sync) {
                 const QString kick = QStringLiteral("window.%1 = null;"
                                                    " window.antikoltDbStatus(%2)"

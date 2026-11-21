@@ -28,7 +28,8 @@ public:
     explicit CoreClient(QObject* parent = nullptr);
     ~CoreClient() override;
 
-    /// Start the core service. `dataDir` is where it keeps `cards.json`.
+    /// Start the core service. `dataDir` is the profile directory: the cards live in `antikolt.sqlite3` there, and
+    /// `cards.json` next to it is the export the core keeps up to date (ADR-069).
     bool start(const QString& executablePath, const QString& dataDir);
     bool isRunning() const;
 

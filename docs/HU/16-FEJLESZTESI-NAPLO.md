@@ -3,6 +3,78 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-21 (kilencvenhatodik szelet) — a kártyatár SQLite-first: a JSON export lesz (ADR-069)
+
+A 64–66. szelet egy **tükröt** épített: a JSON-fájl írt, az adatbázis követte, és a kettő szinkronját kézzel kellett
+tartani. Ez bizonyította a migrációt valódi adaton (a `db_status` soronként visszaellenőrizte), de a 81. szelet meg is
+mutatta az árát: a `container_delete` `move_to`-s ága néma elavulást hagyott a tükörben, mert a darabszám egyezett. Ez
+a szelet **megszünteti a második írást**: a kártyáknak egyetlen írója van, az `antikolt.sqlite3`, és a `cards.json`
+származtatott **export** lesz.
+
+### Mi változott
+
+- `store.rs`: a `CardStore` már nem fájlt tart kézben, hanem a `Db`-t. Az `open` a **kapcsoló előtti** fájlból
+  (`user_version` 0–2) egyszer **átveszi** a `cards.json`-t (a store normalizálásával: trim/dedup/címke-plafon,
+  oldalszöveg-plafon), utána írja be a `3`-at (`Db::mark_switched`). Ha a régi JSON olvashatatlan, a mag **eláll**
+  (`StoreError::Legacy`, a fájlnevet kimondva) — nem seedel a felhasználó kártyái fölé.
+- **Az üres profil nem seedel újra:** a példakártyák csak akkor jönnek létre, ha az adatbázis fájl új **és** nincs
+  átveendő JSON. Aki minden kártyáját törölte, üres rácsot kap a következő indításnál is — ez a naiv „ha üres, seedelj"
+  hiba, amit a `a_profile_the_user_emptied_stays_empty` teszt zár ki.
+- `sqlite_store.rs`: séma **`0003`** (nincs új tábla: a szám maga a jelölés, hogy a fájl nem tükör többé), `move_container`
+  egyetlen SQL-`UPDATE`, `replace_all_cards` egy tranzakcióban, `sync_reference_tables` a konténer/munkaterület
+  referenciatáblákra. A `mirror`, `upsert_container`, `upsert_workspace` **törölve**.
+- `main.rs`: a `mirror_card`/`mirror_delete` hívások és a lista önjavító ága eltűnt; a `cards_list` egyszerű olvasás;
+  a `db_status` a **DB ↔ export** egyezést méri soronként (`checked`, `mismatches`, `verified`), a `sync` a származtatott
+  másolatokat frissíti (export a kártyákból, referenciatáblák a JSON-store-okból); leálláskor és import után export.
+- **Az export nem íródik minden indulásnál:** az átvételkor, leálláskor és `db_status(sync)`-ra. A teljes lista
+  sorosítása minden indításnál visszahozná a régi O(n) írást a startup útjára — pont azt, amit a csere megszüntet.
+
+### Bizonyíték (mért)
+
+```
+cargo test (offline)     → 129 teszt zöld: 78 + 31 + 4 + 1 + 15
+check-repo               → ALL CHECKS PASSED
+--- teljes kapu (szoftveres renderelés) ---
+1. futás, teljes build:  pwsh -File scripts/verify.ps1 → ALL SELF TESTS PASSED, 4m41s, 37 önteszt + check-repo
+2. futás, a végleges fán: ALL SELF TESTS PASSED (ugyanaz a 40 sor, a végleges kóddal)
+
+addcardtest:
+  add_card=ok typed=submitted before=10 after=11 page=11 error=""
+  db_status=ok schema=3 cards=11 verified=yes containers=4 workspaces=3
+  add_card_check=ok
+containertest:
+  container_used_delete=ok shown="1 kártya még ebben a konténerben van" move=offered
+  container_move_delete=ok container_gone=yes card_in=c-private
+```
+
+**A valódi profilon is mért átvétel:** a kapu a gép egy korábbi buildtól maradt, kapcsoló előtti profilján futott
+(`%APPDATA%\Antikolt Project\Antikolt\core`: `user_version=2` tükör + `cards.json`). Az első indítás átvette, a **10
+meglévő kártya megmaradt** (`before=10`), és a fájl most `user_version=3` (`SQLite format 3`, a fejléc 4 bájtja
+`00 00 00 03`) — nem seedelt és nem veszett el sor.
+
+A `verified=yes` most **fordított irányt** mér: nem azt, hogy a JSON-ból átírt tükör egyezik, hanem hogy az
+adatbázisból **kiírt export** ugyanazokat a sorokat adja vissza, mint amit a mag olvas — minden sor, nem az első.
+
+### Új tesztek
+
+`a_pre_switch_json_profile_is_adopted_once`, `a_profile_the_user_emptied_stays_empty_instead_of_reseeding`,
+`an_unreadable_legacy_profile_stops_the_core_instead_of_being_replaced`, `the_json_document_wins_over_a_stale_pre_switch_mirror`,
+`an_adoption_that_discards_rows_keeps_them_in_a_backup` (a `VACUUM INTO` mentés a sorokat eldobó átvétel előtt),
+`the_export_is_a_faithful_copy_the_report_can_verify`, `moving_a_container_is_one_statement_that_touches_only_its_cards`,
+`replacing_the_whole_list_drops_the_rows_that_are_gone`, `deleting_a_card_removes_exactly_that_row`,
+`the_reference_tables_are_refreshed_from_the_json_stores`, e2e: `the_database_is_the_store_and_the_report_proves_the_export`,
+`a_profile_written_before_the_switch_is_adopted_not_reseeded`.
+
+### Ami nyitva maradt (kimondva)
+
+- A **konténerek, munkaterületek és munkamenetek** továbbra is JSON-dokumentumok; a mag `containers`/`workspaces`/
+  `sessions` tábláit csak a `db_status(sync)` frissíti, és semmi nem olvassa őket. A saját cseréjük külön szelet.
+- A `cards.json` az utolsó export/leállás után **elavulhat** — ezt a `db_status` `sync` nélkül ki is mondja
+  (`verified: no`), nem hazudik egyezést.
+- A visszafelé ugrás (új fájl régi builddal) nem támogatott: a régi build `user_version=3`-at olvas és a tükröt írná.
+- A kapu ezen a gépen továbbra is szoftveres rendereléssel fut (`ANTIKOLT_ENGINE_DISABLE_GPU=1`); a hardveres GPU-út
+  a VECTOR-on nyitott (93. szelet).
+
 ## 2026-11-20 (kilencvenötödik szelet) — az átadás a Flash-modellre: kimondva, eszkalációs szabállyal
 
 A hátralevő munka átadása a **DeepSeek V4.1 Flash**-re került a `HANDOVER.md`-be, egyértelműen: a mély natív

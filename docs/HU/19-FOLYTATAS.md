@@ -326,6 +326,11 @@ normalizálva, a keresés ékezet nélkül is látja), és a **munkaterületek**
   konténer, dupla kattintás = átnevezés, `×` = törlés — használt konténernél **áthelyezéssel** (ADR-054:
   a mag `move_to`-val előbb áthelyez, aztán töröl; a legenda felajánlja). Nyitott: konténerenkénti
   engedély/proxy (F3).
+- **Kártyatár** — **kész** (ADR-069, napló 96): a kártyák **SQLite-sorok** (`antikolt.sqlite3`, `user_version=3`,
+  WAL), a `card_upsert`/`card_open`/`card_page_text`/`card_delete`, a konténer-áthelyezés és a profil-import mind
+  oda ír, a `cards.json` **export** (átvételkor, leálláskor, `db_status(sync)`-ra); a kapcsoló előtti profil egyszer
+  átvételre kerül, egy olvashatatlan régi JSON megállítja a magot ahelyett hogy felülírná, az üres profil pedig nem
+  seedel újra. Nyitott: a konténerek, munkaterületek és munkamenetek cseréje.
 - **OAuth/SSO popup** a helyes partícióban (max. 60 s, dokumentált I1-kivétel — a mechanizmus kész, a
   bejelentkezési folyamat nincs összekötve).
 - **Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás, összeomlás utáni helyreállítás, HU/EN felület,
@@ -333,8 +338,8 @@ normalizálva, a keresés ékezet nélkül is látja), és a **munkaterületek**
 - **Média-kivétel a takarításból** (§2) **kész** (ADR-048, `--mediacleantest`): a játszó kártya megmarad. A(z)
   §3-beli `test.hang` lap-oldali hook és a renderelt jegyzet mérése viszont még nyitott.
 - **Oldalszöveg-keresés** **kész** (ADR-049, `--searchtest` `search_page_text=ok`): a fagyasztott kártyák lap-
-  szövege is kereshető. Ami maradt: élő kártyánál nincs capture (a fagyasztás pillanatában készül), és a
-  SQLite-séma még nem ismeri a `page_text` mezőt (a store JSON-dokumentum, amíg nem cseréljük).
+  szövege is kereshető. Ami maradt: élő kártyánál nincs capture (a fagyasztás pillanatában készül); a `page_text`
+  mezőt a séma már ismeri (`0002`), és a kártya sora az adatbázisban él (ADR-069).
 **Széf és passkey (F4/F4b):** DEK/KEK, opcionális mesterjelszó, auto-zárás, KDBX export, kitöltés izolált
 világban origin-kötéssel, TOTP + vágólap-tisztítás, szoftveres hitelesítő (`create`/`get` teszt-RP-vel),
 őszinte tájékoztatás arról, hogy nincs hardveres védelem. **Blokkol:** `cargo vendor` kell hozzá, és ehhez

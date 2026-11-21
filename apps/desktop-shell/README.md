@@ -171,8 +171,9 @@ antikolt-shell.exe --coretest   target/debug/antikolt-core-service.exe
   (ADR-062) and reports *which* path wrote it — `edit_card_title=ok gesture=typed wrote_by=gesture …`, so a silently
   dead editor cannot hide behind a working fallback. The URL is edited the same way through the domain span
   (ADR-063): `edit_card_url=ok gesture=typed stored="https://proba.example/masik-cikk"`, read back from the core.
-  The check also asks the database mirror through the page (ADR-064): `db_status=ok schema=2 cards=11 verified=yes`,
-  which means the SQLite copy of the profile holds the cards and its first row matches the store it came from.
+  The check also asks the storage through the page (ADR-064 → ADR-069): `db_status=ok schema=3 cards=11 verified=yes`,
+  which means the cards are SQLite rows (`user_version = 3`), the export written from them parses back into exactly the
+  same rows, and the database's reference tables hold the containers and workspaces the JSON stores still own.
 - `--profiletest` — the portable bundle (ADR-059): `profile_export` writes the whole profile (cards, containers,
   workspaces, sessions, rules) into one versioned JSON file, and `profile_import` reads it back into a *fresh*
   profile. The check needs no window: it runs two core processes with two throw-away data directories, exports

@@ -3,6 +3,41 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-069 — A kártyatár SQLite-first: a JSON export lesz (2026-11-21)
+
+**Kontextus:** az ADR-064…066 egy tükröt épített: a JSON-fájl írt, az adatbázis követte. Ez bizonyította a migrációt
+valódi adaton, de a két írás szinkronját kézzel kellett tartani — az ADR-066 épp azért született, mert a
+`container_delete` `move_to`-s ága néma elavulást hagyott a tükörben. A rács listája már az adatbázisból jött, tehát
+a csere értelmes fele megvolt; hiányzott az írás.
+
+**Döntés:**
+
+1. **A kártyák egyetlen írója az `antikolt.sqlite3`** (`CardStore` a `Db`-n keresztül): a `card_upsert`, `card_open`,
+   `card_page_text`, `card_delete`, a konténer-áthelyezés és a profil-import mind oda ír. A tükör (`Db::mirror`,
+   `mirror_card`, `mirror_delete`) megszűnt.
+2. **A `cards.json` export**, nem store: a mag az átvételkor, leálláskor és `db_status(sync: true)`-ra írja ki (atomi
+   cserével), és **egyszer** olvassa: a kapcsoló előtti profil átvételekor. Induláskor nem írja újra: az export
+   származtatott, és a teljes lista sorosítása minden indításnál visszahozná a régi O(n) írást a startup útjára.
+3. **Egyszeri átvétel, séma `0003`-mal:** a `Db::open` megjegyzi, milyen `user_version`-t látott; ha az régi (0–2),
+   akkor a `cards.json` volt az igazság, ezért azt veszi át (a store normalizálásával), és csak **az átvétel után**
+   írja be a `3`-at (`mark_switched`). Ha a JSON olvashatatlan, a mag **eláll** (`StoreError::Legacy`, a fájlnevet
+   kimondva) — nem seedel a felhasználó kártyái fölé. Ha az átvétel **sorokat dob el** (a tükör elmaradt, vagy a
+   dokumentum kiürült), előbb `VACUUM INTO`-val menti az adatbázist (`antikolt.pre-adoption.sqlite3`): a JSON nyer,
+   de a másik másolat nem tűnik el.
+4. **Az üres profil nem seedel újra:** a példakártyák csak akkor jönnek létre, ha az adatbázis fájl új **és** nincs
+   átveendő JSON. Aki minden kártyáját törölte, üres rácsot kap a következő indításnál is.
+5. **A `db_status` a DB ↔ export egyezést méri, soronként** (`checked`, `mismatches`, `verified`). A `sync` a
+   származtatott másolatokat frissíti: az exportot a kártyákból, a konténer/munkaterület referenciatáblákat a
+   JSON-store-okból. Az olvashatatlan export `mismatches = -1` (`not measured`), soha nem „egyezik”.
+6. **A konténerek, munkaterületek és munkamenetek maradnak JSON-dokumentumok** — a saját cseréjük külön szelet;
+   addig a `db_status` referenciatáblái igény szerint frissülnek, és semmi nem olvassa őket.
+
+**Következmény:** (+) egy író van, tehát nincs többé kézi tükrözés és nincs „a darabszám egyezik, mégis elavult sor”
+hibaosztály (ez volt az ADR-066 oka); (+) a `container_delete` áthelyezése egyetlen SQL-`UPDATE`; (+) a JSON megmarad
+emberi szemnek és biztonsági másolatnak, de már nem tévedhet a termék útjára; (−) a `cards.json` az utolsó
+export/leállás után elavulhat — ezt a `db_status` ki is mondja (`verified: no`), a napló pedig rögzíti; (−) a régi
+build egy új fájlt `user_version=3`-mal olvas, de a tükröt írná tovább, tehát a visszafelé ugrás nem támogatott.
+
 ## ADR-068 — A törlés két lépés: előbb felold, aztán töröl (2026-11-19)
 
 **Kontextus:** a `cards.delete` (ADR-061) egy kattintásra törölt. A kártya viszont **nagy kattintási felület**,
@@ -38,6 +73,9 @@ két helyen él (Rust-store és SQL) — a JSON-store kivezetésekor az SQL mara
 
 ## ADR-066 — A tükör soronként követi az írásokat; a lista már csak olvas (2026-11-19)
 
+**Állapot:** elavult — az ADR-069 felváltotta: a kártyáknak egyetlen írója van (az adatbázis), a tükör megszűnt,
+ezért többé nincs mit kézzel tükrözni.
+
 **Kontextus:** az ADR-065 a lista-kérésnél írta újra a teljes tükröt — helyes, de O(n) írás kérésenként.
 
 **Döntés:**
@@ -54,6 +92,9 @@ két helyen él (Rust-store és SQL) — a JSON-store kivezetésekor az SQL mara
 szelet (írás a SQLite-ba, JSON mint export).
 
 ## ADR-065 — A rács listája az adatbázisból jön (a csere második fele) (2026-11-19)
+
+**Állapot:** elavult — az ADR-069 felváltotta: a lista továbbra is az adatbázisból jön, de már nem kell előtte
+tükrözni, mert az írás is oda megy.
 
 **Kontextus:** az ADR-064 megteremtette a tükröt, de a rács továbbra is a JSON-fájlból olvasott. A csere értelme az
 olvasás: amíg a lista a JSON-ból jön, a séma, az indexek és a lekérdezések nem jelentenek semmit.
@@ -72,6 +113,9 @@ lista-kérésnél O(n) írás, ami 5 000 kártyánál pazarlás — tudatos köz
 azzal, hogy az **írás** is az adatbázisba megy, és a JSON csak export lesz.
 
 ## ADR-064 — Az adatbázis megérkezik: SQLite-séma `0002`, tükrözéssel (2026-11-19)
+
+**Állapot:** elavult — az ADR-069 felváltotta: a séma `0003`, és a kártyák írása is az adatbázisba megy, nem
+tükörbe.
 
 **Kontextus:** a négy store JSON-dokumentum, atomikus írással — olvasható és elég 10 kártyához, de **semmire nem
 tud kérdezni**. Minden „mely kártyák vannak ebben a konténerben", „mi jár le", „mennyi van ebben a
@@ -997,11 +1041,12 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-061 | A kezdőlap szerkeszthető: `＋` + soros űrlap, `card_delete` a magban, az új kártya az aktív fülre és az első konténerbe kerül | Elfogadva |
 | ADR-062 | A kártya átnevezése helyben (dupla kattintás, `Enter`/`Esc`), a teljes rekord `cards.upsert`-jével; a mentés a lap-úton (`antikoltRenameCard`) megy | Elfogadva |
 | ADR-063 | A webcím a domain-sávon szerkeszthető (dupla kattintás), a domain a mag válaszából számolódik újra | Elfogadva |
-| ADR-064 | SQLite-store (`rusqlite` bundled, séma `user_version=2`), a JSON-store-ok megmaradnak igazságnak; a `db_status` tükröz és visszaellenőriz | Elfogadva |
-| ADR-065 | A rács listája a SQLite-ból jön (write-through: tükrözés a lista előtt); a JSON marad az író, a hibás eset hangos | Elfogadva |
-| ADR-066 | A tükör soronként követi az írásokat (`mirror_card`/`mirror_delete`), a lista már csak olvas; több-kártyás op külön tükröz | Elfogadva |
+| ADR-064 | SQLite-store (`rusqlite` bundled, séma `user_version=2`), a JSON-store-ok megmaradnak igazságnak; a `db_status` tükröz és visszaellenőriz | Elavult (ADR-069) |
+| ADR-065 | A rács listája a SQLite-ból jön (write-through: tükrözés a lista előtt); a JSON marad az író, a hibás eset hangos | Elavult (ADR-069) |
+| ADR-066 | A tükör soronként követi az írásokat (`mirror_card`/`mirror_delete`), a lista már csak olvas; több-kártyás op külön tükröz | Elavult (ADR-069) |
 | ADR-067 | Az adatbázis a store sorrendjében adja a kártyákat (`ORDER BY last_opened_at_ms DESC, LOWER(title)`), teszt védi | Elfogadva |
 | ADR-068 | Kétlépéses törlés a kártyán (`×` → `Biztos?` → törlés 5 s-en belül); mért és zöld (`delete_armed=ok delete_card=ok add_card_check=ok`) | Elfogadva |
+| ADR-069 | A kártyatár SQLite-first (`user_version=3`): egy író a `antikolt.sqlite3`, a `cards.json` export; egyszeri átvétel a kapcsoló előtti profilból; a `db_status` a DB ↔ export egyezést méri soronként | Elfogadva |
 
 ---
 
