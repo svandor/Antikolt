@@ -175,7 +175,7 @@ fn the_database_is_the_store_and_the_report_proves_the_export() {
 
     let status = service.request("db_status", json!({ "sync": true }));
     assert_eq!(status["ok"], true, "db_status answered: {status}");
-    assert_eq!(status["data"]["schema"], json!(4));
+    assert_eq!(status["data"]["schema"], json!(5));
     assert_eq!(status["data"]["verified"], true);
     // Three cards, four containers, three workspaces and the rules of an empty ledger: every store's export is checked.
     assert_eq!(status["data"]["checked"], json!(11), "every row is checked");
@@ -306,6 +306,67 @@ fn the_container_workspace_and_session_documents_are_adopted_once_and_then_rows(
         "the exports agree after a restart"
     );
     again.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_container_carries_its_proxy_and_permission_policy_through_the_wire() {
+    // ADR-071: a container is a boundary, not a label. The proxy it reaches the network through and the permissions its
+    // pages may ask for are columns, so they survive a restart, travel on the wire and appear in the export.
+    let dir = temp_dir("container-policy");
+    let mut service = Service::start(&dir);
+    let upserted = service.request(
+        "container_upsert",
+        json!({ "container": {
+            "id": "c-fixed", "name": "Fix", "color": "#123456",
+            "proxy_mode": "fixed", "proxy_host": "127.0.0.1", "proxy_port": 9050,
+            "proxy_bypass": "<local>",
+            "permissions": { "geolocation": "allow", "notifications": "deny" }
+        }}),
+    );
+    assert_eq!(
+        upserted["ok"], true,
+        "the policy is a valid container: {upserted}"
+    );
+    assert_eq!(upserted["data"]["container"]["proxy_mode"], json!("fixed"));
+    assert_eq!(upserted["data"]["container"]["proxy_port"], json!(9050));
+    assert_eq!(
+        upserted["data"]["container"]["permissions"]["geolocation"],
+        json!("allow")
+    );
+
+    // A mode that is not one of the three is refused, not quietly turned into "system": the user's traffic must not go
+    // somewhere they did not choose.
+    let refused = service.request(
+        "container_upsert",
+        json!({ "container": { "id": "c-bad", "name": "Rossz", "color": "", "proxy_mode": "socks" } }),
+    );
+    assert_eq!(
+        refused["ok"], false,
+        "an unknown proxy mode is refused: {refused}"
+    );
+    assert_eq!(refused["error"]["code"], "invalid_argument");
+    service.stop();
+
+    let mut again = Service::start(&dir);
+    let listed = again.request("containers_list", json!({}));
+    let entry = listed["data"]["containers"]
+        .as_array()
+        .expect("containers")
+        .iter()
+        .find(|container| container["id"] == "c-fixed")
+        .cloned()
+        .expect("the container survives the restart");
+    assert_eq!(entry["proxy_mode"], json!("fixed"));
+    assert_eq!(entry["proxy_host"], json!("127.0.0.1"));
+    assert_eq!(entry["permissions"]["notifications"], json!("deny"));
+    again.stop();
+
+    let text = std::fs::read_to_string(dir.join("containers.json")).expect("read the export");
+    assert!(
+        text.contains("\"proxy_mode\": \"fixed\"") && text.contains("\"geolocation\": \"allow\""),
+        "the export carries the policy, so a profile moved to another machine keeps it"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

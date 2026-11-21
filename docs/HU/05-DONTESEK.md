@@ -3,6 +3,41 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-071 — A konténer izolációs határ: saját profilkönyvtár, proxy és engedély-politika (2026-11-21)
+
+**Kontextus:** a konténer eddig szűrő és címke volt. A motor minden felületet `nullptr`
+`CefRequestContext`-tel hozott létre, tehát **minden kártya egyetlen cookie-jar-t és cache-t használt** — az ADR-009
+„kártyánként egy partíció" ígéretét a motor soha nem teljesítette, a `partition` kulcs dísz volt. Proxy és
+engedély-politika pedig nem is létezett.
+
+**Döntés:**
+
+1. **Partíciónként saját `CefRequestContext`**, a profil gyökere alatti **egyetlen** könyvtárral
+   (`<user data>\persist_card_<hash>`). A könyvtárat a CEF hozza létre; a ProfileManager csak közvetlenül a gyökér alatti
+   profilt fogadja el (a `partitions\` alkönyvtár „Cannot create profile at path" hibát adott, és a partíció csendben
+   memóriába esett — mérve).
+2. **A konténer a házirend kulcsa**: a felület a `container` mezővel viszi a konténer id-jét, a hozzá tartozó
+   `proxy` / `proxy_bypass` / `permissions` mezőkkel. Két kártya egy konténerből közös proxyt és engedélyeket kap, de
+   soha nem közös cookie-jar-t. A mezők adott esetben hiányozhatnak (additív, `serde(default)`), ezért nem kell
+   protokoll-verziót emelni (proto/README.md kompatibilitási szabálya).
+3. **A proxy a konténer beállítása a magban** (`proxy_mode`: `system`/`direct`/`fixed`, `proxy_host`, `proxy_port`,
+   `proxy_bypass`), séma `0005`. A motor a CEF `proxy` preferenciájába fordítja, a
+   `CefRequestContextHandler::OnRequestContextInitialized` hookban (az első felület létrehozásakor fut, az első kérés
+   előtt); a visszajelzést naplózza, nem nyeli el.
+4. **Az engedélyek konténerenként, alapból megtagadva**: `permissions` = név → `allow`/`deny` (geolocation,
+   notifications, camera, microphone, clipboard, …). Amit a konténer nem nevez meg, azt a motor **megtagadja**
+   (`CefPermissionHandler`), mert nincs prompt-felület, és a néma engedélyezés a legrosszabb kimenet. A `media` külön
+   kulcs, a `CefMediaAccessCallback`-on keresztül.
+5. **A felület még nem szerkeszti a házirendet**: a mezők a magban, a JSON-exportban és a hídon át élnek, a konténer
+   átnevezése a teljes rekordot küldi vissza (különben a házirend elveszne) — a proxy/engedély szerkesztő UI a
+   következő szelet.
+
+**Következmény:** (+) a kártyák tényleg izoláltak, és egy konténer proxyja mögé állítható anélkül, hogy az egész
+böngészőt átállítanánk; (+) a házirend adatbázis-sor, tehát átnevezéskor, újraindításkor és profil-költöztetéskor is
+megmarad; (−) a házirend-szerkesztő hiányzik, tehát a felhasználó ma csak a hídon/profil-importon át állítja be;
+(−) a partíció-profilkönyvtárak a profilban maradnak, és a kártya törlése nem takarítja őket (a törlés a következő,
+takarító szelet dolga).
+
 ## ADR-070 — Mind a négy store SQLite-first (séma 0004) (2026-11-21)
 
 **Kontextus:** az ADR-069 a kártyákat tette adatbázissá, a konténerek, munkaterületek és munkamenetek viszont
@@ -1086,6 +1121,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-068 | Kétlépéses törlés a kártyán (`×` → `Biztos?` → törlés 5 s-en belül); mért és zöld (`delete_armed=ok delete_card=ok add_card_check=ok`) | Elfogadva |
 | ADR-069 | A kártyatár SQLite-first (`user_version=3`): egy író a `antikolt.sqlite3`, a `cards.json` export; egyszeri átvétel a kapcsoló előtti profilból; a `db_status` a DB ↔ export egyezést méri soronként | Részben elavult (6. pont: ADR-070) |
 | ADR-070 | Mind a négy store SQLite-first (`user_version=4`): a négy JSON export; store-onkénti átvétel a `meta` táblában; a ledger teljes sora + egy-soros `session_rules`; a `db_status` mind a négy exportot soronként ellenőrzi | Elfogadva |
+| ADR-071 | A konténer izolációs határ (`user_version=5`): partíciónként saját `CefRequestContext` és profilkönyvtár, konténerenként proxy (`system`/`direct`/`fixed`) és engedély-politika (alapból megtagadva); a házirend adatbázis-sor | Elfogadva |
 
 ---
 

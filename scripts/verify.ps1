@@ -89,6 +89,9 @@ $core = Find-FirstFile @(
 )
 
 $engineChecks = @(
+    # The engine's own container isolation (ADR-071): run against the engine binary, not the shell, because the claim
+    # is about request contexts, the proxy preference and the permission policy — no window is needed to prove it.
+    @{ Name = 'partitiontest'; Args = @('--partitiontest'); Direct = $true },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'lifecycletest'; Args = @('--lifecycletest') },
     @{ Name = 'opentest'; Args = @('--opentest') },
@@ -120,7 +123,18 @@ $engineChecks = @(
 
 foreach ($check in $engineChecks) {
     Write-Host ("=== {0} ===" -f $check.Name) -ForegroundColor Cyan
-    if (-not $shell -or -not $engine) {
+    if (-not $engine) {
+        Add-Result $check.Name $false 'missing antikolt-engine-host.exe'
+        continue
+    }
+    if ($check.Direct) {
+        # Run by the engine itself: the claim is CEF's request-context behaviour, and a shell in the way would only
+        # add a window and a pipe to the thing being measured.
+        & $engine @($check.Args)
+        Add-Result $check.Name ($LASTEXITCODE -eq 0)
+        continue
+    }
+    if (-not $shell) {
         Add-Result $check.Name $false 'missing antikolt-shell.exe or antikolt-engine-host.exe'
         continue
     }

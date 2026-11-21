@@ -21,6 +21,9 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_permission_handler.h"
+#include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
 #include "include/cef_request_handler.h"
 #include "include/cef_scheme.h"
 #include "include/wrapper/cef_message_router.h"
@@ -33,7 +36,7 @@ namespace antikolt {
 
 /// Everything the host needs to know to start.
 struct HostConfig {
-    /// Absolute path of the process's profile/cache directory.
+    /// Absolute path of the process's profile/cache directory, in the canonical Windows form (backslashes).
     std::string user_data_path;
     /// The process executable, used as the CEF subprocess helper path.
     std::string exe_path;
@@ -54,6 +57,19 @@ struct HostConfig {
     /// Placement inside `parent_window`, in physical pixels.
     int origin_x = 0;
     int origin_y = 0;
+    /// The surface's storage partition (ADR-009): one request context — and so one cookie jar and cache directory —
+    /// per partition. This is what makes "two cards never share cookies" true instead of a comment.
+    std::string partition = "persist:default";
+    /// The container the surface belongs to (ADR-071), for the log and for the policy that follows.
+    std::string container;
+    /// Proxy the container reaches the network through: empty = Chromium's own setting, `direct` = no proxy, or
+    /// `scheme://host:port`. Composed and validated by the core, never guessed here.
+    std::string proxy;
+    /// Chromium bypass list, `;`-separated; only used with a fixed proxy.
+    std::string proxy_bypass;
+    /// What the container's pages may ask for: permission name → `allow` / `deny`. Anything not in the map is denied,
+    /// because this host has no prompt surface: a silent grant would be worse than a silent refusal.
+    std::map<std::string, std::string> permissions;
 };
 
 /// State shared by the window procedure, the browser callbacks and the pump loop.
@@ -148,6 +164,69 @@ private:
     DISALLOW_COPY_AND_ASSIGN(EngineApp);
 };
 
+/// Applies one container's proxy to its request context (ADR-071).
+///
+/// CEF has no per-context proxy argument: the context owns a preference tree, and `proxy` is one of its entries. The
+/// handler is the documented hook — `OnRequestContextInitialized` runs before the context is first used, which is the
+/// only moment the setting is both allowed and effective.
+class PartitionContextHandler : public CefRequestContextHandler {
+public:
+    PartitionContextHandler(std::string partition, std::string proxy, std::string bypass)
+        : partition_(std::move(partition)), proxy_(std::move(proxy)), bypass_(std::move(bypass)) {}
+
+    void OnRequestContextInitialized(CefRefPtr<CefRequestContext> context) override;
+
+    /// What the host did with the policy, for the log and for `--partitiontest`.
+    bool proxy_applied() const { return proxy_applied_; }
+    const std::string& proxy_error() const { return proxy_error_; }
+
+private:
+    std::string partition_;
+    std::string proxy_;
+    std::string bypass_;
+    bool proxy_applied_ = false;
+    std::string proxy_error_;
+
+    IMPLEMENT_REFCOUNTING(PartitionContextHandler);
+    DISALLOW_COPY_AND_ASSIGN(PartitionContextHandler);
+};
+
+/// The per-surface permission policy (ADR-071).
+///
+/// Denies by default: there is no prompt UI yet, and a page that is silently granted the camera is worse than a page
+/// that is refused a permission nobody asked for. A container opts in by naming the permission with `allow`.
+class PermissionPolicy : public CefPermissionHandler {
+public:
+    PermissionPolicy() = default;
+    explicit PermissionPolicy(std::map<std::string, std::string> rules)
+        : rules_(std::move(rules)) {}
+
+    bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser,
+                                        CefRefPtr<CefFrame> frame,
+                                        const CefString& requesting_origin,
+                                        uint32_t requested_permissions,
+                                        CefRefPtr<CefMediaAccessCallback> callback) override;
+
+    bool OnShowPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                                uint64_t prompt_id,
+                                const CefString& requesting_origin,
+                                uint32_t requested_permissions,
+                                CefRefPtr<CefPermissionPromptCallback> callback) override;
+
+    /// The policy key for one `cef_permission_request_types_t` bit; empty when the bit is unknown here.
+    static const char* KeyForType(uint32_t type);
+
+    /// Does this rule table grant `key`? The one place a policy means "yes", shared by the handler and the self test,
+    /// so a test cannot pass with a rule the handler would not follow.
+    static bool Permits(const std::map<std::string, std::string>& rules, const char* key);
+
+private:
+    std::map<std::string, std::string> rules_;
+
+    IMPLEMENT_REFCOUNTING(PermissionPolicy);
+    DISALLOW_COPY_AND_ASSIGN(PermissionPolicy);
+};
+
 /// One browser surface's client: lifespan, load, title callbacks and the JS bridge.
 class EngineClient : public CefClient,
                      public CefLifeSpanHandler,
@@ -156,12 +235,14 @@ class EngineClient : public CefClient,
                      public CefRequestHandler,
                      public CefMessageRouterBrowserSide::Handler {
 public:
-    EngineClient(HostState* state, bool quit_on_first_load);
+    EngineClient(HostState* state, bool quit_on_first_load,
+                 std::map<std::string, std::string> permissions = {});
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+    CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return permission_; }
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
@@ -211,6 +292,7 @@ private:
     HostState* state_;
     bool quit_on_first_load_;
     CefRefPtr<CefMessageRouterBrowserSide> router_;
+    CefRefPtr<PermissionPolicy> permission_;
 
     IMPLEMENT_REFCOUNTING(EngineClient);
     DISALLOW_COPY_AND_ASSIGN(EngineClient);
@@ -223,6 +305,15 @@ HWND CreateHostWindow(const HostConfig& config);
 
 /// Run the one-shot engine host. Returns the process exit code.
 int RunEngineHost(const HostConfig& config);
+
+/// The request context for one partition, created once per process and reused (ADR-071). UI thread only.
+CefRefPtr<CefRequestContext> RequestContextForPartition(const HostConfig& config,
+                                                       std::string* created_or_reused);
+
+/// `--partitiontest`: prove — without a window — that two partitions get different request contexts with separate
+/// storage, that a container's proxy reaches the context as a preference, and that the permission policy refuses what
+/// it does not allow. Prints `partition_*` / `proxy_*` / `permission_policy_*` lines. Returns 0 when all pass.
+int RunPartitionSelfTest(const HostConfig& config);
 
 /// Run the protocol server on stdin/stdout (`--stdio`). Returns the process exit code.
 int RunEngineHostServer(const HostConfig& config);

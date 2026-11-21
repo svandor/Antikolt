@@ -19,7 +19,7 @@
 #include <QString>
 #include <QWidget>
 
-class EngineClient;
+#include "engine_client.h"
 
 class LiveCard : public QWidget {
     Q_OBJECT
@@ -29,8 +29,9 @@ public:
     ~LiveCard() override;
 
     /// Bind the card to an engine and create a surface embedded in this widget. Returns false when
-    /// the engine is not running (the card then stays in its empty state).
-    bool attach(EngineClient* engine, const QString& partition);
+    /// the engine is not running (the card then stays in its empty state). `policy` is the container's
+    /// proxy and permission policy (ADR-071); the default is "no container, no policy".
+    bool attach(EngineClient* engine, const QString& partition, const SurfacePolicy& policy = {});
 
     /// Destroy the surface and go back to the empty state. Used by freezing and by card switches.
     void detach();

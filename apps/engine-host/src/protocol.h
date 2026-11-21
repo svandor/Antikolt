@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -40,6 +41,14 @@ struct Command {
     /// JavaScript to evaluate (`eval`), executed in the page's main world.
     std::string script;
     std::string partition;
+    /// The container the surface belongs to (ADR-071) and the policy that comes with it: the proxy the container
+    /// reaches the network through, and the permissions its pages may ask for. The engine keeps the partition as the
+    /// storage key and the container as the policy key — two cards of the same container still get their own cache
+    /// directory (ADR-009), but they share the proxy and the permission rules.
+    std::string container;
+    std::string proxy;
+    std::string proxy_bypass;
+    std::map<std::string, std::string> permissions;
     /// Whether the surface must stay unseen (`create_surface` config `hidden`, ADR-041).
     ///
     /// The background preview worker photographs a page and never shows a window for it: the user is on

@@ -25,6 +25,19 @@
 class QProcess;
 class QTimer;
 
+/// What a surface carries besides its storage partition (ADR-071): the container it belongs to and the policy that comes
+/// with it. The engine keeps the partition as the storage key (its own cookie jar per card) and this as the policy key,
+/// so two cards of one container share the proxy and the permission rules but never a cookie.
+struct SurfacePolicy {
+    QString container;
+    /// Empty = Chromium's own proxy setting, `direct` = no proxy, otherwise `scheme://host:port`.
+    QString proxy;
+    /// Chromium bypass list, `;`-separated; only meaningful with a fixed proxy.
+    QString proxyBypass;
+    /// Permission name → `allow`/`deny`. Omitted names are denied by the engine, because there is no prompt UI yet.
+    QJsonObject permissions;
+};
+
 class EngineClient : public QObject {
     Q_OBJECT
 
@@ -54,7 +67,8 @@ public:
     /// `hidden` keeps a surface the shell creates for itself unseen: the background preview worker
     /// photographs a page and must never put a window over the grid (ADR-041).
     void createSurface(const QString& partition, int width, int height, int deviceScalePercent,
-                       quintptr parentWindow, ReplyHandler handler, bool hidden = false);
+                       quintptr parentWindow, ReplyHandler handler, bool hidden = false,
+                       const SurfacePolicy& policy = {});
     void navigate(qint64 surface, const QString& url, ReplyHandler handler = {});
     /// Place an embedded surface; all values are physical pixels relative to the parent's client area.
     void setBounds(qint64 surface, int x, int y, int width, int height,

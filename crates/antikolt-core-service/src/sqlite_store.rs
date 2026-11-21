@@ -30,8 +30,9 @@ use crate::workspaces::Workspace;
 pub const DB_FILE_NAME: &str = "antikolt.sqlite3";
 
 /// The schema this core writes. Bumped only with a migration; `0001` was the JSON files, `0002` added `page_text`,
-/// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070).
-pub const SCHEMA_VERSION: i64 = 4;
+/// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070),
+/// `0005` the per-container proxy and permission policy (ADR-071).
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// The schema version that means "the cards are SQLite-first" (ADR-069). A file at least this version already has the
 /// cards' adoption behind it, which the `0004` migration records in `meta` (the per-store adoption markers live there,
@@ -137,7 +138,7 @@ impl Db {
                  COMMIT;",
             )?;
         }
-        if self.opened_at_version < SCHEMA_VERSION {
+        if self.opened_at_version < 4 {
             // 0004: the ledger row is what `sessions.json` always held, and the container-wide rules get a one-row
             // table. The 0002 `sessions` table is rebuilt only when it still has the *old* shape: four stores open in a
             // row before any of them writes, and a rebuild on every open would lose the rows an earlier store adopted.
@@ -189,6 +190,32 @@ impl Db {
                 self.mark_adopted("cards")?;
             }
         }
+        if self.opened_at_version < 5 {
+            // 0005: a container is a boundary, not a label (ADR-071), so it carries the proxy it reaches the network
+            // through and the permissions it grants. The columns are added only when they are missing: an ALTER that
+            // ran before a crash must not fail the next start with "duplicate column name".
+            let already_extended: i64 = self.connection.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('containers') WHERE name = 'proxy_mode'",
+                [],
+                |row| row.get(0),
+            )?;
+            if already_extended == 0 {
+                self.connection.execute_batch(
+                    "BEGIN;
+                     ALTER TABLE containers ADD COLUMN proxy_mode    TEXT NOT NULL DEFAULT 'system';
+                     ALTER TABLE containers ADD COLUMN proxy_host    TEXT NOT NULL DEFAULT '';
+                     ALTER TABLE containers ADD COLUMN proxy_port    INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE containers ADD COLUMN proxy_bypass  TEXT NOT NULL DEFAULT '';
+                     ALTER TABLE containers ADD COLUMN permissions   TEXT NOT NULL DEFAULT '{}';
+                     PRAGMA user_version = 5;
+                     COMMIT;",
+                )?;
+            }
+        }
+        // The version is written last, monotonically: a step that crashed half-way leaves an older number behind, so the
+        // next start retries it instead of believing a migration finished because a table happened to exist.
+        self.connection
+            .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
         Ok(())
     }
 
@@ -362,14 +389,24 @@ impl Db {
     /// and a `SELECT` without `ORDER BY` on a table with a TEXT primary key happens to return rowid order, which is not
     /// something a UI order should rest on; `rowid` is named here so a future index cannot reorder the chips.
     pub fn all_containers(&self) -> Result<Vec<Container>, DbError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT id, name, color FROM containers ORDER BY rowid")?;
+        let mut statement = self.connection.prepare(
+            "SELECT id, name, color, proxy_mode, proxy_host, proxy_port, proxy_bypass, permissions
+             FROM containers ORDER BY rowid",
+        )?;
         let rows = statement.query_map([], |row| {
+            let permissions_text: String = row.get(7)?;
             Ok(Container {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
+                proxy_mode: row.get(3)?,
+                proxy_host: row.get(4)?,
+                proxy_port: row.get::<_, i64>(5)? as u16,
+                proxy_bypass: row.get(6)?,
+                // An unreadable policy column is reported as empty instead of failing the whole list: the grants are
+                // additive, and refusing to show the containers because one policy blob is corrupt would be worse than
+                // showing them without the grants (the engine then denies what it does not know).
+                permissions: serde_json::from_str(&permissions_text).unwrap_or_default(),
             })
         })?;
         let mut containers = Vec::new();
@@ -381,9 +418,23 @@ impl Db {
 
     pub fn upsert_container(&self, container: &Container) -> Result<(), DbError> {
         self.connection.execute(
-            "INSERT INTO containers (id, name, color) VALUES (?1, ?2, ?3)
-             ON CONFLICT (id) DO UPDATE SET name = excluded.name, color = excluded.color",
-            params![container.id, container.name, container.color],
+            "INSERT INTO containers (id, name, color, proxy_mode, proxy_host, proxy_port, proxy_bypass,
+                                     permissions)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT (id) DO UPDATE SET
+                 name = excluded.name, color = excluded.color, proxy_mode = excluded.proxy_mode,
+                 proxy_host = excluded.proxy_host, proxy_port = excluded.proxy_port,
+                 proxy_bypass = excluded.proxy_bypass, permissions = excluded.permissions",
+            params![
+                container.id,
+                container.name,
+                container.color,
+                container.proxy_mode,
+                container.proxy_host,
+                i64::from(container.proxy_port),
+                container.proxy_bypass,
+                container_permissions_text(container)
+            ],
         )?;
         Ok(())
     }
@@ -404,8 +455,19 @@ impl Db {
         transaction.execute("DELETE FROM containers", [])?;
         for container in containers {
             transaction.execute(
-                "INSERT INTO containers (id, name, color) VALUES (?1, ?2, ?3)",
-                params![container.id, container.name, container.color],
+                "INSERT INTO containers (id, name, color, proxy_mode, proxy_host, proxy_port, proxy_bypass,
+                                         permissions)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    container.id,
+                    container.name,
+                    container.color,
+                    container.proxy_mode,
+                    container.proxy_host,
+                    i64::from(container.proxy_port),
+                    container.proxy_bypass,
+                    container_permissions_text(container)
+                ],
             )?;
         }
         transaction.commit()?;
@@ -623,6 +685,12 @@ impl Db {
     }
 }
 
+/// The permission policy as one JSON column (`{}` when the container grants nothing). One text column, the same shape
+/// the tags use for the cards: the rules are read and written whole, never queried one by one.
+fn container_permissions_text(container: &Container) -> String {
+    serde_json::to_string(&container.permissions).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// One `INSERT … ON CONFLICT` used by both the single-card write and the whole-list replace, so the two can never
 /// write different columns.
 fn upsert_card_row(connection: &Connection, card: &Card) -> Result<(), rusqlite::Error> {
@@ -719,6 +787,36 @@ mod tests {
         }
     }
 
+    /// A database file as an older build wrote it: the tables of the schema version named in the argument, and nothing
+    /// from the later migrations.
+    fn write_pre_switch_file(dir: &Path, version: i64) {
+        let connection = Connection::open(dir.join(DB_FILE_NAME)).expect("raw open");
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE cards (
+                     id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL,
+                     container TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'unknown',
+                     pinned INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '',
+                     preview_ref TEXT NOT NULL DEFAULT '', last_opened_at_ms INTEGER NOT NULL DEFAULT 0,
+                     page_text TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '',
+                     tags TEXT NOT NULL DEFAULT '[]');
+                 CREATE TABLE containers (id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL);
+                 CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+                 CREATE TABLE sessions (
+                     container_id    TEXT NOT NULL,
+                     origin          TEXT NOT NULL,
+                     state           TEXT NOT NULL,
+                     last_used_at_ms INTEGER NOT NULL DEFAULT 0,
+                     size_cookies    INTEGER NOT NULL DEFAULT 0,
+                     size_bytes      INTEGER NOT NULL DEFAULT 0,
+                     service_workers INTEGER NOT NULL DEFAULT 0,
+                     PRIMARY KEY (container_id, origin)
+                 );
+                 PRAGMA user_version = {version};"
+            ))
+            .expect("write a pre-switch file");
+    }
+
     #[test]
     fn a_fresh_database_migrates_to_the_current_schema_and_remembers_its_adoptions() {
         let dir = temp_dir("migrate");
@@ -753,15 +851,7 @@ mod tests {
     fn a_v2_file_has_no_adoption_markers_and_a_v3_file_already_adopted_the_cards() {
         // A v2 file predates both switches: every store must adopt its own JSON document.
         let dir = temp_dir("v2");
-        {
-            let connection = Connection::open(dir.join(DB_FILE_NAME)).expect("raw open");
-            connection
-                .execute_batch(
-                    "CREATE TABLE cards (id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL);
-                     PRAGMA user_version = 2;",
-                )
-                .expect("write a v2 file");
-        }
+        write_pre_switch_file(&dir, 2);
         let db = Db::open(&dir).expect("open");
         assert_eq!(db.opened_at_version(), 2);
         assert_eq!(db.schema_version().expect("version"), SCHEMA_VERSION);
@@ -774,21 +864,7 @@ mod tests {
         // A v3 file (the card switch, ADR-069) already adopted the cards: the marker must say so, or the new build
         // would read `cards.json` back over newer rows.
         let dir = temp_dir("v3");
-        {
-            let connection = Connection::open(dir.join(DB_FILE_NAME)).expect("raw open");
-            connection
-                .execute_batch(
-                    "CREATE TABLE cards (
-                         id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL,
-                         container TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'unknown',
-                         pinned INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '',
-                         preview_ref TEXT NOT NULL DEFAULT '', last_opened_at_ms INTEGER NOT NULL DEFAULT 0,
-                         page_text TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '',
-                         tags TEXT NOT NULL DEFAULT '[]');
-                     PRAGMA user_version = 3;",
-                )
-                .expect("write a v3 file");
-        }
+        write_pre_switch_file(&dir, 3);
         let db = Db::open(&dir).expect("open");
         assert_eq!(db.opened_at_version(), 3);
         assert!(
@@ -919,6 +995,11 @@ mod tests {
             id: id.to_string(),
             name: format!("Konténer {id}"),
             color: "#123456".to_string(),
+            proxy_mode: "system".to_string(),
+            proxy_host: String::new(),
+            proxy_port: 0,
+            proxy_bypass: String::new(),
+            permissions: std::collections::BTreeMap::new(),
         }
     }
 

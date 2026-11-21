@@ -1736,9 +1736,21 @@ class HomePage {
       this.renderContainerLegend();
       return;
     }
-    const id = edit.mode === "rename" ? edit.id : this.newContainerId(name);
+    // A rename sends the *whole* record back (ADR-071): the container now carries its proxy and permission policy, and
+    // a form that only knows the name would wipe them. The page already holds the table, so the merge is local — no
+    // extra round trip, and a failed save cannot half-write the policy.
+    const existing =
+      edit.mode === "rename"
+        ? (this.containers || []).find((entry) => entry.id === edit.id) || {}
+        : {};
+    const record = {
+      ...existing,
+      id: edit.mode === "rename" ? edit.id : this.newContainerId(name),
+      name,
+      color: existing.color || "",
+    };
     try {
-      const saved = await this.bridge.containers.upsert({ id, name, color: "" });
+      const saved = await this.bridge.containers.upsert(record);
       this.containerEdit = null;
       this.lastContainerError = "";
       await this.reloadContainers(saved);
@@ -2117,6 +2129,10 @@ function withNativeOpen(mock) {
             // The shell cannot see the list, so the pinned flag has to travel with the request: a
             // pinned card is the documented opt-out from automatic hibernation.
             pinned: Boolean(card.pinned),
+            // And so does the container (ADR-071): the shell looks up its proxy and permission policy
+            // in the core before the surface exists, so the first byte of the page already travels
+            // through the container's proxy.
+            container: card.container || "",
           });
         } catch (error) {
           console.warn("openCard failed", error);

@@ -9,8 +9,8 @@
 ```
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
-37 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
-check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+45+5+1+15 Rust-teszt)
+38 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
+check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+47+6+1+15 Rust-teszt)
 ```
 
 A hordozható példány: `scripts/dist.ps1 -Release` → `dist/Antikolt/` (445.6 MB), asztali és Start-menü
@@ -34,7 +34,7 @@ zöld: `ALL SELF TESTS PASSED`** (`$env:ANTIKOLT_ENGINE_DISABLE_GPU='1'`), a `--
 **Varga Sándor (`@svandor`)**, a leírás kétnyelvű. A távoli fán **149 fájl** van, és nincs rajta build-kimenet,
 felhasználói adat vagy titok (`build/`, `dist/`, `target/`, `node_modules/`, `*.exe`, `*.dll`, `*.sqlite3` → egy
 találat sem). A CI az első push után **zöld** lett (`completed success`, 2m12s) — a hosted gépek a Rust-teszteket,
-a JS-parse-t, az SPDX- és linkellenőrzést futtatják; a Qt/CEF binárisokat és a 37 natív öntesztet **nem** (azok
+a JS-parse-t, az SPDX- és linkellenőrzést futtatják; a Qt/CEF binárisokat és a 38 natív öntesztet **nem** (azok
 Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmény a naplóban van, nem badge-ben.
 
 ## Ami mérve kész (és mit bizonyít a teszt)
@@ -59,8 +59,11 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 1. **A kártya szerkesztése** — létrehozás (`＋`, ADR-061), törlés, **átnevezés** (ADR-062) és **webcím-átírás**
    (ADR-063) működik a felületen, mind mérve (`wrote_by=gesture`, `edit_card_url=ok`). Nyitott: a törlés
    megerősítése, és hogy a webcím-váltás után a rögzített oldalszöveg a régi tartalom marad.
-2. **A konténerenkénti engedély/proxy (F3)** — a konténer ma szűrő és címke, nem izolációs határ; ez a következő
-   nagy szelet a tároló-csere (ADR-070, napló 97) után. A négy store már mind SQLite-sor, a négy `*.json` csak export.
+2. **A konténerenkénti engedély/proxy (F3) — a motor fele kész, a felület fele nyitott.** A partíciónkénti
+   `CefRequestContext`, a konténer-proxy és az engedély-politika kész és mérve (`--partitiontest`, ADR-071, napló 98:
+   külön profilkönyvtár, `fixed`/`direct` proxy a kontextuson, ismeretlen engedély megtagadva). A **rácson nincs
+   szerkesztő** a proxyhoz/engedélyekhez: a házirend adatbázis-sor, a hídon (`containers.upsert`) írható; a
+   partíció-profilkönyvtárak takarítása is nyitott.
 3. **OAuth/SSO popup** — a mechanizmus kész (I1-kivétel, 60 s), a bejelentkezési folyamat nincs összekötve.
 4. **A köteg felületi gombja** — a mag, a híd (`profile.export/import`) és a lap-út (`antikoltProfileWrite/Read`)
    kész és mérve (ADR-059/060); a **natív fájlválasztó** hiányzik, mert a harness nem tud dialógust kattintani —
@@ -80,10 +83,11 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 ## Hogyan ellenőrizhető mindez öt perc alatt
 
 ```powershell
-pwsh -File scripts/verify.ps1                 # 37 önteszt + check-repo
+pwsh -File scripts/verify.ps1                 # 38 önteszt + check-repo
 pwsh -File scripts/build.ps1                  # csak a két bináris
 pwsh -File scripts/dist.ps1 -Release          # hordozható példány + parancsikon
 build/apps/desktop-shell/antikolt-shell.exe --profiletest build/apps/engine-host/antikolt-engine-host.exe
 ```
 
 Ha bármelyik lépés nem azt mondja, amit ez a lap állít, **ez a lap a hibás** — a napló és a kapu a valóság.
+

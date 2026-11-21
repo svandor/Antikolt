@@ -216,10 +216,15 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
     CefWindowInfo window_info;
     window_info.SetAsChild(window, CefRect(origin_x, origin_y, width, height));
 
-    CefRefPtr<EngineClient> client_handler(new EngineClient(state, config.quit_on_first_load));
+    CefRefPtr<EngineClient> client_handler(
+        new EngineClient(state, config.quit_on_first_load, config.permissions));
     CefBrowserSettings browser_settings;
+    // The surface's request context: its own storage (cookies, cache, localStorage) and its container's proxy. Passing
+    // nullptr here was the old behaviour — every card shared one global cookie jar and the `partition` key was a
+    // comment (ADR-009 promised isolation the engine never gave). ADR-071 makes it real.
+    CefRefPtr<CefRequestContext> context = RequestContextForPartition(config, nullptr);
     if (!CefBrowserHost::CreateBrowser(window_info, client_handler, url, browser_settings, nullptr,
-                                       nullptr)) {
+                                       context)) {
         Log("[engine-host] CreateBrowser failed\n");
         ForgetWindow(window);
         return false;
@@ -1498,10 +1503,259 @@ bool EngineApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
            router_renderer_->OnProcessMessageReceived(browser, frame, source_process, message);
 }
 
-EngineClient::EngineClient(HostState* state, bool quit_on_first_load)
-    : state_(state), quit_on_first_load_(quit_on_first_load) {
+EngineClient::EngineClient(HostState* state, bool quit_on_first_load,
+                           std::map<std::string, std::string> permissions)
+    : state_(state),
+      quit_on_first_load_(quit_on_first_load),
+      permission_(new PermissionPolicy(std::move(permissions))) {
     router_ = CefMessageRouterBrowserSide::Create(MessageRouterConfig());
     router_->AddHandler(this, /*first=*/false);
+}
+
+// ---- the per-container policy (ADR-071) --------------------------------------------------
+
+bool ApplyProxyPreference(CefRefPtr<CefRequestContext> context,
+                          const std::string& proxy,
+                          const std::string& bypass,
+                          std::string* error);
+
+void PartitionContextHandler::OnRequestContextInitialized(
+    CefRefPtr<CefRequestContext> context) {
+    if (proxy_.empty()) {
+        Log("[engine-host] partition=%s proxy=system\n", partition_.c_str());
+        return;
+    }
+    // A preference the build refuses (a command-line proxy, for instance) is reported, not swallowed: a container
+    // whose traffic silently goes somewhere else would be the worst possible outcome of this feature.
+    proxy_applied_ = ApplyProxyPreference(context, proxy_, bypass_, &proxy_error_);
+    Log("[engine-host] partition=%s proxy=%s applied=%d error=%s\n", partition_.c_str(),
+        proxy_.c_str(), proxy_applied_ ? 1 : 0, proxy_error_.c_str());
+}
+
+const char* PermissionPolicy::KeyForType(uint32_t type) {    // One bit per call: CEF hands the prompt a mask, and the mask is decomposed here so the policy keys stay the
+    // readable names the core validates (ADR-071).
+    switch (type) {
+        case CEF_PERMISSION_TYPE_GEOLOCATION:
+            return "geolocation";
+        case CEF_PERMISSION_TYPE_NOTIFICATIONS:
+            return "notifications";
+        case CEF_PERMISSION_TYPE_CLIPBOARD:
+            return "clipboard";
+        case CEF_PERMISSION_TYPE_MIDI_SYSEX:
+            return "midi";
+        case CEF_PERMISSION_TYPE_CAMERA_STREAM:
+        case CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM:
+            return "camera";
+        case CEF_PERMISSION_TYPE_MIC_STREAM:
+            return "microphone";
+        case CEF_PERMISSION_TYPE_POINTER_LOCK:
+            return "pointer_lock";
+        case CEF_PERMISSION_TYPE_KEYBOARD_LOCK:
+            return "keyboard_lock";
+        case CEF_PERMISSION_TYPE_IDLE_DETECTION:
+            return "idle_detection";
+        case CEF_PERMISSION_TYPE_LOCAL_FONTS:
+            return "local_fonts";
+        case CEF_PERMISSION_TYPE_STORAGE_ACCESS:
+        case CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS:
+            return "storage_access";
+        case CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS:
+            return "file_system_access";
+        case CEF_PERMISSION_TYPE_MULTIPLE_DOWNLOADS:
+            return "multiple_downloads";
+        case CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER:
+            return "protocol_handler";
+#if CEF_API_ADDED(14700)
+        case CEF_PERMISSION_TYPE_SENSORS:
+            return "sensors";
+#endif
+        default:
+            return "";
+    }
+}
+
+bool PermissionPolicy::Permits(const std::map<std::string, std::string>& rules, const char* key) {
+    if (key == nullptr || *key == '\0') {
+        return false;
+    }
+    const auto rule = rules.find(key);
+    return rule != rules.end() && rule->second == "allow";
+}
+
+bool PermissionPolicy::OnRequestMediaAccessPermission(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    const CefString& requesting_origin,
+    uint32_t requested_permissions,
+    CefRefPtr<CefMediaAccessCallback> callback) {
+    const auto rule = Permits(rules_, "media");
+    const bool allow = rule;
+    Log("[engine-host] permission=media origin=%s allow=%d requested=%u\n",
+        requesting_origin.ToString().c_str(), allow ? 1 : 0, requested_permissions);
+    if (!callback) {
+        return true;
+    }
+    if (allow) {
+        callback->Continue(requested_permissions);
+    } else {
+        callback->Cancel();
+    }
+    // Handled either way: the answer is the policy, never a Chromium prompt this host cannot show.
+    return true;
+}
+
+bool PermissionPolicy::OnShowPermissionPrompt(
+    CefRefPtr<CefBrowser> browser,
+    uint64_t prompt_id,
+    const CefString& requesting_origin,
+    uint32_t requested_permissions,
+    CefRefPtr<CefPermissionPromptCallback> callback) {
+    // Every requested bit must be allowed, and an unnamed bit is a denial: "ask the user" is not an answer this host
+    // can give yet, and a silent grant is the one outcome that must never happen by omission.
+    bool allow = requested_permissions != 0;
+    std::string names;
+    for (uint32_t bit = 1; bit != 0 && bit <= requested_permissions; bit <<= 1) {
+        if ((requested_permissions & bit) == 0) {
+            continue;
+        }
+        const char* key = KeyForType(bit);
+        if (key == nullptr || *key == '\0') {
+            allow = false;
+            names += "?";
+            continue;
+        }
+        if (!Permits(rules_, key)) {
+            allow = false;
+        }
+        if (!names.empty()) {
+            names += ",";
+        }
+        names += key;
+    }
+    Log("[engine-host] permission=prompt origin=%s requested=%s allow=%d\n",
+        requesting_origin.ToString().c_str(), names.c_str(), allow ? 1 : 0);
+    if (callback) {
+        callback->Continue(allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY);
+    }
+    return true;
+}
+
+/// One request context per partition (ADR-071). File-scope rather than function-static so the self test can release
+/// them before `CefShutdown`: a CefRefPtr that outlives the library it points into is a crash at exit.
+std::map<std::string, CefRefPtr<CefRequestContext>>& PartitionContexts() {
+    static std::map<std::string, CefRefPtr<CefRequestContext>> contexts;
+    return contexts;
+}
+
+std::map<std::string, CefRefPtr<PartitionContextHandler>>& PartitionHandlers() {
+    static std::map<std::string, CefRefPtr<PartitionContextHandler>> handlers;
+    return handlers;
+}
+
+CefRefPtr<CefRequestContext> RequestContextForPartition(const HostConfig& config,
+                                                        std::string* created_or_reused) {
+    auto& contexts = PartitionContexts();
+    auto& handlers = PartitionHandlers();
+    // UI thread only: the server loop and the one-shot host both call this from the same thread.
+    const std::string key = config.partition.empty() ? "persist:default" : config.partition;
+    const auto found = contexts.find(key);
+    if (found != contexts.end()) {
+        if (created_or_reused != nullptr) {
+            *created_or_reused = "reused";
+        }
+        return found->second;
+    }
+
+    CefRequestContextSettings settings;
+    // The cache directory is the partition's storage: cookies, localStorage, the lot. Sanitised, because the shell's
+    // partition key is a string and a path separator must never turn one partition into another's directory.
+    std::string directory = key;
+    for (char& character : directory) {
+        const bool safe = (character >= 'a' && character <= 'z') ||
+                          (character >= 'A' && character <= 'Z') ||
+                          (character >= '0' && character <= '9') || character == '-' ||
+                          character == '_' || character == '.';
+        if (!safe) {
+            character = '_';
+        }
+    }
+    // Chromium's profile manager expects one directory *directly* under the root for each profile, so the partition's
+    // cache lives beside `Default` — not in a nested `partitions\` folder, which made the profile creation fail
+    // ("Cannot create profile at path") and silently degrade to an in-memory cache (measured). The *separator* matters
+    // just as much: CEF compares the cache path's parent against the profile root with an exact string match
+    // (`cache_path_.DirName() == user_data_dir` in `chrome_browser_context.cc`), so a mixed or forward-slash child
+    // fails that check and falls back to memory. `user_data_path` is already normalised to backslashes at the entry
+    // point, so the child is written with the same separator and the check holds.
+    const char separator = config.user_data_path.find('\\') != std::string::npos ? '\\' : '/';
+    const std::string cache = config.user_data_path + std::string(1, separator) + directory;
+    // A partition directory that exists but holds nothing is not a profile: Chromium refuses to adopt it ("Cannot
+    // create profile at path") and silently falls back to memory, so an empty leftover — from a crash, or from an
+    // earlier build of this very feature — is removed before the context is created. A directory with content is
+    // never touched: that is the card's session.
+    {
+        std::error_code probe_error;
+        const std::filesystem::path partition_dir(cache);
+        if (std::filesystem::is_directory(partition_dir, probe_error)) {
+            const auto entries =
+                std::filesystem::directory_iterator(partition_dir, probe_error);
+            if (!probe_error && entries == std::filesystem::directory_iterator()) {
+                std::error_code remove_error;
+                std::filesystem::remove(partition_dir, remove_error);
+                Log("[engine-host] partition=%s empty_profile_removed=%d\n", key.c_str(),
+                    remove_error ? 0 : 1);
+            }
+        }
+    }
+    CefString(&settings.cache_path).FromString(cache);
+    settings.persist_session_cookies = true;
+    CefRefPtr<PartitionContextHandler> handler(new PartitionContextHandler(key, config.proxy, config.proxy_bypass));
+    CefRefPtr<CefRequestContext> context = CefRequestContext::CreateContext(settings, handler);
+    if (!context) {
+        Log("[engine-host] partition=%s context=FAILED\n", key.c_str());
+        return nullptr;
+    }
+    contexts[key] = context;
+    handlers[key] = handler;
+    if (created_or_reused != nullptr) {
+        *created_or_reused = "created";
+    }
+    Log("[engine-host] partition=%s container=%s context=created cache=%s\n", key.c_str(),
+        config.container.c_str(), CefString(&settings.cache_path).ToString().c_str());
+    return context;
+}
+
+/// Put one container's proxy into a request context as a preference. Returns whether CEF accepted it, and fills
+/// `error` when it did not.
+///
+/// One helper for the production path (`OnRequestContextInitialized`) and for `--partitiontest`: a test that wrote the
+/// preference its own way would prove the test, not the product.
+bool ApplyProxyPreference(CefRefPtr<CefRequestContext> context,
+                          const std::string& proxy,
+                          const std::string& bypass,
+                          std::string* error) {
+    if (!context) {
+        if (error != nullptr) {
+            *error = "no context";
+        }
+        return false;
+    }
+    CefRefPtr<CefDictionaryValue> proxy_dict = CefDictionaryValue::Create();
+    const bool direct = proxy == "direct";
+    proxy_dict->SetString("mode", direct ? "direct" : "fixed_servers");
+    if (!direct) {
+        proxy_dict->SetString("server", proxy);
+        if (!bypass.empty()) {
+            proxy_dict->SetString("bypass_list", bypass);
+        }
+    }
+    CefRefPtr<CefValue> value = CefValue::Create();
+    value->SetDictionary(proxy_dict);
+    CefString cef_error;
+    const bool applied = context->SetPreference("proxy", value, cef_error);
+    if (error != nullptr) {
+        *error = cef_error.ToString();
+    }
+    return applied;
 }
 
 /// The script the shell installs on the home page. It is deliberately small and lives in the engine,
@@ -2165,6 +2419,16 @@ int RunEngineHostServer(const HostConfig& config) {
                 // The process-wide `--hidden` flag still applies to everything; a single surface may ask
                 // for the same effect (the preview worker photographs a page and never shows a window).
                 surface_config.hidden = config.hidden || command.hidden;
+                // The surface's storage partition and its container's policy (ADR-009/ADR-071). The partition is the
+                // storage key; the container is the policy key. Both travel per surface, so two cards of one container
+                // share the proxy and the permission rules but never a cookie jar.
+                if (!command.partition.empty()) {
+                    surface_config.partition = command.partition;
+                }
+                surface_config.container = command.container;
+                surface_config.proxy = command.proxy;
+                surface_config.proxy_bypass = command.proxy_bypass;
+                surface_config.permissions = command.permissions;
 #ifdef _WIN32
                 // Embedding is a window-handle feature: without a parent the host owns the window.
                 surface_config.parent_window =
@@ -2251,6 +2515,142 @@ int RunEngineHostServer(const HostConfig& config) {
     Log("[engine-host] shutting down\n");
     CefShutdown();
     return 0;
+}
+
+/// `--partitiontest`: the isolation the product promises, measured without a window (ADR-071).
+///
+/// Three claims, all of them behavioural rather than bookkeeping:
+///   * two partitions get two request contexts that do not share storage — this is what "two cards never share
+///     cookies" (ADR-009) means, and the engine used to pass `nullptr` and share everything;
+///   * the same partition gets its first context back, so a card that is closed and reopened keeps its login;
+///   * a container's proxy is accepted by CEF as a request-context preference, and reads back.
+/// The permission policy is checked on the policy object itself: the handler's decision is pure data, so the CEF
+/// callback plumbing is the only part left for a page-level test.
+int RunPartitionSelfTest(const HostConfig& config) {
+    CefRefPtr<EngineApp> app(new EngineApp());
+    if (!InitializeCef(config, app)) {
+        std::printf("partition_contexts=FAILED (cef did not initialise)\n");
+        std::fflush(stdout);
+        return 1;
+    }
+    int failures = 0;
+    auto check = [&failures](const char* name, bool ok) {
+        std::printf("%s=%s\n", name, ok ? "ok" : "FAILED");
+        std::fflush(stdout);
+        if (!ok) {
+            ++failures;
+        }
+    };
+
+    HostConfig first = config;
+    first.partition = "persist:probe-one";
+    first.container = "c-one";
+    first.proxy = "socks5://127.0.0.1:1080";
+    first.proxy_bypass = "<local>";
+    HostConfig second = config;
+    second.partition = "persist:probe-two";
+    second.container = "c-two";
+    second.proxy = "direct";
+
+    std::string state_one;
+    std::string state_two;
+    CefRefPtr<CefRequestContext> context_one = RequestContextForPartition(first, &state_one);
+    CefRefPtr<CefRequestContext> context_two = RequestContextForPartition(second, &state_two);
+    check("partition_contexts", context_one != nullptr && context_two != nullptr);
+    if (!context_one || !context_two) {
+        return 1;
+    }
+    check("partition_created", state_one == "created" && state_two == "created");
+    check("partition_distinct",
+          !context_one->IsSame(context_two) && !context_one->IsSharingWith(context_two));
+    const std::string cache_one = context_one->GetCachePath().ToString();
+    const std::string cache_two = context_two->GetCachePath().ToString();
+    check("partition_cache_paths",
+          !cache_one.empty() && !cache_two.empty() && cache_one != cache_two);
+    std::printf("partition_cache=%s|%s\n", cache_one.c_str(), cache_two.c_str());
+
+    // A card that is closed and reopened must not lose its cookies: the same key hands back the same context.
+    std::string state_again;
+    CefRefPtr<CefRequestContext> context_again = RequestContextForPartition(first, &state_again);
+    check("partition_reused",
+          context_again != nullptr && context_again->IsSame(context_one) &&
+              state_again == "reused");
+
+    // The permission policy: named grants only, everything else denied.
+    const std::map<std::string, std::string> rules = {{"geolocation", "allow"},
+                                                      {"notifications", "deny"}};
+    check("permission_policy_allow", PermissionPolicy::Permits(rules, "geolocation"));
+    check("permission_policy_deny", !PermissionPolicy::Permits(rules, "notifications"));
+    check("permission_policy_unknown", !PermissionPolicy::Permits(rules, "clipboard"));
+    check("permission_policy_unnamed", !PermissionPolicy::Permits(rules, ""));
+
+    // The proxy is applied when the context is *initialised*, which CEF does when the first browser is created
+    // against it — not when `CreateContext` returns. So the test creates one hidden surface per partition and asks
+    // the context afterwards: the same path the product takes, not a shortcut around it.
+    PreparePreviewDirectory(config);
+    const char* probe_url =
+        "data:text/html,%3Ctitle%3Apartition%3C/title%3E%3Ch1%3Eprobe%3C/h1%3E";
+    std::unique_ptr<HostState> surface_one(new HostState());
+    std::unique_ptr<HostState> surface_two(new HostState());
+    const bool created_one = CreateSurface(first, surface_one.get(), probe_url);
+    const bool created_two = CreateSurface(second, surface_two.get(), probe_url);
+    check("partition_surfaces", created_one && created_two);
+    if (created_one && created_two) {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(kLoadTimeoutSeconds);
+        while ((!surface_one->load_finished.load() || !surface_two->load_finished.load()) &&
+               !surface_one->load_failed.load() && !surface_two->load_failed.load()) {
+            PumpWindowsMessages();
+            CefDoMessageLoopWork();
+            std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
+            if (std::chrono::steady_clock::now() > deadline) {
+                break;
+            }
+        }
+        check("partition_pages_loaded",
+              surface_one->load_finished.load() && surface_two->load_finished.load());
+    }
+    auto proxy_of = [](CefRefPtr<CefRequestContext> context) {
+        std::string mode;
+        std::string server;
+        CefRefPtr<CefValue> stored = context ? context->GetPreference("proxy") : nullptr;
+        if (stored && stored->GetType() == VTYPE_DICTIONARY && stored->GetDictionary()) {
+            mode = stored->GetDictionary()->GetString("mode").ToString();
+            server = stored->GetDictionary()->GetString("server").ToString();
+        }
+        return std::make_pair(mode, server);
+    };
+    const auto proxy_one = proxy_of(context_one);
+    const auto proxy_two = proxy_of(context_two);
+    std::printf("proxy_one=%s|%s proxy_two=%s|%s\n", proxy_one.first.c_str(),
+                proxy_one.second.c_str(), proxy_two.first.c_str(), proxy_two.second.c_str());
+    check("proxy_fixed_applied",
+          proxy_one.first == "fixed_servers" && proxy_one.second == first.proxy);
+    check("proxy_direct_applied", proxy_two.first == "direct");
+
+    // A profile that never reached the disk would forget every login: the cache directories must hold CEF's own files.
+    auto populated = [](const std::string& path) {
+        std::error_code listing_error;
+        const auto entries =
+            std::filesystem::directory_iterator(std::filesystem::path(path), listing_error);
+        return !listing_error && entries != std::filesystem::directory_iterator();
+    };
+    check("partition_profiles_on_disk", populated(cache_one) && populated(cache_two));
+
+    if (created_one) {
+        DrainAndCloseBrowser(surface_one.get());
+    }
+    if (created_two) {
+        DrainAndCloseBrowser(surface_two.get());
+    }
+    std::printf("permission_policy=%s\n", failures == 0 ? "ok" : "FAILED");
+    std::fflush(stdout);
+    // Every browser is gone, so the contexts can be released before CEF shuts down: the maps are file-scope exactly
+    // so this release is possible before the library goes away.
+    PartitionContexts().clear();
+    PartitionHandlers().clear();
+    CefShutdown();
+    return failures == 0 ? 0 : 1;
 }
 
 }  // namespace antikolt

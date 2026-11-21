@@ -71,7 +71,7 @@ gracefully when a capability is missing, and must never assume one:
 |---|---|---|---|
 | `hello` | core → engine | `protocol`, `engine` | `welcome` |
 | `ping` | both | — | `reply` |
-| `create_surface` | core → engine | `config` (`partition`, `viewport`, `proxy`, `is_primary`, `parent_window`, `hidden`) | `reply` (`{surface}`) |
+| `create_surface` | core → engine | `config` (`partition`, `viewport`, `proxy`, `proxy_bypass`, `container`, `permissions`, `is_primary`, `parent_window`, `hidden`) | `reply` (`{surface}`) |
 | `destroy_surface` | core → engine | `surface` | `reply` |
 | `navigate` | core → engine | `surface`, `url`, `opts` | `reply` |
 | `set_bounds` | core → engine | `surface`, `bounds` (`x`, `y`, `width`, `height`) | `reply` (`{applied}`) |
@@ -168,6 +168,13 @@ Rules that come with it:
   it never destroys the parent.
 - `parent_window` is additive and optional: an omitted key means `0`, so a peer from before embedding
   keeps working without a protocol bump. That is the compatibility rule for this file as a whole.
+- `partition` is the surface's **storage**: the engine creates one `CefRequestContext` (and one profile
+  directory beside the default profile) per key, so two partitions never share cookies or a cache
+  (ADR-009/ADR-071). `container`, `proxy`, `proxy_bypass` and `permissions` are the surface's **policy**:
+  the container's proxy (`""` = system, `direct`, or `scheme://host:port`) becomes the context's `proxy`
+  preference, and `permissions` (`{"geolocation":"allow"}`) is what the container grants — anything not
+  named is denied, because this host has no permission prompt. All four keys are additive and optional,
+  so an older shell sends none of them and keeps the previous behaviour.
 
 ## The JS bridge (home page → shell)
 

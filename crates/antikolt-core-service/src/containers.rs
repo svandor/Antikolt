@@ -16,19 +16,49 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
+
 use crate::persist::write_json_atomic;
 use crate::sqlite_store::{Db, DbError};
 
 /// The export beside the database: the legacy document, and the readable copy this build keeps.
 pub const FILE_NAME: &str = "containers.json";
 
-/// One container, as the grid draws it.
+/// How many per-permission overrides one container may carry. The set of Chromium permissions is small; a cap keeps a
+/// pasted blob from becoming a policy (the same reasoning as the tag cap, ADR-055).
+pub const MAX_PERMISSION_RULES: usize = 32;
+
+/// The three ways a container can reach the network (ADR-071).
+pub const PROXY_MODES: [&str; 3] = ["system", "direct", "fixed"];
+
+fn default_proxy_mode() -> String {
+    "system".to_string()
+}
+
+/// One container: the colour-coded grouping a card belongs to, and — since ADR-071 — a real boundary rather than a
+/// label. The fields after `color` say how *this* container reaches the network and which permissions it grants, which
+/// is what a container is for: separating identities is meaningless if they share one cookie jar and one proxy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Container {
     pub id: String,
     pub name: String,
     /// `#RRGGBB`; the page uses it for the dot and the legend chip.
     pub color: String,
+    /// `system` (Chromium's own setting), `direct` (no proxy) or `fixed` (`proxy_host:proxy_port`).
+    #[serde(default = "default_proxy_mode")]
+    pub proxy_mode: String,
+    #[serde(default)]
+    pub proxy_host: String,
+    #[serde(default)]
+    pub proxy_port: u16,
+    /// Chromium's bypass list syntax, `;`-separated (`*.local;<local>`). Only the `fixed` mode uses it.
+    #[serde(default)]
+    pub proxy_bypass: String,
+    /// Per-permission policy: a Chromium permission id (`geolocation`, `notifications`, `media`,
+    /// `clipboard_read_write`, …) mapped to `allow` or `deny`. Anything not listed is **never granted**: this host has no
+    /// prompt surface yet, so the honest default is denial, and the user opts a container in instead of out.
+    #[serde(default)]
+    pub permissions: BTreeMap<String, String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -51,29 +81,27 @@ pub enum ContainerError {
     Db(#[from] DbError),
 }
 
+/// One container with the defaults the product ships: no proxy of its own, no permission granted.
+fn seed(id: &str, name: &str, color: &str) -> Container {
+    Container {
+        id: id.to_string(),
+        name: name.to_string(),
+        color: color.to_string(),
+        proxy_mode: default_proxy_mode(),
+        proxy_host: String::new(),
+        proxy_port: 0,
+        proxy_bypass: String::new(),
+        permissions: BTreeMap::new(),
+    }
+}
+
 /// The containers the product ships with. Ids are stable and referenced by the cards that already exist.
 fn seed_containers() -> Vec<Container> {
     vec![
-        Container {
-            id: "c-work".to_string(),
-            name: "Munka".to_string(),
-            color: "#2F6FEB".to_string(),
-        },
-        Container {
-            id: "c-private".to_string(),
-            name: "Magán".to_string(),
-            color: "#2E9E5B".to_string(),
-        },
-        Container {
-            id: "c-money".to_string(),
-            name: "Pénz".to_string(),
-            color: "#E3A008".to_string(),
-        },
-        Container {
-            id: "c-dev".to_string(),
-            name: "Fejlesztés".to_string(),
-            color: "#8E44AD".to_string(),
-        },
+        seed("c-work", "Munka", "#2F6FEB"),
+        seed("c-private", "Magán", "#2E9E5B"),
+        seed("c-money", "Pénz", "#E3A008"),
+        seed("c-dev", "Fejlesztés", "#8E44AD"),
     ]
 }
 
@@ -115,6 +143,11 @@ impl ContainerStore {
     /// Create or replace one container. The id must look like a container id (`c-…`) and the name must not be
     /// empty; a colour that is not `#RRGGBB` is replaced instead of rejected, because a wrong colour is a
     /// cosmetic bug and a rejected save is a lost rename.
+    ///
+    /// The proxy and permission fields are the ones that must *not* be guessed at (ADR-071): a proxy mode that is not
+    /// one of the three, or a half-typed host, is refused, because silently falling back to "system" would send a
+    /// container's traffic somewhere the user did not choose. A permission value that is not `allow`/`deny` is refused
+    /// for the same reason.
     pub fn upsert(&mut self, mut container: Container) -> Result<Container, ContainerError> {
         container.id = container.id.trim().to_string();
         if !container.id.starts_with("c-") || container.id.len() < 3 {
@@ -131,8 +164,73 @@ impl ContainerStore {
         if !is_color(&container.color) {
             container.color = color_for(&container.id);
         }
+        container.proxy_mode = container.proxy_mode.trim().to_ascii_lowercase();
+        if !PROXY_MODES.contains(&container.proxy_mode.as_str()) {
+            return Err(ContainerError::Invalid(format!(
+                "ismeretlen proxy-mód: `{}` (system, direct vagy fixed)",
+                container.proxy_mode
+            )));
+        }
+        container.proxy_host = container.proxy_host.trim().to_string();
+        container.proxy_bypass = container.proxy_bypass.trim().to_string();
+        if container.proxy_mode == "fixed" {
+            if container.proxy_host.is_empty() || container.proxy_host.contains(char::is_whitespace)
+            {
+                return Err(ContainerError::Invalid(
+                    "fix proxyhoz kell egy hoszt (szóköz nélkül)".to_string(),
+                ));
+            }
+            if container.proxy_port == 0 {
+                return Err(ContainerError::Invalid(
+                    "fix proxyhoz kell egy port (1–65535)".to_string(),
+                ));
+            }
+        } else {
+            // The host and port only mean something in `fixed` mode; carrying them in another mode would be a value
+            // that is displayed but not used.
+            container.proxy_host.clear();
+            container.proxy_port = 0;
+            container.proxy_bypass.clear();
+        }
+        container.permissions = Self::normalise_permissions(container.permissions)?;
         self.db.upsert_container(&container)?;
         Ok(container)
+    }
+
+    /// Trim, lowercase and cap the permission rules; refuse a value that is not a decision.
+    ///
+    /// Kept next to the write, not in the caller: a policy that says `maybe` would be stored and then interpreted as
+    /// "not allow" by the engine, which is a rule the user never chose.
+    fn normalise_permissions(
+        permissions: BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, ContainerError> {
+        let mut normalised = BTreeMap::new();
+        for (key, value) in permissions {
+            let key = key.trim().to_ascii_lowercase();
+            if key.is_empty()
+                || key.len() > 48
+                || !key
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || "_-.".contains(character))
+            {
+                return Err(ContainerError::Invalid(format!(
+                    "érvénytelen engedély-név: `{key}`"
+                )));
+            }
+            let value = value.trim().to_ascii_lowercase();
+            if value != "allow" && value != "deny" {
+                return Err(ContainerError::Invalid(format!(
+                    "az engedély értéke `allow` vagy `deny` lehet (`{key}` = `{value}`)"
+                )));
+            }
+            if normalised.len() >= MAX_PERMISSION_RULES && !normalised.contains_key(&key) {
+                return Err(ContainerError::Invalid(format!(
+                    "egy konténer legfeljebb {MAX_PERMISSION_RULES} engedély-szabályt hordozhat"
+                )));
+            }
+            normalised.insert(key, value);
+        }
+        Ok(normalised)
     }
 
     /// Remove one container. Refuses while a card still points at it: deleting the group of a card that the
@@ -259,12 +357,22 @@ mod tests {
         dir
     }
 
-    fn custom(id: &str, name: &str) -> Container {
+    /// A container with every field spelled out, so a test changes only what it is about.
+    fn container(id: &str, name: &str) -> Container {
         Container {
             id: id.to_string(),
             name: name.to_string(),
             color: "#123456".to_string(),
+            proxy_mode: default_proxy_mode(),
+            proxy_host: String::new(),
+            proxy_port: 0,
+            proxy_bypass: String::new(),
+            permissions: BTreeMap::new(),
         }
+    }
+
+    fn custom(id: &str, name: &str) -> Container {
+        container(id, name)
     }
 
     #[test]
@@ -346,9 +454,9 @@ mod tests {
         let mut store = ContainerStore::open(&dir).expect("open");
         let created = store
             .upsert(Container {
-                id: "c-proba".to_string(),
                 name: "  Próba  ".to_string(),
                 color: String::new(),
+                ..container("c-proba", "")
             })
             .expect("create");
         assert_eq!(created.name, "Próba", "the name is trimmed");
@@ -358,9 +466,9 @@ mod tests {
         // A rename keeps the id and can change the colour; the id itself is the identity.
         store
             .upsert(Container {
-                id: "c-proba".to_string(),
                 name: "Próba 2".to_string(),
                 color: "#123456".to_string(),
+                ..container("c-proba", "")
             })
             .expect("rename");
         let renamed = store
@@ -389,31 +497,29 @@ mod tests {
         let mut store = ContainerStore::open(&dir).expect("open");
         assert!(store
             .upsert(Container {
-                id: "nincs-elotag".to_string(),
-                name: "x".to_string(),
                 color: String::new(),
+                ..container("nincs-elotag", "x")
             })
             .is_err());
         assert!(store
             .upsert(Container {
-                id: "c-".to_string(),
-                name: "x".to_string(),
                 color: String::new(),
+                ..container("c-", "x")
             })
             .is_err());
         assert!(store
             .upsert(Container {
-                id: "c-ures".to_string(),
                 name: "   ".to_string(),
                 color: String::new(),
+                ..container("c-ures", "")
             })
             .is_err());
         // A colour that is not `#RRGGBB` is a cosmetic problem, not a reason to lose the save.
         let saved = store
             .upsert(Container {
-                id: "c-szin".to_string(),
                 name: "Szín".to_string(),
                 color: "piros".to_string(),
+                ..container("c-szin", "")
             })
             .expect("save");
         assert!(is_color(&saved.color));
@@ -422,6 +528,136 @@ mod tests {
             color_for("c-szin"),
             "the colour is deterministic"
         );
+        drop(store);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_proxy_is_stored_and_a_half_typed_one_is_refused() {
+        let dir = temp_dir("proxy");
+        let mut store = ContainerStore::open(&dir).expect("open");
+
+        // The default is "the container inherits Chromium's own setting" — never a guess at a proxy.
+        let plain = container("c-web", "Web");
+        assert_eq!(plain.proxy_mode, "system");
+
+        let fixed = store
+            .upsert(Container {
+                proxy_mode: "FIXED".to_string(),
+                proxy_host: " 127.0.0.1 ".to_string(),
+                proxy_port: 9050,
+                proxy_bypass: " *.local;<local> ".to_string(),
+                ..container("c-tor", "Tor")
+            })
+            .expect("a fixed proxy is a valid setting");
+        assert_eq!(fixed.proxy_mode, "fixed", "the mode is normalised");
+        assert_eq!(fixed.proxy_host, "127.0.0.1", "the host is trimmed");
+        assert_eq!(fixed.proxy_port, 9050);
+        assert_eq!(fixed.proxy_bypass, "*.local;<local>");
+
+        // A mode that is not one of the three, or a fixed proxy with a missing host/port, is refused: silently falling
+        // back to the system proxy would send traffic where the user did not choose.
+        assert!(store
+            .upsert(Container {
+                proxy_mode: "socks".to_string(),
+                ..container("c-rossz", "Rossz")
+            })
+            .is_err());
+        assert!(store
+            .upsert(Container {
+                proxy_mode: "fixed".to_string(),
+                proxy_host: "  ".to_string(),
+                proxy_port: 9050,
+                ..container("c-ures-host", "Üres")
+            })
+            .is_err());
+        assert!(store
+            .upsert(Container {
+                proxy_mode: "fixed".to_string(),
+                proxy_host: "proxy.local".to_string(),
+                proxy_port: 0,
+                ..container("c-ures-port", "Üres")
+            })
+            .is_err());
+
+        // In `direct` mode the host and port do not mean anything, so they are not carried along.
+        let direct = store
+            .upsert(Container {
+                proxy_mode: "direct".to_string(),
+                proxy_host: "proxy.local".to_string(),
+                proxy_port: 8080,
+                proxy_bypass: "*.local".to_string(),
+                ..container("c-direct", "Közvetlen")
+            })
+            .expect("direct is a valid setting");
+        assert_eq!(direct.proxy_host, "");
+        assert_eq!(direct.proxy_port, 0);
+        assert_eq!(direct.proxy_bypass, "");
+
+        // And it survives a restart, because it is a column now.
+        drop(store);
+        let reopened = ContainerStore::open(&dir).expect("reopen");
+        let stored = reopened
+            .list()
+            .expect("list")
+            .into_iter()
+            .find(|entry| entry.id == "c-tor")
+            .expect("still there");
+        assert_eq!(stored.proxy_mode, "fixed");
+        assert_eq!(stored.proxy_host, "127.0.0.1");
+        assert_eq!(stored.proxy_port, 9050);
+        drop(reopened);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_permissions_are_decisions_and_anything_else_is_refused() {
+        let dir = temp_dir("permissions");
+        let mut store = ContainerStore::open(&dir).expect("open");
+        let mut rules = BTreeMap::new();
+        rules.insert(" Geolocation ".to_string(), " ALLOW ".to_string());
+        rules.insert("notifications".to_string(), "deny".to_string());
+        let saved = store
+            .upsert(Container {
+                permissions: rules,
+                ..container("c-sziget", "Sziget")
+            })
+            .expect("save");
+        assert_eq!(
+            saved.permissions.get("geolocation").map(String::as_str),
+            Some("allow"),
+            "keys and values are normalised"
+        );
+        assert_eq!(
+            saved.permissions.get("notifications").map(String::as_str),
+            Some("deny")
+        );
+        // Everything else is missing from the map on purpose: the engine grants only what is named here.
+        assert_eq!(saved.permissions.len(), 2);
+
+        for (key, value) in [
+            ("geolocation", "maybe"),
+            ("", "allow"),
+            ("rossz nev", "allow"),
+        ] {
+            let mut rules = BTreeMap::new();
+            rules.insert(key.to_string(), value.to_string());
+            let result = store.upsert(Container {
+                permissions: rules,
+                ..container("c-sziget", "Sziget")
+            });
+            assert!(
+                result.is_err(),
+                "`{key}` = `{value}` is not a decision and must be refused"
+            );
+        }
+
+        // A container with no rules keeps Chromium's own behaviour (which this host answers with a denial, because
+        // there is no prompt surface yet) — the empty map is a policy, not a missing value.
+        let plain = store
+            .upsert(container("c-ures-szabaly", "Üres szabály"))
+            .expect("save");
+        assert!(plain.permissions.is_empty());
         drop(store);
         fs::remove_dir_all(dir).ok();
     }

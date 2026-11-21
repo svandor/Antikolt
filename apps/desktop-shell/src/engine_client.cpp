@@ -155,7 +155,7 @@ void EngineClient::handshake() {
 
 void EngineClient::createSurface(const QString& partition, int width, int height,
                                  int deviceScalePercent, quintptr parentWindow,
-                                 ReplyHandler handler, bool hidden) {
+                                 ReplyHandler handler, bool hidden, const SurfacePolicy& policy) {
     QJsonObject viewport;
     viewport.insert(QStringLiteral("width"), width);
     viewport.insert(QStringLiteral("height"), height);
@@ -165,6 +165,20 @@ void EngineClient::createSurface(const QString& partition, int width, int height
     config.insert(QStringLiteral("partition"), partition);
     config.insert(QStringLiteral("viewport"), viewport);
     config.insert(QStringLiteral("is_primary"), true);
+    // The container and its policy (ADR-071). Additive, optional keys: an engine that does not know them ignores them,
+    // which is what keeps this wire change compatible (proto/README.md rule).
+    if (!policy.container.isEmpty()) {
+        config.insert(QStringLiteral("container"), policy.container);
+    }
+    if (!policy.proxy.isEmpty()) {
+        config.insert(QStringLiteral("proxy"), policy.proxy);
+    }
+    if (!policy.proxyBypass.isEmpty()) {
+        config.insert(QStringLiteral("proxy_bypass"), policy.proxyBypass);
+    }
+    if (!policy.permissions.isEmpty()) {
+        config.insert(QStringLiteral("permissions"), policy.permissions);
+    }
     if (hidden) {
         // Additive, optional field (ADR-041): the engine keeps the surface's own window unseen, which is
         // what lets a preview be photographed while the user is looking at the grid.

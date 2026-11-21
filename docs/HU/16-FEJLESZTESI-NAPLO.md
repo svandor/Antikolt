@@ -3,6 +3,84 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-21 (kilencvennyolcadik szelet) — a konténer izolációs határ: profilkönyvtár, proxy, engedélyek (ADR-071)
+
+Az eddigi legnagyobb csendben maradt hiány: az ADR-009 „kártyánként egy partíció" ígéretét a motor **soha nem
+teljesítette** — minden felület `nullptr` `CefRequestContext`-tel jött létre, tehát minden kártya egyetlen cookie-jar-t
+használt, a `partition` kulcs pedig dísz volt. Ez a szelet ezt megszünteti, és a konténert valódi határrá teszi:
+saját profil, saját proxy, saját engedély-politika.
+
+### Mi változott
+
+- `apps/engine-host/src/host.cpp`: `RequestContextForPartition` — partíciónként egy `CefRequestContext`, a CEF profilja
+  a gyökér alatti **egyetlen** könyvtárban (`<user data>\persist_card_<hash>`); a `partitions\` alkönyvtár
+  „Cannot create profile at path" hibát adott és a partíció csendben memóriába esett (mérve), ezért a lapos elrendezés
+  maradt. `CreateSurface` most ezt a kontextust adja a `CreateBrowser`-nek, nem `nullptr`-t.
+- `PartitionContextHandler` + `ApplyProxyPreference`: a konténer proxyja (`system`/`direct`/`fixed`) a CEF `proxy`
+  preferenciájába fordul, a `OnRequestContextInitialized` hookban (az első felület létrehozásakor). A visszajelzés a
+  naplóba megy (`applied=1`, hiba esetén `error=…`), nem tűnik el.
+- `PermissionPolicy` (`CefPermissionHandler`): `media` a `CefMediaAccessCallback`-on, minden más a
+  `CefPermissionPromptCallback`-on; **amit a konténer nem engedélyez, azt megtagadja**, mert nincs prompt-felület.
+  A bitmask → név leképezés (geolocation, notifications, camera, microphone, clipboard, midi, …) egy helyen van, és a
+  `Permits` az egyetlen „igen".
+- `protocol.h/.cpp`: a `create_surface` config új, additív mezői `container`, `proxy`, `proxy_bypass`, `permissions`;
+  a régi shell ezek nélkül is működik (proto/README.md szabálya).
+- `home/app.js`: az `openCard` viszi a kártya `container` mezőjét; a konténer átnevezése a **teljes rekordot** küldi
+  vissza (a házirend nem veszhet el egy átnevezéstől).
+- `main_window.cpp` / `live_card.*` / `engine_client.*`: a felület létrehozása előtt a shell a magból kéri a konténer
+  táblát, és a `SurfacePolicy`-t (container, proxy, bypass, permissions) a `create_surface`-szel adja át.
+- `crates/antikolt-core-service`: séma **`0005`** — a `containers` tábla új oszlopai (`proxy_mode`, `proxy_host`,
+  `proxy_port`, `proxy_bypass`, `permissions`), `ALTER TABLE` csak akkor, ha az oszlop hiányzik (egy félbehagyott
+  migráció nem bukhat el „duplicate column"-nal); validáció: ismeretlen mód, félkész fix proxy és nem-döntés
+  engedély-érték elutasítva; a `system`/`direct` mód nem hordoz hostot/portot.
+- `apps/engine-host/src/main.cpp`: új `--partitiontest`, és a `scripts/verify.ps1` közvetlenül a motorral futtatja
+  (a `Direct` jelölés), mert az állítás a CEF request-context viselkedéséről szól, nem a shellről.
+
+### Bizonyíték (mért)
+
+```
+cargo test (offline)     → 147 teszt zöld: 78 + 47 + 6 + 1 + 15
+check-repo               → ALL CHECKS PASSED
+--partitiontest (a shell valódi profilgyökerével, ferde elválasztóval) → EXIT=0:
+  user_data=C:\Users\info\AppData\Roaming\Antikolt Project\Antikolt\engine
+  partition_cache=…\engine\persist_probe-one|…\engine\persist_probe-two
+  partition_contexts=ok partition_created=ok partition_distinct=ok partition_cache_paths=ok
+  partition_reused=ok partition_surfaces=ok partition_pages_loaded=ok
+  proxy_one=fixed_servers|socks5://127.0.0.1:1080  proxy_two=direct|
+  proxy_fixed_applied=ok proxy_direct_applied=ok partition_profiles_on_disk=ok
+  permission_policy=ok
+  (a két profilkönyvtár nem üres: 54–54 bejegyzés)
+```
+
+**A blokker valódi oka (mérve, nem a HANDOFF-F3 „üres gyökér" elmélete):** a CEF `ChromeBrowserContext::InitializeAsync`
+pontos string-egyezéssel hasonlítja össze a partíció cache-útvonalának szülőjét a profilmenedzser
+`user_data_dir`-jával (`cache_path_.DirName() == user_data_dir`). A shell a Qt `QStandardPaths` miatt **ferde
+elválasztóval** adja át a profilt (`…/engine`), a Chromium viszont a gyökeret **visszaperjelre** normalizálja — a ferde
+elválasztós gyerek így elbukja az egyezést, és a CEF kiírja a `chrome_browser_context.cc:116` `Cannot create profile at
+path` hibát, majd **csendben memóriába esik** (a `--partitiontest` `partition_profiles_on_disk=FAILED` volt). A javítás:
+`main.cpp` a beolvasás után egyszer visszaperjelre normalizálja a `user_data_path`-t — ettől a partíció-profilok tényleg
+a lemezre kerülnek, és a `previews/`/`snapshots/`/`screenshots/` is a szülőben marad (a `cef-root` alkönyvtár-elmélet
+**megcáfolva** és visszavonva).
+
+**A kapu viszont NEM zöld (regresszió, kimondva):** `scripts/verify.ps1` (szoftveres renderelés, `ANTIKOLT_ENGINE_DISABLE_GPU=1`)
+13 ellenőrzéssel bukik el (900 s alatt): a lemezre író profilokkal a shell-tesztek `file://` és `http://127.0.0.1`
+betöltése **elakad** (`load_status`/`home_loaded` soha nem jön). Az izolált `wipetest`-tel bizonyítva: a **kiinduló
+ágon** (memóriába eső profil) `load_status=200 … wipe=ok EXIT=0`, a javítással (lemezre író profil) a probe-oldal soha
+nem tölt be (`wipe=FAILED`). Ez a `data:`-URL-eket nem érinti (a `--partitiontest` zöld), de a shell-tesztek széles körét
+igen — a lemezre író profilú CEF-út ezen a builden a nem-`data:` betöltést blokkolja. Ez **termékdöntést** igényel
+(HANDOFF-F3 3. opció), ezért a `main` érintetlen marad.
+
+### Ami nyitva maradt (kimondva)
+
+- **Nincs felületi szerkesztő** a proxyhoz és az engedélyekhez: a házirend adatbázis-sor és a hídon át írható
+  (`containers.upsert`), de a rácson nincs mezője — a következő szelet.
+- A partíció-profilkönyvtárak megmaradnak a kártya törlése után is; a takarítás (méret, törlés) nyitott.
+- **A lemezre író profilok a shell-teszteket elakasztják** (13 bukó ellenőrzés a `verify.ps1`-ben, lásd fent): a
+  `file://`/`http://127.0.0.1` betöltés nem jön vissza, amit a kiinduló ág (memóriába eső profil) mellett mérve
+  bizonyítottam. A döntés — konténerenkénti motorfolyamat (HANDOFF-F3 2. opció) vagy a bejelentkezés a
+  cookie/munkamenet-ledgerbe (3. opció) — a következő lépés.
+- Az OAuth/SSO popup továbbra is a következő nagy szelet; a hardveres GPU-út a VECTOR-on nyitott.
+
 ## 2026-11-21 (kilencvenhetedik szelet) — mind a négy store SQLite-first (ADR-070)
 
 A 96. szelet a kártyákat tette adatbázissá; a konténerek, munkaterületek és munkamenetek JSON-dokumentumok maradtak, a

@@ -170,6 +170,26 @@ bool ParseCommand(const std::string& payload, Command* out) {
     CefRefPtr<CefDictionaryValue> config = GetDictionary(message, "config");
     if (config) {
         out->partition = GetString(config, "partition");
+        // The container and its policy (ADR-071): additive, optional keys, so a shell that does not send them keeps
+        // the old single-context behaviour instead of a protocol bump (the same rule `parent_window` follows).
+        out->container = GetString(config, "container");
+        out->proxy = GetString(config, "proxy");
+        out->proxy_bypass = GetString(config, "proxy_bypass");
+        if (CefRefPtr<CefValue> permissions = config->GetValue("permissions")) {
+            if (permissions->GetType() == VTYPE_DICTIONARY) {
+                CefRefPtr<CefDictionaryValue> rules = permissions->GetDictionary();
+                CefDictionaryValue::KeyList keys;
+                if (rules && rules->GetKeys(keys)) {
+                    for (const auto& key : keys) {
+                        const std::string name = key.ToString();
+                        const std::string value = rules->GetString(key).ToString();
+                        if (!name.empty() && (value == "allow" || value == "deny")) {
+                            out->permissions[name] = value;
+                        }
+                    }
+                }
+            }
+        }
         // A 64-bit native handle travels as a JSON number; JSON numbers are doubles, so the value is
         // exact only up to 2^53. Windows handles fit comfortably below that, and a handle above it
         // is rejected rather than silently truncated into someone else's window.

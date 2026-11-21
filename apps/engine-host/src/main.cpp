@@ -114,6 +114,7 @@ void printUsage() {
         "\n"
         "  --stdio                 run as the shell's protocol server on stdin/stdout\n"
         "  --selftest              start CEF, load a data: URL, report and exit (CI uses this)\n"
+        "  --partitiontest         prove the per-partition contexts, proxy and permission policy (ADR-071)\n"
         "  --url <url>             open this page in a window (one-shot mode)\n"
         "  --size <WxH>            window client size (default 1280x800)\n"
         "  --hidden                create the window without showing it\n"
@@ -153,6 +154,7 @@ int main(int argc, char* argv[]) {
     config.user_data_path = DefaultUserDataPath();
 
     bool selftest = false;
+    bool partition_test = false;
     bool stdio_mode = false;
     bool user_data_explicit = false;
 
@@ -160,6 +162,8 @@ int main(int argc, char* argv[]) {
         const char* arg = argv[i];
         if (std::strcmp(arg, "--selftest") == 0) {
             selftest = true;
+        } else if (std::strcmp(arg, "--partitiontest") == 0) {
+            partition_test = true;
         } else if (std::strcmp(arg, "--stdio") == 0) {
             stdio_mode = true;
         } else if (std::strcmp(arg, "--version") == 0) {
@@ -195,7 +199,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (selftest) {
+    if (selftest || partition_test) {
         config.hidden = true;
         config.quit_on_first_load = true;
         config.start_url = kSelftestUrl;
@@ -204,14 +208,28 @@ int main(int argc, char* argv[]) {
             // leftover instance or a previous run fights over Chromium's cache locks and the result
             // depends on history instead of on the code.
             const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+            const char* prefix = partition_test ? "antikolt-partition-" : "antikolt-selftest-";
             config.user_data_path =
                 (std::filesystem::temp_directory_path() /
-                 ("antikolt-selftest-" + std::to_string(static_cast<long long>(stamp))))
+                 (prefix + std::to_string(static_cast<long long>(stamp))))
                     .string();
         }
         printVersion();
         std::printf("selftest=1\n");
     }
+
+    // The shell hands the profile path over with forward slashes (`QStandardPaths`), but CEF's Chrome runtime stores
+    // its profile root as a canonical backslash path and compares each request context's cache path against it with an
+    // exact string match (`cache_path_.DirName() == user_data_dir` in `chrome_browser_context.cc`). A forward-slash
+    // child then fails that check — "Cannot create profile at path" — and silently falls back to in-memory storage, so
+    // the profile is normalised to backslashes here, once, before anything derives a child path from it.
+#ifdef _WIN32
+    for (char& character : config.user_data_path) {
+        if (character == '/') {
+            character = '\\';
+        }
+    }
+#endif
 
     std::error_code error;
     std::filesystem::create_directories(config.user_data_path, error);
@@ -220,9 +238,12 @@ int main(int argc, char* argv[]) {
                      config.user_data_path.c_str(), error.message().c_str());
         return 1;
     }
-    if (selftest) {
+    if (selftest || partition_test) {
         std::printf("user_data=%s\n", config.user_data_path.c_str());
         std::fflush(stdout);
+    }
+    if (partition_test) {
+        return antikolt::RunPartitionSelfTest(config);
     }
 
     const int exit_code =

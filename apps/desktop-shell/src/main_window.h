@@ -275,6 +275,11 @@ private:
     /// The card waiting to be shown once a surface exists.
     QString pending_url_;
     QString pending_title_;
+    /// The container the card waiting to be shown belongs to (ADR-071). The page sends it with `open_card`, and the
+    /// policy is read from the core's container table — the shell never invents a proxy or grants a permission.
+    QString pending_container_;
+    /// The container table the policy comes from, refreshed when a card opens (id → the core's record).
+    QHash<QString, QJsonObject> container_policies_;
     /// The session ledger panel and its table (created on first use).
     QDockWidget* sessions_dock_ = nullptr;
     QTableWidget* sessions_table_ = nullptr;

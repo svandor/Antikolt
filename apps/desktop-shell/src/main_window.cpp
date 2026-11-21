@@ -878,16 +878,37 @@ void MainWindow::ensureSurface() {
         }
         return;
     }
-    // One partition per card: two cards never share cookies or storage by accident (ADR-009).
+    // One partition per card: two cards never share cookies or storage by accident (ADR-009). The partition is the
+    // storage; the container is the policy (ADR-071) — its proxy and the permissions its pages may ask for.
+    const bool opening_home = pending_url_.isEmpty();
     const QString partition =
-        pending_url_.isEmpty()
+        opening_home
             ? QStringLiteral("persist:home")
             : QStringLiteral("persist:card_%1")
                   .arg(QString::fromLatin1(
                       QCryptographicHash::hash(pending_url_.toUtf8(), QCryptographicHash::Sha1)
                           .toHex()
                           .left(12)));
-    if (!card_->attach(engine_, partition)) {
+    SurfacePolicy policy;
+    if (!opening_home) {
+        policy.container = pending_container_;
+        const QJsonObject entry = container_policies_.value(pending_container_);
+        const QString mode = entry.value(QStringLiteral("proxy_mode")).toString();
+        const QString host = entry.value(QStringLiteral("proxy_host")).toString();
+        const int port = entry.value(QStringLiteral("proxy_port")).toInt();
+        if (mode == QStringLiteral("direct")) {
+            policy.proxy = QStringLiteral("direct");
+        } else if (mode == QStringLiteral("fixed") && !host.isEmpty() && port > 0) {
+            // A host that already names a scheme (`socks5://…`) is honoured as written; a bare host is an HTTP proxy,
+            // which is what a `host:port` setting means everywhere else.
+            policy.proxy = host.contains(QStringLiteral("://"))
+                               ? host
+                               : QStringLiteral("http://%1:%2").arg(host).arg(port);
+            policy.proxyBypass = entry.value(QStringLiteral("proxy_bypass")).toString();
+        }
+        policy.permissions = entry.value(QStringLiteral("permissions")).toObject();
+    }
+    if (!card_->attach(engine_, partition, policy)) {
         setStatus(QStringLiteral("a kártya nem tudott felületet kérni a motortól"));
     }
 }
@@ -960,7 +981,27 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
         pending_pinned_ = args.value(QStringLiteral("pinned")).toBool();
         pending_card_id_ = args.value(QStringLiteral("id")).toString();
         current_card_id_ = pending_card_id_;
-        openCard(url, title);
+        pending_container_ = args.value(QStringLiteral("container")).toString();
+        // The container's proxy and permission policy (ADR-071) are the core's data, so the table is fetched before the
+        // surface exists: the engine gets the policy with the first navigation instead of a second, unprotected one.
+        const auto open = [this, url, title] { openCard(url, title); };
+        if (pending_container_.isEmpty() || core_ == nullptr || !core_->isRunning()) {
+            open();
+        } else {
+            core_->containersList([this, open](const QJsonObject& reply, const QString& error) {
+                if (error.isEmpty()) {
+                    for (const QJsonValue& value :
+                         reply.value(QStringLiteral("containers")).toArray()) {
+                        const QJsonObject entry = value.toObject();
+                        const QString id = entry.value(QStringLiteral("id")).toString();
+                        if (!id.isEmpty()) {
+                            container_policies_.insert(id, entry);
+                        }
+                    }
+                }
+                open();
+            });
+        }
         // An acknowledgement, not a result: the card loads asynchronously and the page follows it
         // through the grid. Answered anyway, so a page that awaits never hangs.
         replyToPage(request, QJsonObject{{QStringLiteral("opened"), true}});

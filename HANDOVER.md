@@ -17,7 +17,7 @@ currently blocks the full test suite on the machine the work was built on.
 
 The remaining work is handed to **DeepSeek V4.1 Flash**. The deep native debugging is already **closed** on
 DeepSeek V4 Pro (dev logs 90–94: the CEF-GPU flag, the stdio handle, the use-after-free, and the text-mode
-frame corruption). Flash takes the rest: the container permission/proxy + OAuth work, the remaining product features,
+frame corruption). Flash takes the rest: the OAuth work — the container proxy/permission engine half landed in ADR-071 (dev log 98), the remaining product features,
 and release engineering. The **whole store switch is done**: all four stores are SQLite-first with JSON exports
 (ADR-069 for the cards, ADR-070 for the rest, dev logs 96–97).
 
@@ -103,7 +103,7 @@ got a reply and its JS blocked the renderer. Fixed with `_setmode(_fileno(stdout
    and the single miss is `capturetest`, which passes in isolation in 2.3 s (`capture=ok capture_size=ok`) — so it is a
    load-related transient timeout under the full gate, not a defect. A newer NVIDIA driver or forcing the Intel iGPU is
    still worth trying; the software-rendering gate is already fully green.
-2. **Container-level permission/proxy (F3)**, then the OAuth popup — the last two structural pieces before a release
+2. **Container-level permission/proxy (F3) — the engine half is done** (ADR-071, dev log 98): per-partition `CefRequestContext`, container proxy, permission policy denied by default, measured by `--partitiontest`. The settings editor on the grid is still missing, and so is the OAuth popup — the last two structural pieces before a release
    story (SignPath signing is a human step; see `docs/HU/20-ALASAS.md`). The store swap that used to be item 2 is
    **done** (ADR-070, dev log 97): all four stores are SQLite-first with JSON exports and a per-store adoption marker.
 
@@ -208,3 +208,4 @@ utána a kiadás (SignPath, emberi lépés).
 store-nak egy írója van** (ADR-069/070: az adatbázis; a négy `*.json` export, és a `meta` jelölő után soha nem
 importálunk vissza belőlük); a dokumentumok számait a kapu naplójából kell venni; és
 **PowerShell `Replace`-csel előállított szöveget soha nem szabad vakon kiírni** — ez a projektben háromszor törölt fájlt.
+

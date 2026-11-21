@@ -762,7 +762,7 @@ mod tests {
         );
         assert_eq!(
             store.schema_version().expect("schema"),
-            4,
+            crate::sqlite_store::SCHEMA_VERSION,
             "the migration brings the file to the current schema; the adoption markers say what is still to adopt"
         );
 

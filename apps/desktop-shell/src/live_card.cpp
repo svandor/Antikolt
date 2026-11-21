@@ -31,7 +31,7 @@ QSize LiveCard::physicalSize() const {
     return QSize(static_cast<int>(width() * ratio), static_cast<int>(height() * ratio));
 }
 
-bool LiveCard::attach(EngineClient* engine, const QString& partition) {
+bool LiveCard::attach(EngineClient* engine, const QString& partition, const SurfacePolicy& policy) {
     if (engine == nullptr || !engine->isRunning()) {
         return false;
     }
@@ -60,7 +60,8 @@ bool LiveCard::attach(EngineClient* engine, const QString& partition) {
             bounds_pushed_once_ = false;
             pushBounds();
             emit surfaceAttached(surface_);
-        });
+        },
+        /*hidden=*/false, policy);
     return true;
 }
 
