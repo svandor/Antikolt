@@ -59,7 +59,8 @@ EngineClient::~EngineClient() {
     }
 }
 
-bool EngineClient::start(const QString& executablePath, const QString& profilePath, bool hidden) {
+bool EngineClient::start(const QString& executablePath, const QString& profilePath, bool hidden,
+                         const QString& previewsPath) {
     if (process_ != nullptr) {
         return true;
     }
@@ -81,6 +82,10 @@ bool EngineClient::start(const QString& executablePath, const QString& profilePa
     QStringList arguments{QStringLiteral("--stdio"), QStringLiteral("--user-data-dir"), profilePath};
     if (hidden) {
         arguments.append(QStringLiteral("--hidden"));
+    }
+    if (!previewsPath.isEmpty()) {
+        arguments.append(QStringLiteral("--previews-dir"));
+        arguments.append(previewsPath);
     }
     process_->start(executablePath, arguments);
     if (!process_->waitForStarted(5000)) {

@@ -818,6 +818,20 @@ class HomePage {
     this.lastCardError = "";
     // The armed `×` of the two-step delete (ADR-068): `{id, at}` while a card waits for its second click.
     this.armedDelete = null;
+
+    // The card-open click is delegated on the document and registered here, in the constructor, not in
+    // `bindEvents()`. `bindEvents()` runs at the *end* of the async `start()` (after the workspace,
+    // container and card lists arrive), so a click that landed before it was silently dropped — the grid
+    // had already rendered the cards, but the listener that opens them did not exist yet (measured: the
+    // hibernation self test clicked at a fixed delay and the open never fired). `this.bridge` is set
+    // above, and `cards.open` checks `window.antikoltNative` at call time, so registering early is safe.
+    document.addEventListener("click", (event) => {
+      const card = event.target.closest?.(".card, antikolt-card");
+      if (!card) return;
+      const host = card.closest("antikolt-card");
+      const id = host?.card?.id;
+      if (id) this.bridge.cards.open(id, { mode: "live" });
+    });
   }
 
 
@@ -1148,17 +1162,6 @@ class HomePage {
     document.addEventListener("antikolt-workspace", (event) =>
       this.setWorkspace(event.detail?.id, event.detail?.workspace),
     );
-
-    // Delegated on the document on purpose: the pinned row lives outside `#viewport`, so a listener
-    // bound there never saw a click on a pinned card — the most prominent cards were inert. One
-    // listener for both places, and the `closest` check decides what was hit.
-    document.addEventListener("click", (event) => {
-      const card = event.target.closest?.(".card, antikolt-card");
-      if (!card) return;
-      const host = card.closest("antikolt-card");
-      const id = host?.card?.id;
-      if (id) this.bridge.cards.open(id, { mode: "live" });
-    });
   }
 
   onResize() {

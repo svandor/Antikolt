@@ -119,6 +119,7 @@ void printUsage() {
         "  --size <WxH>            window client size (default 1280x800)\n"
         "  --hidden                create the window without showing it\n"
         "  --user-data-dir <path>  CEF cache/profile directory\n"
+        "  --previews-dir <path>   where antikolt://blob/ serves from (default: <user-data-dir>/previews)\n"
         "  --version               print CEF and Chromium versions\n"
         "  --help                  this text\n");
 }
@@ -192,6 +193,12 @@ int main(int argc, char* argv[]) {
             }
             config.user_data_path = argv[++i];
             user_data_explicit = true;
+        } else if (std::strcmp(arg, "--previews-dir") == 0) {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "--previews-dir needs a value\n");
+                return 2;
+            }
+            config.previews_path = argv[++i];
         } else {
             std::fprintf(stderr, "unknown argument: %s\n", arg);
             printUsage();
@@ -225,6 +232,11 @@ int main(int argc, char* argv[]) {
     // the profile is normalised to backslashes here, once, before anything derives a child path from it.
 #ifdef _WIN32
     for (char& character : config.user_data_path) {
+        if (character == '/') {
+            character = '\\';
+        }
+    }
+    for (char& character : config.previews_path) {
         if (character == '/') {
             character = '\\';
         }

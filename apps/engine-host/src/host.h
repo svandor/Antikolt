@@ -38,6 +38,10 @@ namespace antikolt {
 struct HostConfig {
     /// Absolute path of the process's profile/cache directory, in the canonical Windows form (backslashes).
     std::string user_data_path;
+    /// Where `antikolt://blob/…` serves from. Empty means `<user_data_path>/previews`. The shell sets this
+    /// explicitly so every engine process — the home engine and each container engine — serves the *same*
+    /// shared preview directory, not its own profile's subdirectory.
+    std::string previews_path;
     /// The process executable, used as the CEF subprocess helper path.
     std::string exe_path;
     /// Page to load (one-shot mode).

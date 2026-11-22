@@ -47,8 +47,11 @@ public:
     explicit EngineClient(QObject* parent = nullptr);
     ~EngineClient() override;
 
-    /// Start the engine host in server mode. `profilePath` becomes its cache directory.
-    bool start(const QString& executablePath, const QString& profilePath, bool hidden = false);
+    /// Start the engine host in server mode. `profilePath` becomes its cache directory. `previewsPath`,
+    /// when non-empty, is where this engine serves `antikolt://blob/…` from (the shared preview
+    /// directory, so every engine process serves the same previews).
+    bool start(const QString& executablePath, const QString& profilePath, bool hidden = false,
+               const QString& previewsPath = QString());
 
     bool isRunning() const;
 

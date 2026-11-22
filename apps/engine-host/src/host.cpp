@@ -1316,7 +1316,9 @@ constexpr const char* kPreviewHost = "blob";
 
 /// Make the preview directory exist. A missing one is not an error; an empty scheme answer would be.
 void PreparePreviewDirectory(const HostConfig& config) {
-    g_previews_path = config.user_data_path + "\\previews";
+    g_previews_path = config.previews_path.empty()
+                          ? config.user_data_path + "\\previews"
+                          : config.previews_path;
     std::error_code error;
     std::filesystem::create_directories(g_previews_path, error);
     if (error) {
@@ -1713,6 +1715,13 @@ CefRefPtr<CefRequestContext> RequestContextForPartition(const HostConfig& config
     if (!context) {
         Log("[engine-host] partition=%s context=FAILED\n", key.c_str());
         return nullptr;
+    }
+    // The preview scheme handler must be registered on *this* context too: a custom request context does not
+    // inherit the global `CefRegisterSchemeHandlerFactory`, so a page in a partition could not load
+    // `antikolt://blob/…` otherwise (measured: the preview generation check's image load failed).
+    if (!g_previews_path.empty()) {
+        context->RegisterSchemeHandlerFactory(kPreviewScheme, kPreviewHost,
+                                              new PreviewHandlerFactory());
     }
     contexts[key] = context;
     handlers[key] = handler;

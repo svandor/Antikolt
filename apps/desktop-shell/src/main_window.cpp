@@ -851,7 +851,10 @@ EngineClient* MainWindow::engineFor(const QString& container) {
     wireEngine(client);
     const QString profile = engine_profile_ + QStringLiteral("/containers/") + directory;
     QDir().mkpath(profile);
-    if (!client->start(enginePath, profile)) {
+    // Every engine serves the *same* shared preview directory, so a preview the shell wrote is
+    // reachable from a card's container engine too (antikolt://blob/ is otherwise engine-local).
+    if (!client->start(enginePath, profile, /*hidden=*/false,
+                       engine_profile_ + QStringLiteral("/previews"))) {
         delete client;
         return nullptr;
     }
@@ -874,7 +877,7 @@ void MainWindow::startEngine() {
     engine_profile_ = profile;
     QDir().mkpath(profile + QStringLiteral("/previews"));
 
-    if (!engine_->start(enginePath, profile)) {
+    if (!engine_->start(enginePath, profile, /*hidden=*/false, profile + QStringLiteral("/previews"))) {
         return;
     }
     setStatus(QStringLiteral("motor indítása: %1").arg(enginePath));
@@ -1816,9 +1819,12 @@ bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url, c
 
     // Its own partition (`persist:preview`), so a preview never touches a card's cookies, and hidden, so a
     // window never appears over the grid while the user is reading it (ADR-041, point 2).
-    worker_engine_->createSurface(
+    // The engine pointer is captured by value: `finishPreviewWorker` nulls `worker_engine_`, and the reply
+    // can arrive after the deadline already fired — reading the member then would dereference null.
+    EngineClient* engine = worker_engine_;
+    engine->createSurface(
         QStringLiteral("persist:preview"), kWorkerViewportWidth, kWorkerViewportHeight, 100, 0,
-        [this](const QJsonObject& reply, const QString& error) {
+        [this, engine](const QJsonObject& reply, const QString& error) {
             if (!error.isEmpty()) {
                 finishPreviewWorker(
                     false, QStringLiteral("a munkás felülete nem jött létre: %1").arg(error));
@@ -1836,21 +1842,21 @@ bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url, c
             if (worker_state_ == antikolt::PreviewWorker::Idle) {
                 // The job was abandoned while the engine was creating the surface (the user opened a card):
                 // the fresh surface belongs to nobody, so it is destroyed here instead of leaking.
-                worker_engine_->destroySurface(created, nullptr);
+                engine->destroySurface(created, nullptr);
                 return;
             }
             worker_surface_ = created;
-            worker_engine_->navigate(created, worker_page_url_,
-                                     [this](const QJsonObject&, const QString& navigate_error) {
-                                         if (navigate_error.isEmpty()) {
-                                             return;
-                                         }
-                                         if (worker_state_ == antikolt::PreviewWorker::Loading) {
-                                             finishPreviewWorker(
-                                                 false,
-                                                 QStringLiteral("navigáció: %1").arg(navigate_error));
-                                         }
-                                     });
+            engine->navigate(created, worker_page_url_,
+                             [this](const QJsonObject&, const QString& navigate_error) {
+                                 if (navigate_error.isEmpty()) {
+                                     return;
+                                 }
+                                 if (worker_state_ == antikolt::PreviewWorker::Loading) {
+                                     finishPreviewWorker(
+                                         false,
+                                         QStringLiteral("navigáció: %1").arg(navigate_error));
+                                 }
+                             });
         },
         /*hidden=*/true);
     return true;
