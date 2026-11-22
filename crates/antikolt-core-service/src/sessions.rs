@@ -22,7 +22,7 @@ use antikolt_core::session::{
 use serde::{Deserialize, Serialize};
 
 use crate::persist::write_json_atomic;
-use crate::sqlite_store::{Db, DbError};
+use crate::sqlite_store::{Db, DbError, UserPrefs};
 
 /// The export beside the database: the legacy ledger document, and the readable copy this build keeps.
 pub const FILE_NAME: &str = "sessions.json";
@@ -128,6 +128,19 @@ impl SessionStore {
         }
         self.db.set_session_rules(&rules)?;
         Ok(rules)
+    }
+
+    /// The user preferences: one row of live-card cap and hibernation timings. A profile that never chose anything
+    /// gets the factory defaults.
+    pub fn user_prefs(&self) -> Result<UserPrefs, SessionError> {
+        Ok(self.db.user_prefs()?)
+    }
+
+    /// Replace the one row of user preferences, after checking them.
+    pub fn set_user_prefs(&mut self, prefs: UserPrefs) -> Result<UserPrefs, SessionError> {
+        prefs.validate().map_err(SessionError::Rules)?;
+        self.db.set_user_prefs(&prefs)?;
+        Ok(prefs)
     }
 
     /// Rows ordered by origin, so the panel and the reply are stable (SQL does the ordering).

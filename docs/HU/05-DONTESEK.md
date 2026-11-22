@@ -38,6 +38,20 @@ megmarad; (−) a házirend-szerkesztő hiányzik, tehát a felhasználó ma csa
 (−) a partíció-profilkönyvtárak a profilban maradnak, és a kártya törlése nem takarítja őket (a törlés a következő,
 takarító szelet dolga).
 
+## ADR-072 — Felhasználói beállítások (`UserPrefs`) SQLite-ban (séma 0006) (2026-11-22)
+
+**Kontextus:** az ADR-070 mind a négy store-t SQLite-first tette (séma 0004): kártyák, konténerek, munkaterületek, munkamenetek. Hiányzik a felhasználói szintű beállítások tárolása: a `max_live_cards` (egyidejűleg élő kártyák száma), az `idle_hibernate_ms` (inaktív kártya hibernálásának ideje) és a `cold_card_ms` (mikortól hideg egy kártya). Eddig nem volt perzisztens állapotuk, és nem volt IPC-olvasás/írás rájuk.
+
+**Döntés:**
+
+1. **Új tábla: `user_prefs`**, egyetlen sorral (`id = 1`, `CHECK (id = 1)`), séma **`0006`** (`PRAGMA user_version = 6`). A migráció egy `CREATE TABLE IF NOT EXISTS` a meglévő v5 fájl fölé; a `DEFAULT` értékek akkor érvényesülnek, ha sosem lett beállítva, a seed sor pedig `ON CONFLICT (id) DO NOTHING`-gal íródik.
+2. **`UserPrefs` struct** (`sqlite_store.rs`): `max_live_cards: u32 = 5`, `idle_hibernate_ms: u64 = 600_000` (10 perc), `cold_card_ms: u64 = 86_400_000` (24 óra), `Default` + `defaults()` + `validate()`. A két időzítő szándékosan rendezett: a hideg a későbbi állapot, soha nem a korábbi.
+3. **Validáció:** `max_live_cards` ∈ [1, 12]; `idle_hibernate_ms` ∈ [60000, 3600000]; `cold_card_ms` ∈ [3600000, 2592000000]; és a `cold_card_ms <= idle_hibernate_ms` elutasítva (a hideg ablaknak hosszabbnak kell lennie az idle-nél, különben a kártya hamarabb hidegülne, mint hibernálódna). A hibák `SessionError::Rules(&'static str)`-ként jelentkeznek; `is_invalid_argument()` igaz `Rejected(_)` | `Rules(_)`-ra.
+4. **IPC opok:** `user_prefs` (olvasás) és `user_prefs_set` (írás, validálás után). `profile_export` olvassa `sessions.user_prefs()`-t és a `Bundle`-be teszi; `profile_import` ha `read.prefs` `Some`, akkor `sessions.set_user_prefs(prefs)`-t hív.
+5. **`Bundle`** kiegészül a `prefs: Option<UserPrefs>` mezővel (`#[serde(default)]`), és `Bundle::new(...)` átveszi a `prefs: UserPrefs` paramétert.
+
+**Következmény:** (+) a felhasználói beállítások perzisztensek, a profil-költöztetés viszi őket; (+) a validáció tiltja az értelmetlen kombinációkat (pl. `cold_card_ms <= idle_hibernate_ms`); (−) a séma 4→6, a régebbi build v6 fájlt nem tud visszafelé olvasni.
+
 ## ADR-070 — Mind a négy store SQLite-first (séma 0004) (2026-11-21)
 
 **Kontextus:** az ADR-069 a kártyákat tette adatbázissá, a konténerek, munkaterületek és munkamenetek viszont
@@ -1122,6 +1136,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-069 | A kártyatár SQLite-first (`user_version=3`): egy író a `antikolt.sqlite3`, a `cards.json` export; egyszeri átvétel a kapcsoló előtti profilból; a `db_status` a DB ↔ export egyezést méri soronként | Részben elavult (6. pont: ADR-070) |
 | ADR-070 | Mind a négy store SQLite-first (`user_version=4`): a négy JSON export; store-onkénti átvétel a `meta` táblában; a ledger teljes sora + egy-soros `session_rules`; a `db_status` mind a négy exportot soronként ellenőrzi | Elfogadva |
 | ADR-071 | A konténer izolációs határ (`user_version=5`): partíciónként saját `CefRequestContext` és profilkönyvtár, konténerenként proxy (`system`/`direct`/`fixed`) és engedély-politika (alapból megtagadva); a házirend adatbázis-sor | Elfogadva |
+| ADR-072 | Felhasználói beállítások (`UserPrefs`) SQLite-ban (`user_version=6`): `user_prefs` tábla egyetlen sortal (`CHECK (id = 1)`); `max_live_cards`, `idle_hibernate_ms`, `cold_card_ms` defaulttel és validációval; IPC `user_prefs`/`user_prefs_set`; `profile_export`/`profile_import` bekötése | Elfogadva |
 
 ---
 

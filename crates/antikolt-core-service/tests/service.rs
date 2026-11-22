@@ -175,7 +175,7 @@ fn the_database_is_the_store_and_the_report_proves_the_export() {
 
     let status = service.request("db_status", json!({ "sync": true }));
     assert_eq!(status["ok"], true, "db_status answered: {status}");
-    assert_eq!(status["data"]["schema"], json!(5));
+    assert_eq!(status["data"]["schema"], json!(6));
     assert_eq!(status["data"]["verified"], true);
     // Three cards, four containers, three workspaces and the rules of an empty ledger: every store's export is checked.
     assert_eq!(status["data"]["checked"], json!(11), "every row is checked");
@@ -396,5 +396,82 @@ fn a_profile_written_before_the_switch_is_adopted_not_reseeded() {
     assert_eq!(cards[0]["title"], "Korábbi profil kártyája");
     assert_eq!(cards[0]["notes"], "ez a régi fájlból jött");
     service.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn user_prefs_start_at_defaults_and_round_trip() {
+    // Fresh store → defaults (5 / 600_000 / 86_400_000). A valid set persists and reads back.
+    // Out-of-range values and a cold window not longer than the idle one are rejected.
+    let dir = temp_dir("prefs");
+    let mut service = Service::start(&dir);
+
+    let reply = service.request("user_prefs", json!({}));
+    assert_eq!(reply["ok"], true);
+    assert_eq!(reply["data"]["prefs"]["max_live_cards"], json!(5));
+    assert_eq!(reply["data"]["prefs"]["idle_hibernate_ms"], json!(600_000));
+    assert_eq!(reply["data"]["prefs"]["cold_card_ms"], json!(86_400_000));
+
+    // A valid set: eight live cards, one hour idle, two hours cold. The cold state is the later one (ADR-072), so its
+    // window is longer than the idle one.
+    let set = service.request(
+        "user_prefs_set",
+        json!({ "prefs": { "max_live_cards": 8, "idle_hibernate_ms": 3_600_000, "cold_card_ms": 7_200_000 } }),
+    );
+    assert_eq!(set["ok"], true);
+    assert_eq!(set["data"]["prefs"]["max_live_cards"], json!(8));
+    assert_eq!(set["data"]["prefs"]["idle_hibernate_ms"], json!(3_600_000));
+    assert_eq!(set["data"]["prefs"]["cold_card_ms"], json!(7_200_000));
+
+    let again = service.request("user_prefs", json!({}));
+    assert_eq!(again["ok"], true);
+    assert_eq!(again["data"]["prefs"]["max_live_cards"], json!(8));
+    assert_eq!(
+        again["data"]["prefs"]["idle_hibernate_ms"],
+        json!(3_600_000)
+    );
+    assert_eq!(again["data"]["prefs"]["cold_card_ms"], json!(7_200_000));
+
+    // max_live_cards = 0 is below 1.
+    let bad = service.request(
+        "user_prefs_set",
+        json!({ "prefs": { "max_live_cards": 0, "idle_hibernate_ms": 3_600_000, "cold_card_ms": 7_200_000 } }),
+    );
+    assert_eq!(bad["ok"], false);
+    assert_eq!(bad["error"]["code"], "invalid_argument");
+
+    // A cold window equal to the idle one is refused: a card cannot go cold at the same moment it hibernates.
+    let bad = service.request(
+        "user_prefs_set",
+        json!({ "prefs": { "max_live_cards": 5, "idle_hibernate_ms": 3_600_000, "cold_card_ms": 3_600_000 } }),
+    );
+    assert_eq!(bad["ok"], false);
+
+    service.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn user_prefs_survive_a_restart() {
+    let dir = temp_dir("prefs-restart");
+    let mut service = Service::start(&dir);
+
+    let set = service.request(
+        "user_prefs_set",
+        json!({ "prefs": { "max_live_cards": 12, "idle_hibernate_ms": 3_600_000, "cold_card_ms": 7_200_000 } }),
+    );
+    assert_eq!(set["ok"], true, "a valid set is accepted: {set}");
+    service.stop();
+
+    let mut again = Service::start(&dir);
+    let prefs = again.request("user_prefs", json!({}));
+    assert_eq!(prefs["ok"], true);
+    assert_eq!(prefs["data"]["prefs"]["max_live_cards"], json!(12));
+    assert_eq!(
+        prefs["data"]["prefs"]["idle_hibernate_ms"],
+        json!(3_600_000)
+    );
+    assert_eq!(prefs["data"]["prefs"]["cold_card_ms"], json!(7_200_000));
+    again.stop();
     let _ = std::fs::remove_dir_all(&dir);
 }

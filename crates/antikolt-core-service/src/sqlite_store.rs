@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use antikolt_core::session::{LoginState, SessionLedgerEntry, SessionPolicy, SessionRules};
+use serde::{Deserialize, Serialize};
 
 use crate::containers::Container;
 use crate::store::Card;
@@ -31,8 +32,8 @@ pub const DB_FILE_NAME: &str = "antikolt.sqlite3";
 
 /// The schema this core writes. Bumped only with a migration; `0001` was the JSON files, `0002` added `page_text`,
 /// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070),
-/// `0005` the per-container proxy and permission policy (ADR-071).
-pub const SCHEMA_VERSION: i64 = 5;
+/// `0005` the per-container proxy and permission policy (ADR-071), `0006` the one row of user preferences (ADR-072).
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// The schema version that means "the cards are SQLite-first" (ADR-069). A file at least this version already has the
 /// cards' adoption behind it, which the `0004` migration records in `meta` (the per-store adoption markers live there,
@@ -56,6 +57,59 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("cannot create the data directory: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// One row of user preferences: the live-card cap and the two hibernation timings.
+///
+/// Stored in the `user_prefs` table (schema 0006), one row only (`id = 1`, enforced by a CHECK constraint).
+/// A profile that never chose anything gets `defaults()`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserPrefs {
+    /// How many cards may stay live at once (1..=12).
+    pub max_live_cards: u32,
+    /// Idle time before a card hibernates (60000..=3600000 ms).
+    pub idle_hibernate_ms: u64,
+    /// Idle time before a card goes cold (3600000..=2592000000 ms).
+    pub cold_card_ms: u64,
+}
+
+impl Default for UserPrefs {
+    fn default() -> Self {
+        Self {
+            max_live_cards: 5,
+            // Ten minutes idle hibernates a card, a day without being opened makes it cold (ADR-072). The two are
+            // ordered on purpose: cold is the later state, never the earlier one.
+            idle_hibernate_ms: 600_000,
+            cold_card_ms: 86_400_000,
+        }
+    }
+}
+
+impl UserPrefs {
+    /// The factory settings: 5 live cards, 10 min idle → hibernate, 24 h idle → cold.
+    #[allow(dead_code)] // public API; used by tests and the portable bundle
+    pub fn defaults() -> Self {
+        Self::default()
+    }
+
+    /// Refuse values outside the sane ranges. The three levels are ordered: idle hibernation comes first, the cold
+    /// state later (ADR-072), so a cold window shorter than the idle one describes a card that goes cold before it is
+    /// ever hibernated — refused.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !(1..=12).contains(&self.max_live_cards) {
+            return Err("max_live_cards must be between 1 and 12");
+        }
+        if !(60_000..=3_600_000).contains(&self.idle_hibernate_ms) {
+            return Err("idle_hibernate_ms must be between 60000 and 3600000");
+        }
+        if !(3_600_000..=2_592_000_000).contains(&self.cold_card_ms) {
+            return Err("cold_card_ms must be between 3600000 and 2592000000");
+        }
+        if self.cold_card_ms <= self.idle_hibernate_ms {
+            return Err("cold_card_ms must be greater than idle_hibernate_ms");
+        }
+        Ok(())
+    }
 }
 
 impl Db {
@@ -212,6 +266,25 @@ impl Db {
                 )?;
             }
         }
+        if self.opened_at_version < 6 {
+            // 0006: the one row of user preferences (ADR-072). One row only, enforced by `CHECK (id = 1)`; the seeded
+            // values are the same three the `UserPrefs::default()` carries, so a profile that never chose anything and a
+            // profile that stored the defaults are indistinguishable.
+            self.connection.execute_batch(
+                "BEGIN;
+                 CREATE TABLE IF NOT EXISTS user_prefs (
+                     id                INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                     max_live_cards    INTEGER NOT NULL DEFAULT 5,
+                     idle_hibernate_ms INTEGER NOT NULL DEFAULT 600000,
+                     cold_card_ms      INTEGER NOT NULL DEFAULT 86400000
+                 );
+                 INSERT INTO user_prefs (id, max_live_cards, idle_hibernate_ms, cold_card_ms)
+                 VALUES (1, 5, 600000, 86400000)
+                 ON CONFLICT (id) DO NOTHING;
+                 PRAGMA user_version = 6;
+                 COMMIT;",
+            )?;
+        }
         // The version is written last, monotonically: a step that crashed half-way leaves an older number behind, so the
         // next start retries it instead of believing a migration finished because a table happened to exist.
         self.connection
@@ -251,6 +324,40 @@ impl Db {
         Ok(self
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))?)
+    }
+
+    /// The one row of user preferences, or the factory defaults when nothing was ever chosen.
+    pub fn user_prefs(&self) -> Result<UserPrefs, DbError> {
+        let row: Option<UserPrefs> = self.connection.query_row(
+            "SELECT max_live_cards, idle_hibernate_ms, cold_card_ms FROM user_prefs WHERE id = 1",
+            [],
+            |row| {
+                Ok(UserPrefs {
+                    max_live_cards: row.get::<_, i64>(0)? as u32,
+                    idle_hibernate_ms: row.get::<_, i64>(1)? as u64,
+                    cold_card_ms: row.get::<_, i64>(2)? as u64,
+                })
+            },
+        ).optional()?;
+        Ok(row.unwrap_or_default())
+    }
+
+    /// Replace the one row of user preferences. The caller must have validated first.
+    pub fn set_user_prefs(&self, prefs: &UserPrefs) -> Result<(), DbError> {
+        self.connection.execute(
+            "INSERT INTO user_prefs (id, max_live_cards, idle_hibernate_ms, cold_card_ms)
+             VALUES (1, ?1, ?2, ?3)
+             ON CONFLICT (id) DO UPDATE SET
+                 max_live_cards = excluded.max_live_cards,
+                 idle_hibernate_ms = excluded.idle_hibernate_ms,
+                 cold_card_ms = excluded.cold_card_ms",
+            params![
+                prefs.max_live_cards as i64,
+                prefs.idle_hibernate_ms as i64,
+                prefs.cold_card_ms as i64,
+            ],
+        )?;
+        Ok(())
     }
 
     /// Write a consistent copy of this database to `path` (ADR-069): the one-time adoption lets `cards.json` win, and
@@ -1191,6 +1298,113 @@ mod tests {
             .expect("replace");
         assert_eq!(db.all_sessions().expect("list"), vec![first, second]);
         assert_eq!(db.session_rules().expect("read"), Some(rules));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn user_prefs_validate_refuses_out_of_range_and_cold_longer_than_idle() {
+        // The factory settings pass.
+        assert!(UserPrefs::defaults().validate().is_ok());
+
+        // max_live_cards: only 1..=12.
+        let mut bad = UserPrefs::defaults();
+        bad.max_live_cards = 0;
+        assert_eq!(
+            bad.validate(),
+            Err("max_live_cards must be between 1 and 12")
+        );
+        bad.max_live_cards = 13;
+        assert_eq!(
+            bad.validate(),
+            Err("max_live_cards must be between 1 and 12")
+        );
+        bad.max_live_cards = 12;
+        assert!(bad.validate().is_ok());
+
+        // idle_hibernate_ms: only 60000..=3600000.
+        bad = UserPrefs::defaults();
+        bad.idle_hibernate_ms = 59_999;
+        assert_eq!(
+            bad.validate(),
+            Err("idle_hibernate_ms must be between 60000 and 3600000")
+        );
+        bad.idle_hibernate_ms = 3_600_001;
+        assert_eq!(
+            bad.validate(),
+            Err("idle_hibernate_ms must be between 60000 and 3600000")
+        );
+        bad.idle_hibernate_ms = 3_600_000;
+        bad.cold_card_ms = 86_400_000;
+        assert!(
+            bad.validate().is_ok(),
+            "a one-hour idle window with a one-day cold window is the documented upper pair"
+        );
+
+        // cold_card_ms: only 3600000..=2592000000.
+        bad = UserPrefs::defaults();
+        bad.cold_card_ms = 3_599_999;
+        assert_eq!(
+            bad.validate(),
+            Err("cold_card_ms must be between 3600000 and 2592000000")
+        );
+        bad.cold_card_ms = 2_592_000_001;
+        assert_eq!(
+            bad.validate(),
+            Err("cold_card_ms must be between 3600000 and 2592000000")
+        );
+        // An in-range value that is still equal to the idle window is refused by the ordering rule, not the range.
+        bad.idle_hibernate_ms = 3_600_000;
+        bad.cold_card_ms = 3_600_000;
+        assert_eq!(
+            bad.validate(),
+            Err("cold_card_ms must be greater than idle_hibernate_ms")
+        );
+
+        // The order of the levels is the rule: idle hibernation first, the cold state later. Both are put in range
+        // first, so the ordering rule is what fails, not the range check above it.
+        bad = UserPrefs::defaults();
+        bad.idle_hibernate_ms = 3_600_000;
+        bad.cold_card_ms = bad.idle_hibernate_ms;
+        assert_eq!(
+            bad.validate(),
+            Err("cold_card_ms must be greater than idle_hibernate_ms")
+        );
+        bad.cold_card_ms = bad.idle_hibernate_ms + 1;
+        assert!(
+            bad.validate().is_ok(),
+            "one millisecond longer is a valid, if eccentric, ordering"
+        );
+    }
+
+    #[test]
+    fn user_prefs_round_trips_and_starts_at_defaults() {
+        let dir = temp_dir("user-prefs");
+        let db = Db::open(&dir).expect("open");
+
+        // Absent row → defaults.
+        let first = db.user_prefs().expect("read");
+        assert_eq!(first, UserPrefs::defaults());
+
+        // One row: write, read back, and the row is one row, not an append.
+        let changed = UserPrefs {
+            max_live_cards: 7,
+            idle_hibernate_ms: 300_000,
+            cold_card_ms: 900_000,
+        };
+        db.set_user_prefs(&changed).expect("write");
+        assert_eq!(db.user_prefs().expect("read"), changed);
+
+        let back = UserPrefs {
+            max_live_cards: 3,
+            idle_hibernate_ms: 120_000,
+            cold_card_ms: 60_000,
+        };
+        db.set_user_prefs(&back).expect("update");
+        assert_eq!(
+            db.user_prefs().expect("read"),
+            back,
+            "prefs are one row, not an append"
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 }

@@ -3,6 +3,30 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (kilencvenkilencedik szelet) — felhasználói beállítások (`UserPrefs`, ADR-072)
+
+A 97. szelet mind a négy store-t SQLite-first tette (séma 0004). Ez a szelet hozzáadja a felhasználói szintű beállításokat: `max_live_cards`, `idle_hibernate_ms`, `cold_card_ms` — egyetlen sor a `user_prefs` táblában, séma **0006** (`PRAGMA user_version = 6`), defaulttal és validációval.
+
+### Mi változott
+
+- `sqlite_store.rs`: séma **`0006`**. Új `user_prefs` tábla `CHECK (id = 1)`-gyal (egyetlen sor). `UserPrefs` struct (`max_live_cards: u32 = 5`, `idle_hibernate_ms: u64 = 600_000` — tíz perc, `cold_card_ms: u64 = 86_400_000` — egy nap), `Default`, `defaults()`, `validate()` (tartomány + `cold_card_ms <= idle_hibernate_ms` elutasítva: a hideg a későbbi állapot, a hideg ablaknak hosszabbnak kell lennie az idle-nél). `user_prefs()`/`set_user_prefs()` metódusok; a `0006` migráció a seed sort (5 / 600000 / 86400000) `ON CONFLICT (id) DO NOTHING`-gal írja. Unit tesztek kiegészítve.
+- `sessions.rs`: `user_prefs()` delegál a DB-hez; `set_user_prefs()` validál (`prefs.validate().map_err(SessionError::Rules)?`), majd ír.
+- `bundle.rs`: `pub prefs: Option<UserPrefs>` (`#[serde(default)]`); `Bundle::new(...)` átveszi a `prefs: UserPrefs` paramétert.
+- `main.rs`: `user_prefs` (olvasás) és `user_prefs_set` (írás) IPC opok; `profile_export` olvassa `sessions.user_prefs()`-t → `Bundle::new`; `profile_import` ha `read.prefs` `Some`, akkor `sessions.set_user_prefs(prefs)`-t hív.
+- Tesztfrissítések: `service.rs` `db_status` séma 5 → 6; két új `user_prefs` teszt a `service.rs`-ben (default + round-trip, és újraindítás után is megmarad); `store.rs` séma-kivonat 5 → 6.
+
+### Bizonyíték (mért)
+
+```
+cargo test                  → 151 teszt zöld: 78 + 49 + 8 + 1 + 15 (a 98. szelet konténer-migrációja fölött; a séma 0006-ra sorszámozódott, mert a 0005-öt a 98. szelet vette el)
+cargo clippy -D warnings    → 0 figyelmeztetés
+cargo fmt --all -- --check  → tiszta
+```
+
+### Ami továbbra is nyitott
+
+A felületen még nincs natív vezérlő a beállítások lapon: az értékeket egyelőre csak az IPC réteg és a profil-költöztetés viszi, a shell időzítője még nem a `user_prefs` értékeit használja.
+
 ## 2026-11-21 (kilencvennyolcadik szelet) — a konténer izolációs határ: profilkönyvtár, proxy, engedélyek (ADR-071)
 
 Az eddigi legnagyobb csendben maradt hiány: az ADR-009 „kártyánként egy partíció" ígéretét a motor **soha nem

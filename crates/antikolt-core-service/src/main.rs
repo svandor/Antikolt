@@ -34,6 +34,7 @@ use serde_json::{json, Value};
 use bundle::Bundle;
 use containers::{Container, ContainerStore};
 use sessions::SessionStore;
+use sqlite_store::UserPrefs;
 use store::{Card, CardStore};
 use workspaces::{Workspace, WorkspaceStore};
 
@@ -599,6 +600,33 @@ fn handle(
                 Err(error) => (error_reply(id, "internal", &error.to_string()), true),
             }
         }
+        // ---- user preferences -----------------------------------------------------------------
+        // One row of live-card cap and hibernation timings (ADR-072). Read without validation, write after it.
+        "user_prefs" => match sessions.user_prefs() {
+            Ok(prefs) => (ok_reply(id, json!({ "prefs": prefs })), true),
+            Err(error) => (error_reply(id, "internal", &error.to_string()), true),
+        },
+        "user_prefs_set" => {
+            let Some(prefs) = request.get("prefs") else {
+                return (
+                    error_reply(id, "invalid_argument", "user_prefs_set needs prefs"),
+                    true,
+                );
+            };
+            match serde_json::from_value::<UserPrefs>(prefs.clone()) {
+                Ok(prefs) => match sessions.set_user_prefs(prefs) {
+                    Ok(prefs) => (ok_reply(id, json!({ "prefs": prefs })), true),
+                    Err(error) => (
+                        error_reply(id, session_error_code(&error), &error.to_string()),
+                        true,
+                    ),
+                },
+                Err(error) => (
+                    error_reply(id, "invalid_argument", &error.to_string()),
+                    true,
+                ),
+            }
+        }
         // ---- the portable bundle -----------------------------------------------------------------
         // The user's data in one file, so a profile can be carried to another machine (ADR-059). Export reads the
         // stores; import validates the whole file *before* it writes anything, and reports what it moved.
@@ -629,6 +657,10 @@ fn handle(
                 Ok(rules) => rules,
                 Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
             };
+            let prefs = match sessions.user_prefs() {
+                Ok(prefs) => prefs,
+                Err(error) => return (error_reply(id, "internal", &error.to_string()), true),
+            };
             let bundle = Bundle::new(
                 now_ms(),
                 cards,
@@ -636,6 +668,7 @@ fn handle(
                 workspace_list,
                 session_list,
                 rules,
+                prefs,
             );
             let (cards, containers_count, workspaces_count, sessions_count) = bundle.counts();
             match bundle.write(std::path::Path::new(path)) {
@@ -710,6 +743,19 @@ fn handle(
                             id,
                             "internal",
                             &format!("az import a(z) {name} táblánál megállt: {message}"),
+                        ),
+                        true,
+                    );
+                }
+            }
+            // Preferences are optional in the bundle: an older bundle without them keeps the profile's current prefs.
+            if let Some(prefs) = read.prefs {
+                if let Err(error) = sessions.set_user_prefs(prefs) {
+                    return (
+                        error_reply(
+                            id,
+                            "internal",
+                            &format!("user preferences import failed: {error}"),
                         ),
                         true,
                     );

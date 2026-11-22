@@ -10,7 +10,7 @@
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
 38 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
-check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+47+6+1+15 Rust-teszt)
+check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+49+8+1+15 Rust-teszt)
 ```
 
 A hordozható példány: `scripts/dist.ps1 -Release` → `dist/Antikolt/` (445.6 MB), asztali és Start-menü
@@ -42,7 +42,8 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Terület | Teszt | Mit bizonyít (mért kimenet) |
 |---|---|---|
 | Rács, 500 kártya | `--gridscaletest` | 503 kártya, **13** renderelt DOM-elem, 20 ms az első renderig; a görgetéses ugrás `not-measurable` (nincs layout-magasság a harnessben) |
-| Tároló (négy store) | Rust-tesztek, `--addcardtest` | mind a négy store **SQLite-sorok** (`user_version=4`, WAL): kártyák, konténerek, munkaterületek, munkamenetek; a négy `*.json` származtatott export; `db_status=ok schema=4 … verified=yes` mind a négyet soronként méri; a kapcsoló előtti profil store-onként egyszer átvételre kerül (ADR-070, napló 97) |
+| Tároló (négy store + felhasználói beállítások) | Rust-tesztek, `--addcardtest` | mind a négy store **SQLite-sorok** (`user_version=5`, WAL): kártyák, konténerek, munkaterületek, munkamenetek, `user_prefs` egyetlen sortal (`CHECK (id = 1)`); a négy `*.json` származtatott export; `db_status=ok schema=5 … verified=yes` mind a négyet soronként méri; a kapcsoló előtti profil store-onként egyszer átvételre kerül (ADR-070, napló 97) |
+| Felhasználói beállítások | Rust-tesztek (`sqlite_store::tests`, `service.rs`) | `UserPrefs` default (`max_live_cards=5`, `idle_hibernate_ms=600_000` — 10 perc, `cold_card_ms=86_400_000` — 24 óra), validáció (tartomány + `cold_card_ms <= idle_hibernate_ms` elutasítva), IPC `user_prefs`/`user_prefs_set`, `profile_export`/`profile_import` bekötése (ADR-072, napló 98) |
 | Keresés | `--searchtest`, `--tagtest` | ékezet-független cím/webcím/jegyzet/címke, és az **oldalszöveg** is (`search_page_text=ok`) |
 | Konténerek | `--containertest` | színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, használt konténer törlése **áthelyezéssel** |
 | Munkaterületek | `--workspacetest` | fül-sor a magban tárolt munkaterület-táblából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó |

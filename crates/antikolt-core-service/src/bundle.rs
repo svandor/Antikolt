@@ -18,6 +18,7 @@ use antikolt_core::session::{SessionLedgerEntry, SessionRules};
 use serde::{Deserialize, Serialize};
 
 use crate::containers::Container;
+use crate::sqlite_store::UserPrefs;
 use crate::store::Card;
 use crate::workspaces::Workspace;
 
@@ -44,6 +45,10 @@ pub struct Bundle {
     pub workspaces: Vec<Workspace>,
     pub sessions: Vec<SessionLedgerEntry>,
     pub rules: SessionRules,
+    /// The user preferences at export time. `None` in a bundle written before this field existed — import then keeps
+    /// the profile's current prefs instead of overwriting them with defaults (additive field, no schema bump).
+    #[serde(default)]
+    pub prefs: Option<UserPrefs>,
 }
 
 impl Bundle {
@@ -54,6 +59,7 @@ impl Bundle {
         workspaces: Vec<Workspace>,
         sessions: Vec<SessionLedgerEntry>,
         rules: SessionRules,
+        prefs: UserPrefs,
     ) -> Self {
         Self {
             schema: BUNDLE_SCHEMA,
@@ -63,6 +69,7 @@ impl Bundle {
             workspaces,
             sessions,
             rules,
+            prefs: Some(prefs),
         }
     }
 
@@ -129,6 +136,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             SessionRules::default(),
+            UserPrefs::defaults(),
         );
         bundle.write(&path).expect("write");
         let read = Bundle::read(&path).expect("read");
