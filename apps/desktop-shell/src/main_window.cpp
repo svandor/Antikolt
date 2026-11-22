@@ -4,6 +4,7 @@
 
 #include <QActionGroup>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCoreApplication>
@@ -13,6 +14,7 @@
 #include <QHBoxLayout>
 #include <QDir>
 #include <QEvent>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHash>
 #include <QHeaderView>
@@ -479,6 +481,11 @@ void MainWindow::onIdleTimeout() {
         armIdleTimer();
         return;
     }
+    if (popup_open_) {
+        setStatus(QStringLiteral("bejelentkezés folyamatban — a hibernálás vár"));
+        armIdleTimer();
+        return;
+    }
     hibernating_ = true;
     // The one documented exception a user would feel: a page that is playing sound or video keeps its
     // card alive (docs/HU/02 §4.2). Everything else goes to disk, unpinned or not.
@@ -820,6 +827,23 @@ void MainWindow::wireEngine(EngineClient* engine) {
             [this](qint64 surface, const QString& url, const QString& reason) {
                 setStatus(QStringLiteral("betöltési hiba (#%1): %2 — %3").arg(surface).arg(url, reason));
             });
+    // The login popup (docs/HU/02 §8.5): while it is open the card must not hibernate, or the SSO flow
+    // would lose its window and cookies. The engine enforces the 60 s cap; the shell only reacts.
+    connect(engine, &EngineClient::popupRequested, this,
+            [this](qint64, const QString& url, const QString& disposition) {
+                if (disposition == QStringLiteral("authenticated_window")) {
+                    popup_open_ = true;
+                    setStatus(QStringLiteral("bejelentkezési ablak nyitva: %1").arg(url));
+                    armIdleTimer();
+                } else {
+                    setStatus(QStringLiteral("elutasított felugró ablak: %1").arg(url));
+                }
+            });
+    connect(engine, &EngineClient::popupClosed, this, [this](qint64) {
+        popup_open_ = false;
+        setStatus(QStringLiteral("a bejelentkezési ablak bezárult"));
+        armIdleTimer();
+    });
 }
 
 EngineClient* MainWindow::engineFor(const QString& container) {
@@ -2174,9 +2198,32 @@ void MainWindow::refreshSessions() {
                     sessions_table_->setItem(
                         row, 1,
                         new QTableWidgetItem(entry.value(QStringLiteral("state")).toString()));
-                    sessions_table_->setItem(
-                        row, 2,
-                        new QTableWidgetItem(entry.value(QStringLiteral("policy")).toString()));
+                    // The one place a per-origin override is set (the open item of ADR-039): a drop-down of
+                    // keep/sweep/wipe, saved straight to the core's row. The row's `policy` already wins over the
+                    // container default in the core (`SessionRules::resolve`), so this only exposes that decision.
+                    auto* policy_combo = new QComboBox(sessions_table_);
+                    policy_combo->addItems({QStringLiteral("keep"), QStringLiteral("sweep"),
+                                            QStringLiteral("wipe")});
+                    policy_combo->setCurrentText(
+                        entry.value(QStringLiteral("policy")).toString(QStringLiteral("sweep")));
+                    connect(policy_combo, &QComboBox::currentTextChanged, this,
+                            [this, entry](const QString& policy) {
+                                if (core_ == nullptr || !core_->isRunning()) {
+                                    return;
+                                }
+                                QJsonObject updated = entry;
+                                updated.insert(QStringLiteral("policy"), policy);
+                                updated.remove(QStringLiteral("size"));
+                                updated.remove(QStringLiteral("loses_login"));
+                                core_->sessionUpsert(
+                                    updated, [this](const QJsonObject&, const QString& error) {
+                                        setStatus(error.isEmpty()
+                                                      ? QStringLiteral("munkamenet-politika mentve")
+                                                      : QStringLiteral("munkamenet-politika hiba: %1")
+                                                            .arg(error));
+                                    });
+                            });
+                    sessions_table_->setCellWidget(row, 2, policy_combo);
                     sessions_table_->setItem(
                         row, 3,
                         new QTableWidgetItem(QString::number(
@@ -2223,6 +2270,12 @@ QString MainWindow::sessionPanelSummary() const {
     for (int row = 0; row < sessions_table_->rowCount(); ++row) {
         QStringList cells;
         for (int column = 0; column < sessions_table_->columnCount(); ++column) {
+            // The policy column is a drop-down, not a text item; read its current value so the summary
+            // (and the self test) still see what the panel shows.
+            if (auto* combo = qobject_cast<QComboBox*>(sessions_table_->cellWidget(row, column))) {
+                cells.append(combo->currentText());
+                continue;
+            }
             const QTableWidgetItem* item = sessions_table_->item(row, column);
             cells.append(item != nullptr ? item->text() : QStringLiteral("?"));
         }
@@ -2336,6 +2389,59 @@ void MainWindow::cleanupSessions() {
 }
 
 
+void MainWindow::exportProfile() {
+    if (core_ == nullptr || !core_->isRunning()) {
+        setStatus(QStringLiteral("a mag nem fut — nincs mit menteni"));
+        return;
+    }
+    const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Profil mentése"),
+        documents + QStringLiteral("/antikolt-profile.json"),
+        QStringLiteral("Antikolt profil (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    core_->profileExport(path, [this, path](const QJsonObject& reply, const QString& error) {
+        if (!error.isEmpty()) {
+            setStatus(QStringLiteral("profil mentése nem sikerült: %1").arg(error));
+            return;
+        }
+        setStatus(QStringLiteral("profil mentve: %1 (%2 kártya, %3 konténer)")
+                      .arg(path)
+                      .arg(reply.value(QStringLiteral("cards")).toInt())
+                      .arg(reply.value(QStringLiteral("containers")).toInt()));
+    });
+}
+
+void MainWindow::importProfile() {
+    if (core_ == nullptr || !core_->isRunning()) {
+        setStatus(QStringLiteral("a mag nem fut — nincs hová betölteni"));
+        return;
+    }
+    const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Profil betöltése"),
+        documents, QStringLiteral("Antikolt profil (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    core_->profileImport(path, [this, path](const QJsonObject& reply, const QString& error) {
+        if (!error.isEmpty()) {
+            setStatus(QStringLiteral("profil betöltése nem sikerült: %1").arg(error));
+            return;
+        }
+        setStatus(QStringLiteral("profil betöltve: %1 (%2 kártya, %3 konténer)")
+                      .arg(path)
+                      .arg(reply.value(QStringLiteral("cards")).toInt())
+                      .arg(reply.value(QStringLiteral("containers")).toInt()));
+        // The grid must show the imported rows, not the profile it replaced.
+        if (home_surface_ != 0) {
+            pushCardsToGrid(home_surface_);
+        }
+    });
+}
+
 void MainWindow::buildToolBar() {
     auto* toolbar = addToolBar(QStringLiteral("Fő"));
     toolbar->setMovable(false);
@@ -2345,6 +2451,28 @@ void MainWindow::buildToolBar() {
     toolbar->addAction(QStringLiteral("⌂ Kezdőlap"), this, &MainWindow::loadHome);
     toolbar->addAction(QStringLiteral("❄ Fagyasztás"), this, &MainWindow::freezeCard);
     toolbar->addAction(QStringLiteral("🗂 Munkamenetek"), this, &MainWindow::showSessions);
+
+    // Portable profile bundle (ADR-059): the shell owns the native file dialog; the core does the export/import.
+    // The dialog cannot be clicked by the harness, so the button is the product's entry point while `--profiletest`
+    // measures the underlying path through the bridge.
+    auto* profile_button = new QToolButton(this);
+    profile_button->setObjectName(QStringLiteral("profileButton"));
+    profile_button->setText(QStringLiteral("💾 Profil"));
+    profile_button->setPopupMode(QToolButton::InstantPopup);
+    profile_button->setAutoRaise(true);
+    profile_button->setCursor(Qt::PointingHandCursor);
+    profile_button->setToolTip(
+        QStringLiteral("A profil egyetlen fájlba mentése vagy onnan betöltése (ADR-059)."));
+    profile_button->setAccessibleName(QStringLiteral("Profil"));
+    auto* profile_menu = new QMenu(profile_button);
+    auto* export_action = profile_menu->addAction(QStringLiteral("Mentés másként…"));
+    export_action->setObjectName(QStringLiteral("profileExportAction"));
+    connect(export_action, &QAction::triggered, this, &MainWindow::exportProfile);
+    auto* import_action = profile_menu->addAction(QStringLiteral("Betöltés…"));
+    import_action->setObjectName(QStringLiteral("profileImportAction"));
+    connect(import_action, &QAction::triggered, this, &MainWindow::importProfile);
+    profile_button->setMenu(profile_menu);
+    toolbar->addWidget(profile_button);
     // Site themes (ADR-037): the page decides what `prefers-color-scheme` means; this only reports it.
     auto* siteTheme = toolbar->addAction(QStringLiteral("🌓 Oldal-téma: auto"));
     siteTheme->setObjectName(QStringLiteral("siteThemeAction"));

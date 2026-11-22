@@ -157,9 +157,12 @@ impl CardStore {
         card.page_text = Self::cap_page_text(&card.page_text);
         card.tags = Self::normalise_tags(&card.tags);
         // A pin or a note arrives from the page, which never carries the captured text: an empty field means "I did
-        // not send it", not "delete the capture" (ADR-049).
-        if card.page_text.is_empty() {
-            if let Some(existing) = self.db.card(&card.id)? {
+        // not send it", not "delete the capture" (ADR-049). A changed URL is different: the capture belongs to the
+        // page that was frozen, so it must not follow the card to its new address (ADR-063/ADR-049).
+        if let Some(existing) = self.db.card(&card.id)? {
+            if existing.url != card.url {
+                card.page_text = String::new();
+            } else if card.page_text.is_empty() {
                 card.page_text = existing.page_text;
             }
         }
@@ -709,6 +712,35 @@ mod tests {
             .set_page_text("nincs-ilyen", "x")
             .expect("set")
             .is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_url_change_drops_the_captured_page_text() {
+        let dir = temp_dir("page-text-url");
+        let mut store = CardStore::open(&dir).expect("open");
+        let mut card = store.list().expect("list")[0].clone();
+        card.page_text = "a régi oldal szövege".to_string();
+        let stored = store.upsert(card).expect("upsert");
+        assert_eq!(stored.page_text, "a régi oldal szövege");
+
+        // The URL changed: the captured text belongs to the old page and must not follow it.
+        let mut moved = stored.clone();
+        moved.url = "https://masik.hu/".to_string();
+        moved.page_text = String::new();
+        let after = store.upsert(moved).expect("upsert");
+        assert_eq!(after.url, "https://masik.hu/");
+        assert_eq!(
+            after.page_text, "",
+            "a URL change must drop the stale capture"
+        );
+
+        // A fresh capture for the new URL is stored normally afterwards.
+        let recaptured = store
+            .set_page_text(&after.id, "az új oldal szövege")
+            .expect("set")
+            .expect("card");
+        assert_eq!(recaptured.page_text, "az új oldal szövege");
         let _ = fs::remove_dir_all(&dir);
     }
 

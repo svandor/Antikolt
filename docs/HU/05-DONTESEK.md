@@ -52,6 +52,32 @@ takarító szelet dolga).
 
 **Következmény:** (+) a felhasználói beállítások perzisztensek, a profil-költöztetés viszi őket; (+) a validáció tiltja az értelmetlen kombinációkat (pl. `cold_card_ms <= idle_hibernate_ms`); (−) a séma 4→6, a régebbi build v6 fájlt nem tud visszafelé olvasni.
 
+## ADR-073 — Bejelentkezési popup: gesztus → valódi ablak ugyanabban a partícióban, 60 s (2026-11-22)
+
+**Kontextus:** a „mindenhol bejelentkeztetés" popupon megy (OAuth/SSO, `window.open`). A motor
+`CefLifeSpanHandler::OnBeforePopup`-ját eddig nem írtuk felül, így a CEF alapértelmezése szerint *minden* popup
+megnyílt, de ugyanarra az `EngineClient`-re esett: a popup böngészője felülírta a kártya `state_->browser`-ét, a
+bezárása pedig a kártya felületét vitte volna le. A shell nem tudott a popupról, tehát hibernálhatott a
+bejelentkezés közepén.
+
+**Döntés:**
+
+1. **A popup csak felhasználói gesztusra nyílik meg** (`user_gesture == true` → engedélyez, különben blokkolt). A
+   gesztus nélküli popup olyan, mint egy nem kért engedély: néma elutasítás. A `popup_requested` esemény viszi a
+   döntést (`disposition`: `authenticated_window` | `blocked`) a shell felé.
+2. **A popup az opener partícióját örökli** (CEF alapértelmezése: ugyanaz a `client`), tehát a sütik közösek — ez az
+   SSO-lánc lényege. A popup **nem kártya**: nincs snapshot, nincs előnézet.
+3. **A popup böngészőjét a motor külön követi** (`HostState::popup_browser`): a bezárása (`OnBeforeClose`) csak a
+   popupot szünteti meg (`popup_closed` esemény), a kártya felülete él.
+4. **A 60 s-os élettartam a motorban él** (steady-clock, `kPopupTimeoutMs = 60000`): lejáratkor a motor
+   `CloseBrowser`-rel zárja a popupot — a shell nem ismeri a popup felület-azonosítóját, ezért a motor a felelős. A
+   shell a `popup_open` jelzővel csak a hibernálást függeszti fel a `popup_closed`-ig.
+
+**Következmény:** (+) az OAuth/SSO folyamat a kártya sütijeivel, a saját partíciójában fut, és nem töri meg a
+kártyát; (+) a kéretlen popupok blokkolva; (−) a gesztus-út a harnessben nem mérhető (a szintetikus `window.open`
+nem gesztus), ezért a `popup_requested`/`popup_closed` útja `not-measurable` — a döntés a kódban és a `02` §8.5-ben
+rögzített.
+
 ## ADR-070 — Mind a négy store SQLite-first (séma 0004) (2026-11-21)
 
 **Kontextus:** az ADR-069 a kártyákat tette adatbázissá, a konténerek, munkaterületek és munkamenetek viszont
@@ -1137,6 +1163,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-070 | Mind a négy store SQLite-first (`user_version=4`): a négy JSON export; store-onkénti átvétel a `meta` táblában; a ledger teljes sora + egy-soros `session_rules`; a `db_status` mind a négy exportot soronként ellenőrzi | Elfogadva |
 | ADR-071 | A konténer izolációs határ (`user_version=5`): partíciónként saját `CefRequestContext` és profilkönyvtár, konténerenként proxy (`system`/`direct`/`fixed`) és engedély-politika (alapból megtagadva); a házirend adatbázis-sor | Elfogadva |
 | ADR-072 | Felhasználói beállítások (`UserPrefs`) SQLite-ban (`user_version=6`): `user_prefs` tábla egyetlen sortal (`CHECK (id = 1)`); `max_live_cards`, `idle_hibernate_ms`, `cold_card_ms` defaulttel és validációval; IPC `user_prefs`/`user_prefs_set`; `profile_export`/`profile_import` bekötése | Elfogadva |
+| ADR-073 | Bejelentkezési popup: gesztus → valódi ablak az opener partíciójában (közös sütik), 60 s, külön követve (`popup_browser`); gesztus nélkül blokkolva; `popup_requested`/`popup_closed` események; a shell a `popup_open` jelzővel függeszti fel a hibernálást | Elfogadva |
 
 ---
 

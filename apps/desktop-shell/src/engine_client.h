@@ -133,6 +133,11 @@ signals:
     void loadFailed(qint64 surface, const QString& url, const QString& reason);
     void surfaceCreated(qint64 surface);
     void surfaceClosed(qint64 surface);
+    /// The page asked for a popup (CEF OnBeforePopup). `disposition` is `authenticated_window` (a user-gesture
+    /// login window was opened, sharing the card's partition) or `blocked` (refused).
+    void popupRequested(qint64 surface, const QString& url, const QString& disposition);
+    /// A login popup closed (the flow finished, or the engine's 60 s cap fired).
+    void popupClosed(qint64 surface);
     /// The home page asked for something through the bridge (`open_card`, `freeze_card`, …).
     ///
     /// `request` is 0 for a one-way call (the page does not wait) and the engine's request number for a

@@ -405,6 +405,11 @@ void EngineClient::handleEvent(const QJsonObject& event) {
         emit surfaceCreated(surface);
     } else if (type == QStringLiteral("surface_closed")) {
         emit surfaceClosed(surface);
+    } else if (type == QStringLiteral("popup_requested")) {
+        emit popupRequested(surface, event.value(QStringLiteral("url")).toString(),
+                            event.value(QStringLiteral("disposition")).toString());
+    } else if (type == QStringLiteral("popup_closed")) {
+        emit popupClosed(surface);
     } else if (type == QStringLiteral("bridge_call")) {
         emit bridgeCall(surface, event.value(QStringLiteral("method")).toString(),
                         event.value(QStringLiteral("args")).toObject(),

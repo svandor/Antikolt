@@ -314,6 +314,28 @@ class AntikoltCard extends HTMLElement {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
     }
+    if (!this.dataset.dragWired) {
+      this.dataset.dragWired = "1";
+      // A card can be dragged onto a workspace tab (ADR-058): the `<select>` stays the reachable way, the drag
+      // is the fast one. The drag must not hijack text selection or a dropdown from the card's own controls.
+      this.draggable = true;
+      this.addEventListener("dragstart", (event) => {
+        const id = this.#card?.id;
+        if (!id) return;
+        const path = event.composedPath?.() ?? [];
+        if (
+          path.some((el) =>
+            el?.matches?.("input, select, textarea, button, [contenteditable]"),
+          )
+        ) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.setData("text/plain", id);
+        event.dataTransfer.setData("application/x-antikolt-card", id);
+        event.dataTransfer.effectAllowed = "move";
+      });
+    }
     this.render();
   }
 
@@ -1444,6 +1466,26 @@ class HomePage {
       const tab = document.createElement("span");
       tab.className = "ws-tab";
       tab.dataset.workspace = workspace.id;
+      // A dragged card can be dropped on the tab (ADR-058). The type check keeps an unrelated text drag from
+      // pretending to be a card; the `<select>` on the card remains the keyboard/reachable way.
+      tab.addEventListener("dragover", (event) => {
+        const types = Array.from(event.dataTransfer?.types ?? []);
+        if (!types.includes("application/x-antikolt-card")) {
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        tab.classList.add("ws-tab-drop");
+      });
+      tab.addEventListener("dragleave", () => tab.classList.remove("ws-tab-drop"));
+      tab.addEventListener("drop", (event) => {
+        event.preventDefault();
+        tab.classList.remove("ws-tab-drop");
+        const id = event.dataTransfer?.getData("application/x-antikolt-card");
+        if (id) {
+          this.setWorkspace(id, workspace.id);
+        }
+      });
       const button = document.createElement("button");
       button.type = "button";
       button.className = "ws-pick";

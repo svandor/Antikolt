@@ -3,6 +3,56 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (századik szelet) — a kiadás előtti maradék: popup, profil-gomb, kártya-politika, fogd-és-vidd
+
+Az átadás után hátramaradt, kódból megoldható tételek egy körben: a bejelentkezési popup összekötése (ADR-073), a
+profil-köteg felületi gombja, a kártyánkénti munkamenet-felülírás, a fogd-és-vidd a munkaterületekhez, és a
+webcím-váltás utáni `page_text`-elavulás javítása.
+
+### Mi változott
+
+- **OAuth/SSO popup (ADR-073):** a motor `OnBeforePopup`-ot kapott (`apps/engine-host/src/host.{h,cpp}`):
+  felhasználói gesztusra a popup valódi ablakként nyílik az opener partíciójában (közös sütik), gesztus nélkül
+  blokkolva; a `popup_requested`/`popup_closed` események viszik a döntést. A popup böngészőjét a motor külön követi
+  (`HostState::popup_browser`), így a bezárása nem viszi le a kártyát; a 60 s-os élettartam a motorban él
+  (`kPopupTimeoutMs`, steady-clock). A shell (`engine_client.*`, `main_window.*`) a `popup_open` jelzővel függeszti
+  fel a hibernálást a popup idejére.
+- **Profil-köteg gombja:** a toolbar „💾 Profil" gombja (`main_window.cpp` `buildToolBar`,
+  `exportProfile`/`importProfile`) natív `QFileDialog`-on át hívja a már kész `profile_export`/`profile_import`
+  útvonalat; betöltés után a rács újrarenderel. A dialógus a harnessben nem kattintható, ezért a gomb
+  `not-measurable` — az alatta lévő út a `--profiletest` által mérve.
+- **Kártyánkénti munkamenet-felülírás:** a Munkamenetek panel „Politika" oszlopa legördülő lett (keep/sweep/wipe),
+  ami a mag `session_upsert`-jével írja a sor `policy`-ját (az `SessionRules::resolve` már ezt használta); a
+  `sessionPanelSummary` a legördülőt is olvassa.
+- **Fogd-és-vidd:** a kártya húzható (`<antikolt-card>` `draggable` + `dragstart`, a kártya saját vezérlőit
+  kihagyva), a munkaterület-fül fogadja (`dragover`/`drop` → `setWorkspace`), accent-kerettel jelöl. A `<select>`
+  marad a billentyűzettel elérhető út (ADR-058).
+- **`page_text` a webcím-váltáskor:** a `CardStore::upsert` (`store.rs`) törli a rögzített oldalszöveget, ha a
+  `url` megváltozott (a régi rögzítés a régi oldalé volt). A törlés-megerősítés (ADR-068) már korábban kész — a
+  `21-ALLAPOT` nyitott listája ezt hibásan sorolta, most javítva.
+
+### Bizonyíték (mért)
+
+```
+cargo test                   → 152 teszt zöld: 78 + 50 + 8 + 1 + 15 (a 99. szelet 151 fölött; az új store.rs
+                               teszt a webcím-váltásos page_text-törlést méri)
+cargo clippy -D warnings     → 0
+cargo fmt --all -- --check   → tiszta
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (minden önteszt + check-repo)
+--sessionpanel               → session_panel=ok (a „Politika" oszlop legördülővel is)
+--addcardtest                → edit_card_url=ok, db_status=ok schema=6 cards=11 verified=yes
+```
+
+### Ami továbbra is nyitott
+
+- A popup **gesztus-útja a harnessben nem mérve** (`not-measurable`): a szintetikus `window.open` nem felhasználói
+  gesztus, ezért a `popup_requested`/`popup_closed` útjára nincs önteszt — a döntés a kódban és a `02` §8.5-ben
+  rögzített.
+- **Szerkeszthető kezdőlap + `<antikolt-card>`** (a komponens létezik, a felhasználó-szerző kezdőlap nagyobb tétel)
+  és a **memória-büdzsé (F6)** — az ütemterv 3–4 hetes tételei, nem e szelet munkái.
+- A **vault/passkey** (F4) `cargo vendor` hálózat nélkül; a **hardveres GPU-út** (VECTOR) driver-szintű; az
+  **aláírás** (SignPath) emberi lépés.
+
 ## 2026-11-22 (kilencvenkilencedik szelet) — felhasználói beállítások (`UserPrefs`, ADR-072)
 
 A 97. szelet mind a négy store-t SQLite-first tette (séma 0004). Ez a szelet hozzáadja a felhasználói szintű beállításokat: `max_live_cards`, `idle_hibernate_ms`, `cold_card_ms` — egyetlen sor a `user_prefs` táblában, séma **0006** (`PRAGMA user_version = 6`), defaulttal és validációval.

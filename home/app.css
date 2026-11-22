@@ -185,6 +185,12 @@ kbd {
   align-items: center;
   white-space: nowrap;
 }
+/* A dragged card over a tab (ADR-058): the accent ring says "drop here". */
+.ws-tab-drop {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}
 .ws-remove {
   border: 0;
   background: transparent;

@@ -51,6 +51,16 @@ int64_t g_next_surface_id = 1;
 /// the process.
 constexpr std::size_t kMaxSurfaces = 2;
 
+/// The login popup's lifetime (docs/HU/02 §8.5): a short OAuth/SSO window, not a second card.
+constexpr int64_t kPopupTimeoutMs = 60000;
+
+/// Steady-clock milliseconds, so the popup timer is immune to wall-clock changes.
+int64_t SteadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 /// Native window → the surface it hosts.
 ///
 /// Only the UI thread touches this. It exists because the window procedure receives a handle, not a
@@ -1813,6 +1823,13 @@ constexpr const char* kBridgeScript = R"JS((function () {
 
 void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
+    // A second browser on this client is the login popup OnBeforePopup allowed: the card's surface keeps
+    // `state_->browser`, the popup gets its own slot, so its close never takes the card down.
+    if (state_->browser != nullptr && state_->browser != browser) {
+        state_->popup_browser = browser;
+        state_->popup_opened_at_ms = SteadyNowMs();
+        return;
+    }
     state_->browser = browser;
     state_->browser_created = true;
     // A `navigate` queued while the browser was still being created is applied now, on the surface the
@@ -1831,6 +1848,18 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
 
 void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
+    // The popup closes on its own (login finished) or after the 60 s cap: only the popup goes, the card stays.
+    if (browser == state_->popup_browser) {
+        router_->OnBeforeClose(browser);
+        state_->popup_browser = nullptr;
+        state_->popup_opened_at_ms = 0;
+        if (g_server_mode) {
+            CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+            payload->SetInt("surface", static_cast<int>(state_->surface_id));
+            StdioLink::Instance().Event("popup_closed", payload);
+        }
+        return;
+    }
     router_->OnBeforeClose(browser);
     state_->bridge_enabled = false;
     state_->browser = nullptr;
@@ -1848,6 +1877,34 @@ void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
             state_->quit_requested = true;
         }
     }
+}
+
+bool EngineClient::OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                                 CefRefPtr<CefFrame> frame,
+                                 int popup_id,
+                                 const CefString& target_url,
+                                 const CefString& target_frame_name,
+                                 CefLifeSpanHandler::WindowOpenDisposition target_disposition,
+                                 bool user_gesture,
+                                 const CefPopupFeatures& popupFeatures,
+                                 CefWindowInfo& windowInfo,
+                                 CefRefPtr<CefClient>& client,
+                                 CefBrowserSettings& settings,
+                                 CefRefPtr<CefDictionaryValue>& extra_info,
+                                 bool* no_javascript_access) {
+    CEF_REQUIRE_UI_THREAD();
+    const bool allow = user_gesture;
+    if (g_server_mode) {
+        CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+        payload->SetInt("surface", static_cast<int>(state_->surface_id));
+        payload->SetString("url", target_url.ToString());
+        payload->SetString("disposition", allow ? "authenticated_window" : "blocked");
+        StdioLink::Instance().Event("popup_requested", payload);
+    }
+    // Only a user-gesture popup is the login window (docs/HU/02 §8.5): it inherits the opener's client and
+    // partition (CEF's default), so it shares the card's cookies — the whole point of an SSO flow. A page
+    // firing popups on its own is refused, like an unasked-for permission.
+    return !allow;
 }
 
 void EngineClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
@@ -2411,6 +2468,15 @@ int RunEngineHostServer(const HostConfig& config) {
                 close_surface(state);
                 it = surfaces.erase(it);
                 continue;
+            }
+            // The login popup is short-lived by contract (docs/HU/02 §8.5): close it after 60 s. The flag
+            // is zeroed first so the close is asked exactly once; OnBeforeClose then clears the browser.
+            if (state->popup_browser && state->popup_opened_at_ms.load() != 0 &&
+                SteadyNowMs() - state->popup_opened_at_ms.load() > kPopupTimeoutMs) {
+                Log("[engine-host] login popup timed out (%lld ms)\n",
+                    static_cast<long long>(kPopupTimeoutMs));
+                state->popup_opened_at_ms = 0;
+                state->popup_browser->GetHost()->CloseBrowser(false);
             }
             ++it;
         }

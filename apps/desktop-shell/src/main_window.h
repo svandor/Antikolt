@@ -187,6 +187,13 @@ public slots:
     /// End the process from the tray menu. After this the tray is no longer a reason to keep running, so
     /// the window really closes.
     void quitFromTray();
+    /// Export the portable profile bundle to a file the user picks in a native dialog (ADR-059).
+    ///
+    /// The dialog itself is native UI the harness cannot click; the export/import it triggers is the same core
+    /// path `--profiletest` measures through the bridge.
+    void exportProfile();
+    /// Import a portable profile bundle from a file the user picks (ADR-059), then refresh the grid.
+    void importProfile();
 
 protected:
     /// The close button hides the window to the tray instead of ending the browser (ADR-043); without a
@@ -296,6 +303,9 @@ private:
     /// hibernation (docs/HU/02 §4.2); the flag arrives with the page's open request, because the shell
     /// does not keep the card list.
     bool live_card_pinned_ = false;
+    /// True while a login popup (OAuth/SSO) is open on the live card: hibernation must wait, or the flow
+    /// would lose its window and its cookies (docs/HU/02 §8.5).
+    bool popup_open_ = false;
     /// The flag from the page's open request, held until the card's surface is attached: the grid's
     /// own detach happens in between and would otherwise clear it.
     bool pending_pinned_ = false;

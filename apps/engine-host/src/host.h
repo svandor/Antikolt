@@ -129,6 +129,11 @@ struct HostState {
     /// The next request number for `pending_bridge`; 1-based, 0 means "one-way call".
     int64_t next_bridge_request = 1;
     int64_t surface_id = 0;
+    /// The login popup this surface opened (docs/HU/02 §8.5): a second, short-lived browser on the same
+    /// client and partition, so it inherits the card's cookies. Null when no popup is open.
+    CefRefPtr<CefBrowser> popup_browser;
+    /// Steady-clock milliseconds when the popup opened; 0 means "no popup" (or "already closing"). UI thread only.
+    std::atomic<int64_t> popup_opened_at_ms{0};
 };
 
 /// The CEF application object. Handles the subprocess entry point and command-line switches.
@@ -255,6 +260,22 @@ public:
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
+    /// A `window.open` / target=_blank request (CEF OnBeforePopup). The one documented second window is the
+    /// login popup (docs/HU/02 §8.5): a real window in the opener's partition, allowed only on a user gesture,
+    /// tracked separately so its close never takes the card's surface down. Anything else is refused.
+    bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame,
+                       int popup_id,
+                       const CefString& target_url,
+                       const CefString& target_frame_name,
+                       CefLifeSpanHandler::WindowOpenDisposition target_disposition,
+                       bool user_gesture,
+                       const CefPopupFeatures& popupFeatures,
+                       CefWindowInfo& windowInfo,
+                       CefRefPtr<CefClient>& client,
+                       CefBrowserSettings& settings,
+                       CefRefPtr<CefDictionaryValue>& extra_info,
+                       bool* no_javascript_access) override;
     void OnLoadEnd(CefRefPtr<CefBrowser> browser,
                    CefRefPtr<CefFrame> frame,
                    int httpStatusCode) override;
