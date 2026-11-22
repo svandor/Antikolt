@@ -2587,6 +2587,15 @@ void MainWindow::showSettings() {
         save->setObjectName(QStringLiteral("prefsSave"));
         connect(save, &QPushButton::clicked, this, &MainWindow::saveUserPrefs);
         layout->addWidget(save);
+
+        // The editable home (item 3): a user-authored home.html overrides the grid. One button brings the built-in
+        // grid back, because a broken custom page must never be a dead end.
+        auto* home_reset = new QPushButton(QStringLiteral("Egyéni kezdőlap visszaállítása"), panel);
+        home_reset->setObjectName(QStringLiteral("resetCustomHome"));
+        home_reset->setToolTip(QStringLiteral(
+            "Törli a profil home.html-jét, és visszatölti a beépített kártyarácskot."));
+        connect(home_reset, &QPushButton::clicked, this, &MainWindow::resetCustomHome);
+        layout->addWidget(home_reset);
         layout->addStretch(1);
 
         settings_dock_->setWidget(panel);
@@ -2655,6 +2664,16 @@ void MainWindow::saveUserPrefs() {
         // Re-read what the core accepted: the cache (budget, hibernation window) follows the stored row.
         refreshUserPrefs();
     });
+}
+
+void MainWindow::resetCustomHome() {
+    const QString home = coreDataDir() + QStringLiteral("/home.html");
+    if (QFile::exists(home)) {
+        QFile::remove(home);
+    }
+    setStatus(QStringLiteral("az egyéni kezdőlap visszaállítva"));
+    // Reload the grid: without `home.html`, `homePageUrl()` serves the built-in `home/index.html` again.
+    loadHome();
 }
 
 void MainWindow::buildToolBar() {

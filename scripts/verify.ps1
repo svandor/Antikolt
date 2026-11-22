@@ -110,6 +110,7 @@ $engineChecks = @(
     @{ Name = 'prefstest'; Args = @('--prefstest') },
     @{ Name = 'memorytest'; Args = @('--memorytest') },
     @{ Name = 'customhometest'; Args = @('--customhometest') },
+    @{ Name = 'resethometest'; Args = @('--resethometest') },
     @{ Name = 'memoryreport'; Args = @('--memoryreport') },
     @{ Name = 'mediatest'; Args = @('--mediatest') },
     @{ Name = 'themetest'; Args = @('--themetest') },

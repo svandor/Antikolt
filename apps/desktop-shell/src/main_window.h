@@ -110,6 +110,9 @@ public:
     void showSettings();
     /// Send the dock's values to the core (`user_prefs_set`); the core validates, the shell re-reads.
     void saveUserPrefs();
+    /// Remove the user-authored `home.html` from the core data directory and reload the built-in grid (item 3,
+    /// editable home: a user who set a broken page needs a way back).
+    void resetCustomHome();
     /// What the panel is showing, one line per row — the witness a self test reads.
     QString sessionPanelSummary() const;
     /// How many rows the panel holds (0 before the first refresh).

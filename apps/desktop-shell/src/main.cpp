@@ -2191,6 +2191,65 @@ int runCustomHomeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the editable home's way back (item 3): a user-authored `home.html` is served, and `resetCustomHome`
+/// deletes it so the built-in grid returns. A broken custom page must never be a dead end.
+int runResetHomeCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    const QString dataDir = QDir::tempPath() + QStringLiteral("/antikolt-resethome-") +
+                            QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir().mkpath(dataDir);
+    qputenv("ANTIKOLT_CORE_DATA", dataDir.toUtf8());
+
+    const QString homeFile = dataDir + QStringLiteral("/home.html");
+    {
+        QFile file(homeFile);
+        file.open(QIODevice::WriteOnly);
+        file.write("<html><head><title>sajat kezdolap</title></head>"
+                   "<body><h1 id=\"mark\">egyedi</h1></body></html>");
+    }
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool custom_served = false;
+    bool grid_returned = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             if (url.endsWith(QStringLiteral("/home.html")) && !custom_served) {
+                                 custom_served = true;
+                                 // The custom home loaded; now reset it and expect the built-in grid.
+                                 QTimer::singleShot(400, &loop, [&] { window.resetCustomHome(); });
+                                 return;
+                             }
+                             if (url.endsWith(QStringLiteral("/home/index.html")) && custom_served) {
+                                 grid_returned = true;
+                                 loop.quit();
+                             }
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    const bool file_gone = !QFile::exists(homeFile);
+    out << "reset_custom_served=" << (custom_served ? "true" : "false") << '\n';
+    out << "reset_grid_returned=" << (grid_returned ? "true" : "false") << '\n';
+    out << "reset_file_gone=" << (file_gone ? "true" : "false") << '\n';
+    const bool ok = custom_served && grid_returned && file_gone;
+    out << "reset_home=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    QDir(dataDir).removeRecursively();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// The tuning report (F6): one read of the whole memory-governor state — the active profile and its params, the
 /// live surface's working set against the budget, and the per-card working sets summed. It is the diagnostics the
 /// "hangolás" item promises: everything a person needs to judge whether the profile fits, in one place.
@@ -8273,6 +8332,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("customhometest"),
         QStringLiteral("Prove a user-authored home.html is served from the profile, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption resethometest(
+        QStringLiteral("resethometest"),
+        QStringLiteral("Prove resetCustomHome removes the custom home and reloads the grid, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption memoryreport(
         QStringLiteral("memoryreport"),
         QStringLiteral("Print the memory-governor tuning report (F6), then exit."),
@@ -8331,6 +8394,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(prefstest);
     parser.addOption(memorytest);
     parser.addOption(customhometest);
+    parser.addOption(resethometest);
     parser.addOption(memoryreport);
     parser.addOption(logtest);
     parser.addOption(searchtest);
@@ -8491,6 +8555,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(customhometest)) {
         return runCustomHomeCheck(parser.value(customhometest));
+    }
+
+    if (parser.isSet(resethometest)) {
+        return runResetHomeCheck(parser.value(resethometest));
     }
 
     if (parser.isSet(memoryreport)) {

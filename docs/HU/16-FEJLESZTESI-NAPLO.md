@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizenegyedik szelet) — az egyéni kezdőlap visszaállítása (3. tétel)
+
+A szerkeszthető kezdőlap most már használható körré zárul: a felhasználó beállított `home.html`-jét egyetlen
+gombbal vissza lehet állítani a beépített rácsra. Egy elrontott egyéni lap soha nem lehet zsákutca.
+
+### Mi változott
+
+- **`resetCustomHome()`:** törli a mag adatkönyvtárának `home.html`-jét, és újratölti a rácsot — `homePageUrl()`
+  ekkor már a beépített `home/index.html`-t adja.
+- **A beállítás-dokk gombja:** „Egyéni kezdőlap visszaállítása" (`resetCustomHome` objectName).
+- **`--resethometest` (új önteszt):** egy karcolt `home.html` betölt → `resetCustomHome()` → a fájl eltűnik, a
+  beépített rács visszatér (`reset_grid_returned=true`).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (48 önteszt + check-repo)
+--resethometest             → reset_custom_served=true · reset_grid_returned=true · reset_file_gone=true ·
+                              reset_home=ok
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott (3. tétel)
+
+- A **szerkesztő-felület** (a HTML írása a termékből) és a felhasználói HTML **sandboxolása**; az F6 raszter-kezdőlap.
+
 ## 2026-11-22 (száztizedik szelet) — a motor-élettartam dimenzió bekötése (F6)
 
 A raszter-kezdőlap (a motor leállítva) előfeltétele a motor-élettartam (T1/T2) dimenzió: a shell most már cache-eli
