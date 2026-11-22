@@ -2250,6 +2250,60 @@ int runResetHomeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the editable home's starter (item 3, editor): with no home.html, the shell writes a working template and
+/// copies the card package next to it, and the template is then served.
+int runHomeEditCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    const QString dataDir = QDir::tempPath() + QStringLiteral("/antikolt-homeedit-") +
+                            QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir().mkpath(dataDir);
+    qputenv("ANTIKOLT_CORE_DATA", dataDir.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.createCustomHomeTemplate();
+
+    const QString homeFile = dataDir + QStringLiteral("/home.html");
+    const QString cardFile = dataDir + QStringLiteral("/antikolt-card.js");
+    const bool home_exists = QFile::exists(homeFile);
+    const bool card_copied = QFile::exists(cardFile);
+    bool has_script = false;
+    if (home_exists) {
+        QFile file(homeFile);
+        if (file.open(QIODevice::ReadOnly)) {
+            has_script = file.readAll().contains("antikolt-card.js");
+        }
+    }
+
+    window.startEngine();
+    bool served = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:")) && url.endsWith(QStringLiteral("/home.html"))) {
+                                 served = true;
+                                 loop.quit();
+                             }
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "homeedit_home_exists=" << (home_exists ? "true" : "false") << '\n';
+    out << "homeedit_card_copied=" << (card_copied ? "true" : "false") << '\n';
+    out << "homeedit_has_script=" << (has_script ? "true" : "false") << '\n';
+    out << "homeedit_served=" << (served ? "true" : "false") << '\n';
+    const bool ok = home_exists && card_copied && has_script && served;
+    out << "home_edit=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    QDir(dataDir).removeRecursively();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -8679,6 +8733,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("resethometest"),
         QStringLiteral("Prove resetCustomHome removes the custom home and reloads the grid, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption homeedittest(
+        QStringLiteral("homeedittest"),
+        QStringLiteral("Prove the editable-home starter template is created and served, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -8758,6 +8816,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(memorytest);
     parser.addOption(customhometest);
     parser.addOption(resethometest);
+    parser.addOption(homeedittest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -8927,6 +8986,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(resethometest)) {
         return runResetHomeCheck(parser.value(resethometest));
+    }
+
+    if (parser.isSet(homeedittest)) {
+        return runHomeEditCheck(parser.value(homeedittest));
     }
 
     if (parser.isSet(enginerestarttest)) {

@@ -3,6 +3,36 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizenhetedik szelet) — a szerkeszthető kezdőlap kiinduló sablonja (3. tétel)
+
+A szerkesztő első, mérhető darabja: ha a felhasználónak még nincs `home.html`-je, a shell egy **működő kiinduló
+lapot** ír (és mellé másolja az `antikolt-card.js`-t), így a felhasználó nem üres fájlból indul, hanem egy olyan
+lapból, ami már rendereli a kártyákat.
+
+### Mi változott
+
+- **`createCustomHomeTemplate()`:** létrehozza `<coreData>/home.html`-t (a sablon a `window.antikoltAcceptCards`-ot
+  definiálja, ami a shell kártyáit rendereli), és mellé másolja a beépített `antikolt-card.js`-t — a korábbi
+  hézag: a profilban lévő lap nem érte volna el a csomagot.
+- **A beállítás-dokk „Szerkesztés" gombja:** létrehozza a sablont (ha nincs), majd megnyitja a szerkesztőben
+  (`QDesktopServices::openUrl`).
+- **`--homeedittest` (új):** a sablon létrejön, a csomag mellette van, a lap betölti az `antikolt-card.js`-t és
+  kiszolgálódik.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (53 önteszt + check-repo)
+--homeedittest              → homeedit_home_exists=true · homeedit_card_copied=true · homeedit_has_script=true ·
+                              homeedit_served=true · home_edit=ok
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott (3. tétel)
+
+- A felhasználói HTML **sandboxolása** (a biztonságos betöltés) és a szerkesztő további kényelme (a terméken belüli
+  HTML-szerkesztő); az F6 leképezés widget-bekötése.
+
 ## 2026-11-22 (száztizenhatodik szelet) — a raszter kattintás-leképezése (F6)
 
 A raszter-kezdőlap utolsó darabja: a rács a raszterizálás előtt kiadja a látható kártyák téglalapjait, a shell

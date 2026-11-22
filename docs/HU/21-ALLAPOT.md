@@ -66,8 +66,8 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
    partíciójában, 60 s, a hibernálás felfüggesztve), de a gesztus-út a harnessben nem mérhető (a szintetikus
    `window.open` nem gesztus): a `popup_requested`/`popup_closed` útja `not-measurable`.
 3. **A teljes szerkeszthető kezdőlap** — a `<antikolt-card>` csomag (ADR-075), a felhasználói HTML
-   tárolása+kiszolgálása és a visszaállítás kész (106., 111. szelet); a **szerkesztő-felület** (a HTML írása a
-   termékből) és a felhasználói HTML **sandboxolása** marad hátra.
+   tárolása+kiszolgálása, a visszaállítás és a **kiinduló sablon + szerkesztés** kész (106., 111., 117. szelet); a
+   felhasználói HTML **sandboxolása** (a biztonságos betöltés) marad hátra.
 4. **Az F6 maradéka** — a büdzsé, a beállítás-felülete, a kártyánkénti memória-bontás, a profil-preset, a
    médiaminőség-korlát **jele**, a profil **előnézet-frissítése**, a **hangolási riport**, a **motor-élettartam
    (T1/T2) bekötése**, a **motor leállítás/újraindítás ciklusa**, a **rács raszterizálása**, a **raszter-kezdőlap

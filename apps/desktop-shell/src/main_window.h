@@ -113,6 +113,9 @@ public:
     /// Remove the user-authored `home.html` from the core data directory and reload the built-in grid (item 3,
     /// editable home: a user who set a broken page needs a way back).
     void resetCustomHome();
+    /// Create a starter `home.html` (and copy the card package next to it) when the user has none yet — the first
+    /// step of the editable home's editor, so the user edits a working page instead of starting from a blank file.
+    void createCustomHomeTemplate();
     /// Rasterise the grid: capture the home surface to `<profile>/home-raster.png` (the image the raster home
     /// shows while the engine is stopped, F6).
     void captureGrid();

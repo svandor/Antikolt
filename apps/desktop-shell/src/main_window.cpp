@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDockWidget>
 #include <QHBoxLayout>
 #include <QDir>
@@ -2595,6 +2596,15 @@ void MainWindow::showSettings() {
 
         // The editable home (item 3): a user-authored home.html overrides the grid. One button brings the built-in
         // grid back, because a broken custom page must never be a dead end.
+        auto* home_edit = new QPushButton(QStringLiteral("Egyéni kezdőlap szerkesztése"), panel);
+        home_edit->setObjectName(QStringLiteral("editCustomHome"));
+        home_edit->setToolTip(QStringLiteral(
+            "Létrehozza a kiinduló home.html-t (ha még nincs), és megnyitja a szerkesztőben."));
+        connect(home_edit, &QPushButton::clicked, this, [this] {
+            createCustomHomeTemplate();
+            QDesktopServices::openUrl(QUrl::fromLocalFile(coreDataDir() + QStringLiteral("/home.html")));
+        });
+        layout->addWidget(home_edit);
         auto* home_reset = new QPushButton(QStringLiteral("Egyéni kezdőlap visszaállítása"), panel);
         home_reset->setObjectName(QStringLiteral("resetCustomHome"));
         home_reset->setToolTip(QStringLiteral(
@@ -2679,6 +2689,79 @@ void MainWindow::resetCustomHome() {
     setStatus(QStringLiteral("az egyéni kezdőlap visszaállítva"));
     // Reload the grid: without `home.html`, `homePageUrl()` serves the built-in `home/index.html` again.
     loadHome();
+}
+
+namespace {
+/// The starter page the editor writes when the user has no `home.html` yet. It loads the card package next to it
+/// and renders the shell's cards through `window.antikoltAcceptCards` — a working base to edit, not a blank file.
+constexpr const char kCustomHomeTemplate[] = R"html(<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<title>Saját kezdőlap</title>
+<style>
+:root { --surface:#fff; --surface-raised:#f4f4f5; --border:#d4d4d8; --text:#18181b; --text-muted:#71717a; --accent:#2f6feb; --radius-card:12px; --radius-control:8px; --shadow-1:0 1px 2px rgb(0 0 0/8%); --shadow-2:0 4px 12px rgb(0 0 0/14%); --motion-fast:120ms; --ease-out:cubic-bezier(.16,1,.3,1); }
+body { font-family: Inter, "Segoe UI", system-ui, sans-serif; background:#fafafa; color:var(--text); margin:0; padding:24px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:16px; }
+</style>
+</head>
+<body>
+<h1>Saját kezdőlap</h1>
+<p>A kártyák a <code>&lt;antikolt-card&gt;</code> komponenssel jelennek meg — a saját lapod tetszőleges HTML/CSS-t rakhat köré.</p>
+<div class="grid" id="cards"></div>
+<script src="antikolt-card.js" defer></script>
+<script>
+window.antikoltAcceptCards = function (cards) {
+  var host = document.getElementById("cards");
+  host.replaceChildren();
+  for (var i = 0; i < cards.length; i++) {
+    var element = document.createElement("antikolt-card");
+    element.card = cards[i];
+    host.append(element);
+  }
+};
+</script>
+</body>
+</html>
+)html";
+
+/// Where the built-in `home/` lives (the same candidates `homePageUrl` uses), so the shell can copy `antikolt-card.js`
+/// next to the user's `home.html`.
+QString homeDirectory() {
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + QStringLiteral("/home"),
+        appDir + QStringLiteral("/../home"),
+        appDir + QStringLiteral("/../../../home"),
+        QDir::currentPath() + QStringLiteral("/home"),
+    };
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate + QStringLiteral("/index.html"))) {
+            return QDir::cleanPath(candidate);
+        }
+    }
+    return QString();
+}
+}  // namespace
+
+void MainWindow::createCustomHomeTemplate() {
+    const QString target = coreDataDir() + QStringLiteral("/home.html");
+    if (QFile::exists(target)) {
+        return;  // never overwrite what the user already wrote
+    }
+    // The card package the template loads must sit next to the home.html it is served from.
+    const QString home = homeDirectory();
+    if (!home.isEmpty()) {
+        const QString card = home + QStringLiteral("/antikolt-card.js");
+        const QString card_target = coreDataDir() + QStringLiteral("/antikolt-card.js");
+        if (QFile::exists(card) && !QFile::exists(card_target)) {
+            QFile::copy(card, card_target);
+        }
+    }
+    QFile file(target);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(kCustomHomeTemplate);
+    }
 }
 
 void MainWindow::captureGrid() {
