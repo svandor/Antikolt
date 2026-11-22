@@ -117,7 +117,7 @@ $engineChecks = @(
     @{ Name = 'profiletest'; Args = @('--profiletest') },
     @{ Name = 'addcardtest'; Args = @('--addcardtest') },
     @{ Name = 'tagtest'; Args = @('--tagtest') },
-    @{ Name = 'scrollzoomtest'; Args = @('--scrollzoomtest') }
+    @{ Name = 'scrollzoomtest'; Args = @('--scrollzoomtest') },
     @{ Name = 'scrollrestore'; Args = @('--scrollrestore') }
 )
 
