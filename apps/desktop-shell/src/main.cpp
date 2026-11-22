@@ -1988,12 +1988,14 @@ int runPrefsCheck(const QString& enginePath) {
                                  return;
                              }
                              // The grid only loads after the core answers its card list, so the core is ready
-                             // here (measured by --gridtest). A budget of 256 MiB must reach the page.
+                             // here (measured by --gridtest). The "ultra" profile presets a 256 MiB budget — the
+                             // 512 and 600000 sent here are what the preset must override (F6, §3).
                              QJsonObject prefs;
                              prefs.insert(QStringLiteral("max_live_cards"), 5);
                              prefs.insert(QStringLiteral("idle_hibernate_ms"), static_cast<qint64>(600000));
                              prefs.insert(QStringLiteral("cold_card_ms"), static_cast<qint64>(86400000));
-                             prefs.insert(QStringLiteral("memory_budget_mb"), 256);
+                             prefs.insert(QStringLiteral("memory_budget_mb"), 512);
+                             prefs.insert(QStringLiteral("resource_profile"), QStringLiteral("ultra"));
                              window.core()->userPrefsSet(
                                  prefs,
                                  [&, id](const QJsonObject&, const QString& error) {

@@ -33,8 +33,8 @@ pub const DB_FILE_NAME: &str = "antikolt.sqlite3";
 /// The schema this core writes. Bumped only with a migration; `0001` was the JSON files, `0002` added `page_text`,
 /// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070),
 /// `0005` the per-container proxy and permission policy (ADR-071), `0006` the one row of user preferences (ADR-072),
-/// `0007` the memory budget column (F6), `0008` the per-card `memory_bytes` (F6).
-pub const SCHEMA_VERSION: i64 = 8;
+/// `0007` the memory budget column (F6), `0008` the per-card `memory_bytes` (F6), `0009` the resource profile (F6).
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// The schema version that means "the cards are SQLite-first" (ADR-069). A file at least this version already has the
 /// cards' adoption behind it, which the `0004` migration records in `meta` (the per-store adoption markers live there,
@@ -79,11 +79,33 @@ pub struct UserPrefs {
     /// an older bundle keeps the factory budget instead of being refused.
     #[serde(default = "default_memory_budget_mb")]
     pub memory_budget_mb: u32,
+    /// Which resource profile the memory governor follows (F6, `09-CELHARDVER.md` §3): `gyors` |
+    /// `kiegyensulyozott` | `takarekos` | `ultra` | `kezi`. A named profile is a preset — on write, its
+    /// hibernation window and budget override the individual fields; `kezi` leaves them manual.
+    #[serde(default = "default_resource_profile")]
+    pub resource_profile: String,
 }
 
 /// The factory memory budget, shared by `UserPrefs::default` and the `serde` default.
 pub fn default_memory_budget_mb() -> u32 {
     512
+}
+
+/// The factory resource profile: `kiegyensulyozott`, the every-day preset.
+pub fn default_resource_profile() -> String {
+    "kiegyensulyozott".to_string()
+}
+
+/// The preset a named profile imposes on the fields that are already wired: the hibernation window (from the
+/// profile table) and the budget (a tighter number for the thriftier profiles). `kezi` has no preset — the
+/// individual values are authoritative. Unknown strings fall back to the factory profile.
+pub fn profile_preset(profile: &str) -> (u64, u32) {
+    match profile {
+        "gyors" => (900_000, 1024),
+        "takarekos" => (300_000, 384),
+        "ultra" => (120_000, 256),
+        _ => (600_000, 512), // kiegyensulyozott (the factory profile)
+    }
 }
 
 impl Default for UserPrefs {
@@ -96,6 +118,7 @@ impl Default for UserPrefs {
             cold_card_ms: 86_400_000,
             // Half a gibibyte is the factory budget (F6): generous for an idle shell, tight for many live cards.
             memory_budget_mb: default_memory_budget_mb(),
+            resource_profile: default_resource_profile(),
         }
     }
 }
@@ -125,6 +148,14 @@ impl UserPrefs {
         }
         if !(64..=4096).contains(&self.memory_budget_mb) {
             return Err("memory_budget_mb must be between 64 and 4096");
+        }
+        if !matches!(
+            self.resource_profile.as_str(),
+            "gyors" | "kiegyensulyozott" | "takarekos" | "ultra" | "kezi"
+        ) {
+            return Err(
+                "resource_profile must be one of gyors, kiegyensulyozott, takarekos, ultra, kezi",
+            );
         }
         Ok(())
     }
@@ -337,6 +368,23 @@ impl Db {
                 )?;
             }
         }
+        if self.opened_at_version < 9 {
+            // 0009: the resource profile (F6). One text column on the one-row preferences table; added only when
+            // missing (the 0007 idiom).
+            let profile_column_exists: i64 = self.connection.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('user_prefs') WHERE name = 'resource_profile'",
+                [],
+                |row| row.get(0),
+            )?;
+            if profile_column_exists == 0 {
+                self.connection.execute_batch(
+                    "BEGIN;
+                     ALTER TABLE user_prefs ADD COLUMN resource_profile TEXT NOT NULL DEFAULT 'kiegyensulyozott';
+                     PRAGMA user_version = 9;
+                     COMMIT;",
+                )?;
+            }
+        }
         // The version is written last, monotonically: a step that crashed half-way leaves an older number behind, so the
         // next start retries it instead of believing a migration finished because a table happened to exist.
         self.connection
@@ -381,7 +429,8 @@ impl Db {
     /// The one row of user preferences, or the factory defaults when nothing was ever chosen.
     pub fn user_prefs(&self) -> Result<UserPrefs, DbError> {
         let row: Option<UserPrefs> = self.connection.query_row(
-            "SELECT max_live_cards, idle_hibernate_ms, cold_card_ms, memory_budget_mb FROM user_prefs WHERE id = 1",
+            "SELECT max_live_cards, idle_hibernate_ms, cold_card_ms, memory_budget_mb, resource_profile
+             FROM user_prefs WHERE id = 1",
             [],
             |row| {
                 Ok(UserPrefs {
@@ -389,6 +438,7 @@ impl Db {
                     idle_hibernate_ms: row.get::<_, i64>(1)? as u64,
                     cold_card_ms: row.get::<_, i64>(2)? as u64,
                     memory_budget_mb: row.get::<_, i64>(3)? as u32,
+                    resource_profile: row.get(4)?,
                 })
             },
         ).optional()?;
@@ -398,18 +448,20 @@ impl Db {
     /// Replace the one row of user preferences. The caller must have validated first.
     pub fn set_user_prefs(&self, prefs: &UserPrefs) -> Result<(), DbError> {
         self.connection.execute(
-            "INSERT INTO user_prefs (id, max_live_cards, idle_hibernate_ms, cold_card_ms, memory_budget_mb)
-             VALUES (1, ?1, ?2, ?3, ?4)
+            "INSERT INTO user_prefs (id, max_live_cards, idle_hibernate_ms, cold_card_ms, memory_budget_mb, resource_profile)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (id) DO UPDATE SET
                  max_live_cards = excluded.max_live_cards,
                  idle_hibernate_ms = excluded.idle_hibernate_ms,
                  cold_card_ms = excluded.cold_card_ms,
-                 memory_budget_mb = excluded.memory_budget_mb",
+                 memory_budget_mb = excluded.memory_budget_mb,
+                 resource_profile = excluded.resource_profile",
             params![
                 prefs.max_live_cards as i64,
                 prefs.idle_hibernate_ms as i64,
                 prefs.cold_card_ms as i64,
                 prefs.memory_budget_mb as i64,
+                prefs.resource_profile,
             ],
         )?;
         Ok(())
@@ -1459,6 +1511,26 @@ mod tests {
         );
         bad.memory_budget_mb = 512;
         assert!(bad.validate().is_ok());
+
+        // resource_profile: only the five known names.
+        bad.resource_profile = "maximal".to_string();
+        assert_eq!(
+            bad.validate(),
+            Err("resource_profile must be one of gyors, kiegyensulyozott, takarekos, ultra, kezi")
+        );
+        bad.resource_profile = "gyors".to_string();
+        assert!(bad.validate().is_ok());
+    }
+
+    #[test]
+    fn the_profile_preset_maps_a_name_to_its_hibernation_and_budget() {
+        assert_eq!(profile_preset("gyors"), (900_000, 1024));
+        assert_eq!(profile_preset("kiegyensulyozott"), (600_000, 512));
+        assert_eq!(profile_preset("takarekos"), (300_000, 384));
+        assert_eq!(profile_preset("ultra"), (120_000, 256));
+        // Manual and unknown fall back to the factory profile.
+        assert_eq!(profile_preset("kezi"), (600_000, 512));
+        assert_eq!(profile_preset("ismeretlen"), (600_000, 512));
     }
 
     #[test]
@@ -1476,6 +1548,7 @@ mod tests {
             idle_hibernate_ms: 300_000,
             cold_card_ms: 900_000,
             memory_budget_mb: 768,
+            resource_profile: "takarekos".to_string(),
         };
         db.set_user_prefs(&changed).expect("write");
         assert_eq!(db.user_prefs().expect("read"), changed);
@@ -1485,6 +1558,7 @@ mod tests {
             idle_hibernate_ms: 120_000,
             cold_card_ms: 60_000,
             memory_budget_mb: 256,
+            resource_profile: "ultra".to_string(),
         };
         db.set_user_prefs(&back).expect("update");
         assert_eq!(

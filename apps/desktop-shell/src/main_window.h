@@ -25,6 +25,7 @@ class QDockWidget;
 class QTableWidget;
 class QSpinBox;
 class QCheckBox;
+class QComboBox;
 class QSystemTrayIcon;
 class QMenu;
 class QCloseEvent;
@@ -368,6 +369,8 @@ private:
     QSpinBox* prefs_idle_minutes_ = nullptr;
     QSpinBox* prefs_cold_hours_ = nullptr;
     QSpinBox* prefs_budget_mb_ = nullptr;
+    /// The resource profile picker (F6, `09-CELHARDVER.md` §3): a preset that fills the hibernation and budget.
+    QComboBox* prefs_profile_ = nullptr;
     /// The container default the core reported (`keep`/`sweep`/`wipe`), sent back unchanged on save.
     QString session_policy_ = QStringLiteral("sweep");
     /// The profile's memory budget in bytes (`memory_budget_mb` × MiB), cached from the core; the factory 512 MiB

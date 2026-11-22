@@ -629,20 +629,33 @@ fn handle(
             Err(error) => (error_reply(id, "internal", &error.to_string()), true),
         },
         "user_prefs_set" => {
-            let Some(prefs) = request.get("prefs") else {
+            let Some(raw) = request.get("prefs") else {
                 return (
                     error_reply(id, "invalid_argument", "user_prefs_set needs prefs"),
                     true,
                 );
             };
-            match serde_json::from_value::<UserPrefs>(prefs.clone()) {
-                Ok(prefs) => match sessions.set_user_prefs(prefs) {
-                    Ok(prefs) => (ok_reply(id, json!({ "prefs": prefs })), true),
-                    Err(error) => (
-                        error_reply(id, session_error_code(&error), &error.to_string()),
-                        true,
-                    ),
-                },
+            match serde_json::from_value::<UserPrefs>(raw.clone()) {
+                Ok(mut prefs) => {
+                    // A named profile is a preset (F6, `09-CELHARDVER.md` §3): its hibernation window and budget
+                    // are the profile's, not what the client sent. But only when the client *explicitly* sent the
+                    // profile — an omitted field means "keep the individual values", and the serde default must not
+                    // silently pick a preset. `kezi` leaves the individual values authoritative.
+                    if let Some(profile) = raw.get("resource_profile").and_then(Value::as_str) {
+                        if profile != "kezi" {
+                            let (idle, budget) = sqlite_store::profile_preset(profile);
+                            prefs.idle_hibernate_ms = idle;
+                            prefs.memory_budget_mb = budget;
+                        }
+                    }
+                    match sessions.set_user_prefs(prefs) {
+                        Ok(prefs) => (ok_reply(id, json!({ "prefs": prefs })), true),
+                        Err(error) => (
+                            error_reply(id, session_error_code(&error), &error.to_string()),
+                            true,
+                        ),
+                    }
+                }
                 Err(error) => (
                     error_reply(id, "invalid_argument", &error.to_string()),
                     true,

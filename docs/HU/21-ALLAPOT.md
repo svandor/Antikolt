@@ -43,7 +43,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 |---|---|---|
 | Rács, 500 kártya | `--gridscaletest` | 503 kártya, **13** renderelt DOM-elem, 20 ms az első renderig; a görgetéses ugrás `not-measurable` (nincs layout-magasság a harnessben) |
 | Tároló (négy store + felhasználói beállítások) | Rust-tesztek, `--addcardtest` | mind a négy store **SQLite-sorok** (`user_version=7`, WAL): kártyák, konténerek, munkaterületek, munkamenetek, `user_prefs` egyetlen sortal (`CHECK (id = 1)`); a négy `*.json` származtatott export; `db_status=ok schema=7 … verified=yes` mind a négyet soronként méri; a kapcsoló előtti profil store-onként egyszer átvételre kerül (ADR-070, napló 97) |
-| Felhasználói beállítások | Rust-tesztek (`sqlite_store::tests`, `service.rs`), `--prefstest` | `UserPrefs` default (`max_live_cards=5`, `idle_hibernate_ms=600_000` — 10 perc, `cold_card_ms=86_400_000` — 24 óra, `memory_budget_mb=512`), validáció; IPC `user_prefs`/`user_prefs_set`, `profile_export`/`profile_import`; a shell ⚙ Beállítások dokkja szerkeszti (ADR-072/074), az idle-időzítő a profil `idle_hibernate_ms`-ét használja; `--prefstest` a büdzsé-írást a lapig méri (`pref_budget_bytes=268435456`) |
+| Felhasználói beállítások | Rust-tesztek (`sqlite_store::tests`, `service.rs`), `--prefstest` | `UserPrefs` default (`max_live_cards=5`, `idle_hibernate_ms=600_000`, `cold_card_ms=86_400_000`, `memory_budget_mb=512`, `resource_profile="kiegyensulyozott"`), validáció; IPC `user_prefs`/`user_prefs_set`, `profile_export`/`profile_import`; a shell ⚙ Beállítások dokkja szerkeszti (profil-lenővel), az idle-időzítő a profil `idle_hibernate_ms`-ét használja; a profil egy preset (F6, séma 0009), `--prefstest` az „ultra" → 256 MiB levezetést a lapig méri |
 | Keresés | `--searchtest`, `--tagtest` | ékezet-független cím/webcím/jegyzet/címke, és az **oldalszöveg** is (`search_page_text=ok`) |
 | Konténerek | `--containertest` | színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, használt konténer törlése **áthelyezéssel**, proxy/engedély-szerkesztő a rácson (`container_policy=ok`), partíció-takarítás törléskor (`container_partition_cleanup=ok`) |
 | Munkaterületek | `--workspacetest` | fül-sor a magban tárolt munkaterület-táblából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó |
@@ -66,9 +66,10 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
    `window.open` nem gesztus): a `popup_requested`/`popup_closed` útja `not-measurable`.
 3. **A teljes szerkeszthető kezdőlap** — a `<antikolt-card>` csomag kész (ADR-075); a felhasználói HTML tárolása,
    kiszolgálása és egy szerkesztő-felület marad hátra.
-4. **Az F6 maradéka** — a büdzsé, a beállítás-felülete és a kártyánkénti memória-bontás kész (ADR-074, 102–103.
-   szelet); az **erőforrás-profilok**, a **médiaminőség-korlát** (720p a narancs sávban), a **raszter-kezdőlap**
-   (motor leállítva) és a **hangolási riport** marad hátra (az ütemterv 3–4 hetes tétele).
+4. **Az F6 maradéka** — a büdzsé, a beállítás-felülete, a kártyánkénti memória-bontás és a profil-preset kész
+   (ADR-074, 102–104. szelet); a profil **többi dimenziója** (motor-élettartam, előnézet-frissítés, GPU), a
+   **médiaminőség-korlát** (720p a narancs sávban), a **raszter-kezdőlap** (motor leállítva) és a **hangolási
+   riport** marad hátra (az ütemterv 3–4 hetes tétele).
 
 ## Amihez emberi lépés kell (nem kód)
 

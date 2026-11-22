@@ -3,6 +3,41 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száznegyedik szelet) — az erőforrás-profil mint preset (F6)
+
+Az F6 „erőforrás-profil" tételének az a része készült el, ami a már bekötött beállításokra épül: a profil egy
+**preset**, ami a hibernálási időt és a memória-büdzsét vezeti le. A profil további dimenziói (motor-élettartam,
+előnézet-frissítés, médiaminőség, GPU) külön, nagyobb szeletek.
+
+### Mi változott
+
+- **`resource_profile` a `user_prefs`-ben (séma `0009`):** `gyors` | `kiegyensulyozott` *(alap)* | `takarekos` |
+  `ultra` | `kezi`, validálva; `serde(default)` a 0009 előtti köteg importjához; az `ALTER … ADD COLUMN` a 0007
+  idempotens mintájára.
+- **`profile_preset(profil) → (idle, büdzsé)` a magban** (egy forrás): gyors `(15 p, 1024 MiB)`,
+  kiegyensúlyozott `(10 p, 512 MiB)`, takarékos `(5 p, 384 MiB)`, ultra `(2 p, 256 MiB)`; a `kezi` és az ismeretlen
+  a gyárira esik vissza.
+- **A preset csak kifejezetten küldött profilnál ír felül** (`user_prefs_set`): a kliens által *nem* küldött mező
+  (a serde-default) nem vált titokban presetet — az egyéni értékek akkor is érvényesek, ha a profil nincs megadva.
+- **A beállítás-dokk profil-lenője:** a négy profil + „Kézi" egy `QComboBox`-ban; a mag a névvel ellátott profilnál
+  felülírja a hibernálást és a büdzsét, a „Kézi" a lentieket hagyja.
+- **`--prefstest` kiterjesztve:** a kliens `resource_profile="ultra"`-t küld `512` MiB-os büdzsével — a preset
+  `256`-ra vezeti le, és a lap `budgetBytes`-e ezt hordozza.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (42 önteszt + check-repo)
+--prefstest                 → pref_budget_bytes=268435456 (az „ultra" 256 MiB-je) · prefs=ok
+cargo test                  → 154 zöld: 78 + 52 + 8 + 1 + 15
+--addcardtest               → db_status=ok schema=9 … verified=yes
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A profil **többi dimenziója**: motor-élettartam (T1 meleg / T2 hideg), előnézet-frissítés ki/be, **médiaminőség
+  -korlát** (720p), GPU-választás — és a **raszter-kezdőlap** (motor leállítva) meg a **hangolási riport**.
+
 ## 2026-11-22 (százharmadik szelet) — a kártyánkénti memória-bontás (F6)
 
 Az F6 „kártyánkénti bontás" tétele eddig hiányzott: a `system.memory` az élő felületet mérte, a kártya pedig nem

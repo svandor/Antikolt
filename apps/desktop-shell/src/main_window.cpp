@@ -2539,6 +2539,23 @@ void MainWindow::showSettings() {
         budget_layout->addWidget(prefs_budget_mb_);
         layout->addWidget(budget);
 
+        // The resource profile (F6, `09-CELHARDVER.md` §3): a named preset fills the hibernation and budget on
+        // write; "Kézi" leaves the fields above authoritative.
+        auto* profile = new QWidget(panel);
+        auto* profile_layout = new QHBoxLayout(profile);
+        profile_layout->setContentsMargins(0, 0, 0, 0);
+        profile_layout->addWidget(new QLabel(QStringLiteral("Erőforrás-profil:"), profile));
+        prefs_profile_ = new QComboBox(profile);
+        prefs_profile_->addItem(QStringLiteral("Gyors"), QStringLiteral("gyors"));
+        prefs_profile_->addItem(QStringLiteral("Kiegyensúlyozott"), QStringLiteral("kiegyensulyozott"));
+        prefs_profile_->addItem(QStringLiteral("Takarékos"), QStringLiteral("takarekos"));
+        prefs_profile_->addItem(QStringLiteral("Ultra"), QStringLiteral("ultra"));
+        prefs_profile_->addItem(QStringLiteral("Kézi"), QStringLiteral("kezi"));
+        prefs_profile_->setToolTip(QStringLiteral(
+            "A névvel ellátott profil preset: felülírja a hibernálást és a büdzsét. A Kézi a fentieket hagyja."));
+        profile_layout->addWidget(prefs_profile_);
+        layout->addWidget(profile);
+
         auto* save = new QPushButton(QStringLiteral("Mentés"), panel);
         save->setObjectName(QStringLiteral("prefsSave"));
         connect(save, &QPushButton::clicked, this, &MainWindow::saveUserPrefs);
@@ -2576,6 +2593,11 @@ void MainWindow::fillSettingsDock(const QJsonObject& prefs) {
     if (prefs_budget_mb_ != nullptr) {
         prefs_budget_mb_->setValue(prefs.value(QStringLiteral("memory_budget_mb")).toInt(512));
     }
+    if (prefs_profile_ != nullptr) {
+        const QString profile = prefs.value(QStringLiteral("resource_profile")).toString(QStringLiteral("kiegyensulyozott"));
+        const int index = prefs_profile_->findData(profile);
+        prefs_profile_->setCurrentIndex(index >= 0 ? index : 1);
+    }
 }
 
 void MainWindow::saveUserPrefs() {
@@ -2593,6 +2615,9 @@ void MainWindow::saveUserPrefs() {
                                      3600000LL));
     prefs.insert(QStringLiteral("memory_budget_mb"),
                  prefs_budget_mb_ != nullptr ? prefs_budget_mb_->value() : 512);
+    prefs.insert(QStringLiteral("resource_profile"),
+                 prefs_profile_ != nullptr ? prefs_profile_->currentData().toString()
+                                           : QStringLiteral("kiegyensulyozott"));
     core_->userPrefsSet(prefs, [this](const QJsonObject&, const QString& error) {
         if (!error.isEmpty()) {
             setStatus(QStringLiteral("a beállítások nem mentődtek: %1").arg(error));
