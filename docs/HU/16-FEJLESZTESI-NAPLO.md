@@ -62,23 +62,24 @@ path` hibát, majd **csendben memóriába esik** (a `--partitiontest` `partition
 a lemezre kerülnek, és a `previews/`/`snapshots/`/`screenshots/` is a szülőben marad (a `cef-root` alkönyvtár-elmélet
 **megcáfolva** és visszavonva).
 
-**A kapu viszont NEM zöld (regresszió, kimondva):** `scripts/verify.ps1` (szoftveres renderelés, `ANTIKOLT_ENGINE_DISABLE_GPU=1`)
-13 ellenőrzéssel bukik el (900 s alatt): a lemezre író profilokkal a shell-tesztek `file://` és `http://127.0.0.1`
-betöltése **elakad** (`load_status`/`home_loaded` soha nem jön). Az izolált `wipetest`-tel bizonyítva: a **kiinduló
-ágon** (memóriába eső profil) `load_status=200 … wipe=ok EXIT=0`, a javítással (lemezre író profil) a probe-oldal soha
-nem tölt be (`wipe=FAILED`). Ez a `data:`-URL-eket nem érinti (a `--partitiontest` zöld), de a shell-tesztek széles körét
-igen — a lemezre író profilú CEF-út ezen a builden a nem-`data:` betöltést blokkolja. Ez **termékdöntést** igényel
-(HANDOFF-F3 3. opció), ezért a `main` érintetlen marad.
+**A kapu a szelet végén zöld:** `scripts/verify.ps1` (szoftveres renderelés, `ANTIKOLT_ENGINE_DISABLE_GPU=1`) →
+**ALL SELF TESTS PASSED** (38/38, exit 0). A szelet közben 13 ellenőrzés bukott, és az első diagnózis — „a lemezre író
+profil elakasztja a `file://`/`http://127.0.0.1` betöltést" — **téves volt** (a `wipetest` mérése félrevezetett: a
+profil-út eltérése csak együtt járt a valódi okkal, nem ő volt az). A **valódi ok a felület-parancs verseny**: a shell a
+`create_surface` válasza után **azonnal** küldi a `navigate`-et és az `install_bridge`-et, de a CEF a böngészőt
+**aszinkron** hozza létre (`OnAfterCreated`); a parancsok ugyanabba a pump-csomagba estek, amikor `state.browser` még
+null, ezért a motor `surface_not_found`-dal **elutasította** őket, a shell a hibaválaszt figyelmen kívül hagyta, és a
+felület némán `about:blank`-en parkolt — ez volt a „betöltés elakad". A javítás: a `navigate` sorba állítva
+(`HostState::pending_navigation`, az `OnAfterCreated` alkalmazza), az `install_bridge` pedig a zászló egyedüli
+beállításával halasztva (az `OnLoadEnd` injektálja a hidat). A `data:`-kártya és a `http://127.0.0.1` probe-oldal is
+azonnal betölt (`load_status=200`, `wipe=ok`). A konténerenkénti motorfolyamat (HANDOFF-F3 2. opció) külön commitban
+készült el, és a kapu zöldje mellett ő a kártya-konténerek izolációjának a hordozója.
 
 ### Ami nyitva maradt (kimondva)
 
 - **Nincs felületi szerkesztő** a proxyhoz és az engedélyekhez: a házirend adatbázis-sor és a hídon át írható
   (`containers.upsert`), de a rácson nincs mezője — a következő szelet.
 - A partíció-profilkönyvtárak megmaradnak a kártya törlése után is; a takarítás (méret, törlés) nyitott.
-- **A lemezre író profilok a shell-teszteket elakasztják** (13 bukó ellenőrzés a `verify.ps1`-ben, lásd fent): a
-  `file://`/`http://127.0.0.1` betöltés nem jön vissza, amit a kiinduló ág (memóriába eső profil) mellett mérve
-  bizonyítottam. A döntés — konténerenkénti motorfolyamat (HANDOFF-F3 2. opció) vagy a bejelentkezés a
-  cookie/munkamenet-ledgerbe (3. opció) — a következő lépés.
 - Az OAuth/SSO popup továbbra is a következő nagy szelet; a hardveres GPU-út a VECTOR-on nyitott.
 
 ## 2026-11-21 (kilencvenhetedik szelet) — mind a négy store SQLite-first (ADR-070)
