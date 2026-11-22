@@ -276,115 +276,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     statusBar()->addWidget(status_);
 
     engine_ = new EngineClient(this);
-    connect(engine_, &EngineClient::failed, this, [this](const QString& message) {
-        setStatus(QStringLiteral("motor hiba: %1").arg(message));
-    });
-    connect(engine_, &EngineClient::engineReady, this, [this](const QJsonObject& info) {
-        setStatus(QStringLiteral("motor: %1 %2 · képességek: %3")
-                      .arg(info.value(QStringLiteral("name")).toString(),
-                           info.value(QStringLiteral("version")).toString())
-                      .arg(info.value(QStringLiteral("capabilities")).toArray().size()));
-        ensureSurface();
-    });
-    connect(engine_, &EngineClient::loadFinished, this,
-            [this](qint64 surface, const QString& url, int httpStatus) {
-                // The background worker's own surface: its load is not the card's, and must not move the
-                // window's idea of what the user is looking at (ADR-041). The engine's events carry the
-                // surface id, so the worker's page can never masquerade as the grid.
-                if (worker_state_ != antikolt::PreviewWorker::Idle && surface == worker_surface_) {
-                    onPreviewWorkerLoaded();
-                    return;
-                }
-                setStatus(QStringLiteral("betöltve (#%1, %2): %3")
-                              .arg(surface)
-                              .arg(httpStatus)
-                              .arg(url));
-                // The emulation belongs to the page that is showing, so a navigation forgets it: the
-                // remembered preference is applied again on every load (ADR-037).
-                if (page_media_ != QStringLiteral("auto") && engine_ != nullptr) {
-                    engine_->setMedia(surface, page_media_, nullptr);
-                }
-                // Same for the zoom: it is a preference of this browser window, not of one page (ADR-038).
-                if (zoom_percent_ != 100 && engine_ != nullptr) {
-                    engine_->setZoom(surface, zoom_percent_, nullptr);
-                }
-                // And the page-dark mode: the page forgot what the previous load asked for (ADR-044/ADR-045).
-                if (page_dark_mode_ != QStringLiteral("off") && engine_ != nullptr) {
-                    engine_->setPageDarkMode(surface, page_dark_mode_, nullptr);
-                }
-                // The grid must show the cards the core owns, so the list is pushed once the page is
-                // there to receive it. A real card is not a grid, and the *tracked* home id is not a reliable
-                // test on its own: it is cleared when a card detaches, and that detach can arrive after the
-                // next grid has already loaded (measured: the second grid showed the page's static demo
-                // cards because this push never ran). The home URL is what makes a page the grid.
-                if (surface == home_surface_ || url == homePageUrl()) {
-                    live_origin_.clear();
-                    home_surface_ = surface;
-                    // The page starts in the toolbar's theme, not in its own remembered default: one product,
-                    // one theme switch (measured: the grid used to come up grey while the chrome was amoled).
-                    pushThemeToGrid(surface);
-                    pushCardsToGrid(surface);
-                    // The grid is the only place the preview worker may run (ADR-041), and its empty frames
-                    // are exactly what the worker exists to fill. Scheduled a beat after the push, so the
-                    // core has answered and the grid is not still laying out.
-                    QTimer::singleShot(1500, this, &MainWindow::schedulePreviewWork);
-                    return;
-                }
-                // A card finished loading: if the policy queued this origin (see cleanupSessions), this
-                // is the moment to wipe it — on its own surface, with the plan's storage list.
-                live_origin_ = originOfUrl(url);
-                producePreview(surface);
-                // The reader's place: a card is a place, and the top of a long article is not where they left
-                // it. The offset was remembered when this card was left (see rememberScroll).
-                if (!current_card_id_.isEmpty()) {
-                    const int remembered =
-                        antikolt::scrollPositionFor(scrollBookPath(), current_card_id_);
-                    if (remembered > 0) {
-                        // Absolute, a beat after the load: `loadFinished` is not "layout done" (a scroll then
-                        // is clamped to 0), and the event can fire twice for one page — a relative scroll
-                        // would apply twice and land at 1400 instead of 700 (measured).
-                        QTimer::singleShot(300, this, [this, surface, remembered] {
-                            engine_->evaluate(
-                                surface, QStringLiteral("window.scrollTo(0,%1)").arg(remembered),
-                                [](const QJsonObject&, const QString&) {});
-                        });
-                    }
-                }
-                // A card finished loading: if the policy queued this origin (see cleanupSessions), this is
-                // the moment to wipe it — on its own surface, with the plan's storage list.
-                const auto queued = wipe_on_open_.find(live_origin_);
-                if (live_origin_.isEmpty() || queued == wipe_on_open_.end()) {
-                    return;
-                }
-                const QString origin = live_origin_;
-                const PendingWipe pending = queued.value();
-                wipe_on_open_.erase(queued);
-                engine_->clearOriginData(
-                    surface, origin, pending.storages,
-                    [this, origin, container = pending.container](const QJsonObject&,
-                                                                  const QString& error) {
-                        if (!error.isEmpty()) {
-                            setStatus(QStringLiteral("takarítás hiba (%1): %2")
-                                          .arg(origin, error));
-                            return;
-                        }
-                        core_->sessionClose(
-                            container, origin,
-                            [this, origin](const QJsonObject&, const QString& close_error) {
-                                setStatus(close_error.isEmpty()
-                                              ? QStringLiteral("kitakarva: %1").arg(origin)
-                                              : QStringLiteral("kitakarva, de a napló nem (%1)")
-                                                    .arg(close_error));
-                                if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
-                                    refreshSessions();
-                                }
-                            });
-                    });
-            });
-    connect(engine_, &EngineClient::loadFailed, this,
-            [this](qint64 surface, const QString& url, const QString& reason) {
-                setStatus(QStringLiteral("betöltési hiba (#%1): %2 — %3").arg(surface).arg(url, reason));
-            });
+    wireEngine(engine_);
 
     // The card owns the surface lifecycle locally; the window mirrors it for the status bar.
     connect(card_, &LiveCard::surfaceAttached, this, [this](qint64 surface) {
@@ -404,11 +296,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         setStatus(QStringLiteral("kártya felület: %1 · %2")
                       .arg(surface)
                       .arg(title.isEmpty() ? target : title));
-        engine_->navigate(surface, target);
+        live_engine_->navigate(surface, target);
         if (opening_home) {
             // The grid is the only page allowed to talk to the shell. Installing it here (before the
             // load finishes) is enough: the engine re-injects it whenever the page reloads.
-            engine_->installBridge(surface);
+            live_engine_->installBridge(surface);
             home_surface_ = surface;
         } else {
             home_surface_ = 0;
@@ -590,7 +482,7 @@ void MainWindow::onIdleTimeout() {
     hibernating_ = true;
     // The one documented exception a user would feel: a page that is playing sound or video keeps its
     // card alive (docs/HU/02 §4.2). Everything else goes to disk, unpinned or not.
-    engine_->evaluate(
+    live_engine_->evaluate(
         surface_, LiveMediaPlayingScript(),
         [this](const QJsonObject& reply, const QString& error) {
             hibernating_ = false;
@@ -631,13 +523,20 @@ MainWindow::~MainWindow() {
     if (core_ != nullptr) {
         core_->shutdown();
     }
+    // Every engine process, the home engine and each container engine, must be gone before the window is.
     if (engine_ != nullptr) {
         engine_->shutdown();
+    }
+    const auto containers = container_engines_;
+    for (EngineClient* client : containers) {
+        if (client != nullptr && client != engine_) {
+            client->shutdown();
+        }
     }
 }
 
 void MainWindow::closeLiveCard() {
-    if (engine_ == nullptr || card_ == nullptr) {
+    if (live_engine_ == nullptr || card_ == nullptr) {
         return;
     }
     const qint64 live = card_->surface();
@@ -647,7 +546,7 @@ void MainWindow::closeLiveCard() {
     // Ask for the close and let `shutdown()` be the barrier: it waits for the engine process to exit,
     // and the engine cannot exit before it has closed the browser. Pumping Qt events here instead
     // re-enters widget destruction and crashed the process on the way out.
-    engine_->destroySurface(live, nullptr);
+    live_engine_->destroySurface(live, nullptr);
     card_->detach();
 }
 
@@ -806,6 +705,162 @@ QString MainWindow::coreExecutable() {
     return {};
 }
 
+void MainWindow::wireEngine(EngineClient* engine) {
+    connect(engine, &EngineClient::failed, this, [this](const QString& message) {
+        setStatus(QStringLiteral("motor hiba: %1").arg(message));
+    });
+    connect(engine, &EngineClient::engineReady, this, [this, engine](const QJsonObject& info) {
+        setStatus(QStringLiteral("motor: %1 %2 · képességek: %3")
+                      .arg(info.value(QStringLiteral("name")).toString(),
+                           info.value(QStringLiteral("version")).toString())
+                      .arg(info.value(QStringLiteral("capabilities")).toArray().size()));
+        // Only the home engine's welcome raises the grid. A container engine's welcome means its process
+        // is up; its surface is requested by `openCard`, never by the welcome (a second `create_surface`
+        // while the first is still pending is answered with `engine_busy`).
+        if (engine == engine_) {
+            ensureSurface();
+        }
+    });
+    connect(engine, &EngineClient::loadFinished, this,
+            [this](qint64 surface, const QString& url, int httpStatus) {
+                // The background worker's own surface: its load is not the card's, and must not move the
+                // window's idea of what the user is looking at (ADR-041). The engine's events carry the
+                // surface id, so the worker's page can never masquerade as the grid.
+                if (worker_state_ != antikolt::PreviewWorker::Idle && surface == worker_surface_) {
+                    onPreviewWorkerLoaded();
+                    return;
+                }
+                setStatus(QStringLiteral("betöltve (#%1, %2): %3")
+                              .arg(surface)
+                              .arg(httpStatus)
+                              .arg(url));
+                // The emulation belongs to the page that is showing, so a navigation forgets it: the
+                // remembered preference is applied again on every load (ADR-037).
+                if (page_media_ != QStringLiteral("auto") && live_engine_ != nullptr) {
+                    live_engine_->setMedia(surface, page_media_, nullptr);
+                }
+                // Same for the zoom: it is a preference of this browser window, not of one page (ADR-038).
+                if (zoom_percent_ != 100 && live_engine_ != nullptr) {
+                    live_engine_->setZoom(surface, zoom_percent_, nullptr);
+                }
+                // And the page-dark mode: the page forgot what the previous load asked for (ADR-044/ADR-045).
+                if (page_dark_mode_ != QStringLiteral("off") && live_engine_ != nullptr) {
+                    live_engine_->setPageDarkMode(surface, page_dark_mode_, nullptr);
+                }
+                // The grid must show the cards the core owns, so the list is pushed once the page is
+                // there to receive it. A real card is not a grid, and the *tracked* home id is not a reliable
+                // test on its own: it is cleared when a card detaches, and that detach can arrive after the
+                // next grid has already loaded (measured: the second grid showed the page's static demo
+                // cards because this push never ran). The home URL is what makes a page the grid.
+                if (surface == home_surface_ || url == homePageUrl()) {
+                    live_origin_.clear();
+                    home_surface_ = surface;
+                    // The page starts in the toolbar's theme, not in its own remembered default: one product,
+                    // one theme switch (measured: the grid used to come up grey while the chrome was amoled).
+                    pushThemeToGrid(surface);
+                    pushCardsToGrid(surface);
+                    // The grid is the only place the preview worker may run (ADR-041), and its empty frames
+                    // are exactly what the worker exists to fill. Scheduled a beat after the push, so the
+                    // core has answered and the grid is not still laying out.
+                    QTimer::singleShot(1500, this, &MainWindow::schedulePreviewWork);
+                    return;
+                }
+                // A card finished loading: if the policy queued this origin (see cleanupSessions), this
+                // is the moment to wipe it — on its own surface, with the plan's storage list.
+                live_origin_ = originOfUrl(url);
+                producePreview(surface);
+                // The reader's place: a card is a place, and the top of a long article is not where they left
+                // it. The offset was remembered when this card was left (see rememberScroll).
+                if (!current_card_id_.isEmpty()) {
+                    const int remembered =
+                        antikolt::scrollPositionFor(scrollBookPath(), current_card_id_);
+                    if (remembered > 0) {
+                        // Absolute, a beat after the load: `loadFinished` is not "layout done" (a scroll then
+                        // is clamped to 0), and the event can fire twice for one page — a relative scroll
+                        // would apply twice and land at 1400 instead of 700 (measured).
+                        QTimer::singleShot(300, this, [this, surface, remembered] {
+                            live_engine_->evaluate(
+                                surface, QStringLiteral("window.scrollTo(0,%1)").arg(remembered),
+                                [](const QJsonObject&, const QString&) {});
+                        });
+                    }
+                }
+                // A card finished loading: if the policy queued this origin (see cleanupSessions), this is
+                // the moment to wipe it — on its own surface, with the plan's storage list.
+                const auto queued = wipe_on_open_.find(live_origin_);
+                if (live_origin_.isEmpty() || queued == wipe_on_open_.end()) {
+                    return;
+                }
+                const QString origin = live_origin_;
+                const PendingWipe pending = queued.value();
+                wipe_on_open_.erase(queued);
+                live_engine_->clearOriginData(
+                    surface, origin, pending.storages,
+                    [this, origin, container = pending.container](const QJsonObject&,
+                                                                  const QString& error) {
+                        if (!error.isEmpty()) {
+                            setStatus(QStringLiteral("takarítás hiba (%1): %2")
+                                          .arg(origin, error));
+                            return;
+                        }
+                        core_->sessionClose(
+                            container, origin,
+                            [this, origin](const QJsonObject&, const QString& close_error) {
+                                setStatus(close_error.isEmpty()
+                                              ? QStringLiteral("kitakarva: %1").arg(origin)
+                                              : QStringLiteral("kitakarva, de a napló nem (%1)")
+                                                    .arg(close_error));
+                                if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
+                                    refreshSessions();
+                                }
+                            });
+                    });
+            });
+    connect(engine, &EngineClient::loadFailed, this,
+            [this](qint64 surface, const QString& url, const QString& reason) {
+                setStatus(QStringLiteral("betöltési hiba (#%1): %2 — %3").arg(surface).arg(url, reason));
+            });
+}
+
+EngineClient* MainWindow::engineFor(const QString& container) {
+    if (container.isEmpty()) {
+        return engine_;
+    }
+    const auto found = container_engines_.constFind(container);
+    if (found != container_engines_.constEnd()) {
+        return found.value();
+    }
+    const QString enginePath = engineExecutable();
+    if (enginePath.isEmpty() || engine_profile_.isEmpty()) {
+        return nullptr;
+    }
+    // A container id is minted by the core and is safe, but the profile path must never let one container
+    // read another's directory through a separator, so anything but the safe set is folded to `_`.
+    QString directory = container;
+    for (QChar& character : directory) {
+        const bool safe = (character >= QLatin1Char('a') && character <= QLatin1Char('z')) ||
+                          (character >= QLatin1Char('A') && character <= QLatin1Char('Z')) ||
+                          (character >= QLatin1Char('0') && character <= QLatin1Char('9')) ||
+                          character == QLatin1Char('-') || character == QLatin1Char('_') ||
+                          character == QLatin1Char('.');
+        if (!safe) {
+            character = QLatin1Char('_');
+        }
+    }
+    auto* client = new EngineClient(this);
+    wireEngine(client);
+    const QString profile = engine_profile_ + QStringLiteral("/containers/") + directory;
+    QDir().mkpath(profile);
+    if (!client->start(enginePath, profile)) {
+        delete client;
+        return nullptr;
+    }
+    client->handshake();
+    container_engines_.insert(container, client);
+    setStatus(QStringLiteral("konténer-motor indítva: %1").arg(container));
+    return client;
+}
+
 void MainWindow::startEngine() {
     const QString enginePath = engineExecutable();
     if (enginePath.isEmpty()) {
@@ -859,28 +914,46 @@ void MainWindow::startEngine() {
 }
 
 void MainWindow::ensureSurface() {
-    if (!engine_->isRunning()) {
+    const bool opening_home = pending_url_.isEmpty();
+    EngineClient* target = opening_home ? engine_ : engineFor(pending_container_);
+    if (target == nullptr || !target->isRunning()) {
         return;
     }
     if (card_->hasSurface()) {
-        // The surface already exists: going home *navigates* it, it is not re-attached, so nothing else
-        // will install the bridge. Without this the grid the user returns to has no bridge at all — its
-        // cards cannot be opened, which reads as "the browser died" (measured: a second card open never
-        // happened because the click had nothing to call).
-        const bool opening_home = pending_url_.isEmpty();
-        const QString target = opening_home ? homePageUrl() : pending_url_;
-        engine_->navigate(card_->surface(), target);
-        pending_url_.clear();
-        pending_title_.clear();
-        if (opening_home) {
-            engine_->installBridge(card_->surface());
-            home_surface_ = card_->surface();
+        // The surface already exists and lives in `live_engine_`. Going home *navigates* the same surface when it
+        // is already in the home engine — it is not re-attached, so nothing else would install the bridge.
+        // Crossing an engine boundary (a card open in a container engine) means the grid must move back to the
+        // home engine, so the old surface is hibernated and recreated there.
+        if (live_engine_ == target) {
+            const QString dest = opening_home ? homePageUrl() : pending_url_;
+            live_engine_->navigate(card_->surface(), dest);
+            pending_url_.clear();
+            pending_title_.clear();
+            if (opening_home) {
+                live_engine_->installBridge(card_->surface());
+                home_surface_ = card_->surface();
+            }
+            return;
         }
+        const qint64 previous = card_->surface();
+        EngineClient* previous_engine = live_engine_;
+        previous_engine->snapshot(
+            previous, [this, previous, previous_engine](const QJsonObject&, const QString& error) {
+                if (!error.isEmpty()) {
+                    setStatus(QStringLiteral("az előző kártya mentése nem sikerült: %1").arg(error));
+                }
+                card_->detach();
+                previous_engine->destroySurface(previous,
+                                                [this](const QJsonObject&, const QString&) {
+                                                    ensureSurface();
+                                                });
+            });
         return;
     }
     // One partition per card: two cards never share cookies or storage by accident (ADR-009). The partition is the
-    // storage; the container is the policy (ADR-071) — its proxy and the permissions its pages may ask for.
-    const bool opening_home = pending_url_.isEmpty();
+    // storage; the container is the policy (ADR-071) — its proxy and the permissions its pages may ask for. Each
+    // container runs in its own engine process, so the surface is attached to the engine that owns its profile.
+    live_engine_ = target;
     const QString partition =
         opening_home
             ? QStringLiteral("persist:home")
@@ -908,7 +981,7 @@ void MainWindow::ensureSurface() {
         }
         policy.permissions = entry.value(QStringLiteral("permissions")).toObject();
     }
-    if (!card_->attach(engine_, partition, policy)) {
+    if (!card_->attach(live_engine_, partition, policy)) {
         setStatus(QStringLiteral("a kártya nem tudott felületet kérni a motortól"));
     }
 }
@@ -939,8 +1012,8 @@ void MainWindow::openCard(const QString& url, const QString& title) {
     // Hibernation before switching is not optional: the live surface must be on disk before it is
     // destroyed (invariant I2), otherwise the card the user just left is gone for good.
     const qint64 previous = card_->surface();
-    engine_->snapshot(previous, [this, previous, title](const QJsonObject& result,
-                                                        const QString& error) {
+    live_engine_->snapshot(previous, [this, previous, title](const QJsonObject& result,
+                                                             const QString& error) {
         if (error.isEmpty()) {
             setStatus(QStringLiteral("előző kártya mentve (%1 bájt) · váltás: %2")
                           .arg(result.value(QStringLiteral("bytes")).toInt())
@@ -949,7 +1022,7 @@ void MainWindow::openCard(const QString& url, const QString& title) {
             setStatus(QStringLiteral("az előző kártya mentése nem sikerült: %1").arg(error));
         }
         card_->detach();
-        engine_->destroySurface(previous, [this](const QJsonObject&, const QString&) {
+        live_engine_->destroySurface(previous, [this](const QJsonObject&, const QString&) {
             ensureSurface();
         });
     });
@@ -1237,12 +1310,12 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
             // The page asks what the browser costs; the engine measures the live surface. The budget is
             // not a measurement and is not invented here: until profiles carry a memory budget (F6) it is
             // reported as 0, and the page shows the used figure alone.
-            if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0) {
+            if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
                 replyToPage(request, {}, QStringLiteral("nincs élő felület"));
                 return;
             }
-            engine_->metrics(surface_, [this, request](const QJsonObject& measured,
-                                                       const QString& error) {
+            live_engine_->metrics(surface_, [this, request](const QJsonObject& measured,
+                                                            const QString& error) {
                 if (!error.isEmpty()) {
                     replyToPage(request, {}, error);
                     return;
@@ -1357,7 +1430,7 @@ void MainWindow::loadHome() {
 }
 
 void MainWindow::freezeCard() {
-    if (!engine_->isRunning() || !card_->hasSurface()) {
+    if (live_engine_ == nullptr || !live_engine_->isRunning() || !card_->hasSurface()) {
         setStatus(QStringLiteral("nincs mit fagyasztani"));
         return;
     }
@@ -1370,7 +1443,7 @@ void MainWindow::freezeCard() {
     // only from the title (ADR-049). Capped here *and* in the store, because a page must not be able to grow the
     // card list. A card with no id yet (the grid) has nothing to attach it to.
     if (core_ != nullptr && core_->isRunning() && !current_card_id_.isEmpty()) {
-        engine_->evaluate(
+        live_engine_->evaluate(
             surface,
             QStringLiteral("(function(){var t=(document.body&&document.body.innerText)||'';"
                            "return t.replace(/\\s+/g,' ').trim().slice(0,8000);})()"),
@@ -1392,7 +1465,7 @@ void MainWindow::freezeCard() {
                     });
             });
     }
-    engine_->snapshot(surface, [this, surface](const QJsonObject& result, const QString& error) {
+    live_engine_->snapshot(surface, [this, surface](const QJsonObject& result, const QString& error) {
         if (!error.isEmpty()) {
             return_to_grid_ = false;
             setStatus(QStringLiteral("fagyasztás hiba: %1").arg(error));
@@ -1406,7 +1479,7 @@ void MainWindow::freezeCard() {
         // The grid comes back only once the old surface is really gone: asking for a new surface
         // while the old one still exists is answered with `engine_busy`, and the grid then never
         // loads (measured: create_surface racing destroy_surface, grid_returned=FAILED).
-        engine_->destroySurface(surface, [this](const QJsonObject&, const QString&) {
+        live_engine_->destroySurface(surface, [this](const QJsonObject&, const QString&) {
             if (return_to_grid_) {
                 return_to_grid_ = false;
                 loadHome();
@@ -1496,11 +1569,11 @@ void MainWindow::setZoomPercent(int percent) {
     if (zoom_label_ != nullptr) {
         zoom_label_->setText(QStringLiteral("🔍 %1%").arg(clamped));
     }
-    if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0) {
+    if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
         setStatus(QStringLiteral("nagyítás: %1% (nincs élő felület)").arg(clamped));
         return;
     }
-    engine_->setZoom(surface_, clamped, [this, clamped](const QJsonObject&, const QString& error) {
+    live_engine_->setZoom(surface_, clamped, [this, clamped](const QJsonObject&, const QString& error) {
         setStatus(error.isEmpty() ? QStringLiteral("nagyítás: %1%").arg(clamped)
                                   : QStringLiteral("nagyítás hiba: %1").arg(error));
     });
@@ -1512,11 +1585,11 @@ void MainWindow::setPageMedia(const QString& media) {
         return;
     }
     page_media_ = media;
-    if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0) {
+    if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
         setStatus(QStringLiteral("oldal-téma: %1 (nincs élő felület)").arg(media));
         return;
     }
-    engine_->setMedia(surface_, media, [this, media](const QJsonObject&, const QString& error) {
+    live_engine_->setMedia(surface_, media, [this, media](const QJsonObject&, const QString& error) {
         setStatus(error.isEmpty() ? QStringLiteral("oldal-téma: %1").arg(media)
                                   : QStringLiteral("oldal-téma hiba: %1").arg(error));
     });
@@ -1556,13 +1629,13 @@ void MainWindow::setPageDarkMode(const QString& mode) {
             }
         }
     }
-    if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0) {
+    if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
         setStatus(QStringLiteral("sötét oldalak: %1 (nincs élő felület)")
                       .arg(pageDarkModeLabel(page_dark_mode_)));
         return;
     }
-    engine_->setPageDarkMode(surface_, page_dark_mode_,
-                             [this](const QJsonObject&, const QString& error) {
+    live_engine_->setPageDarkMode(surface_, page_dark_mode_,
+                                  [this](const QJsonObject&, const QString& error) {
                                  setStatus(error.isEmpty()
                                                ? QStringLiteral("sötét oldalak: %1").arg(
                                                      pageDarkModeLabel(page_dark_mode_))
@@ -1578,8 +1651,8 @@ QString MainWindow::scrollBookPath() const {
 void MainWindow::rememberScroll(std::function<void()> then) {
     // The grid is not a card: after going home the live surface is the grid while the card id is stale, and
     // saving then overwrites the place the reader left with the grid's zero (measured: 700 became 0).
-    if (engine_ == nullptr || !engine_->isRunning() || surface_ == 0 || current_card_id_.isEmpty() ||
-        surface_ == home_surface_ ||
+    if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0 ||
+        current_card_id_.isEmpty() || surface_ == home_surface_ ||
         engine_profile_.isEmpty()) {
         if (then) {
             then();
@@ -1589,7 +1662,7 @@ void MainWindow::rememberScroll(std::function<void()> then) {
     const QString card_id = current_card_id_;
     // The caller continues only after the offset is stored: an eval racing the navigation that follows would
     // read the *next* page's zero, and the remembered place would silently be 0 (measured exactly that).
-    engine_->evaluate(surface_, QStringLiteral("String(Math.round(window.scrollY))"),
+    live_engine_->evaluate(surface_, QStringLiteral("String(Math.round(window.scrollY))"),
                       [this, card_id, then](const QJsonObject& reply, const QString& error) {
                           if (error.isEmpty()) {
                               const int y =
@@ -1670,7 +1743,7 @@ void MainWindow::producePreview(qint64 surface) {
         // engine's own request timeout bounds each attempt; after the last one the preview is skipped and
         // the status line says so — a failed preview is not a failed browser.
         const auto capture_to = [this, surface, target, remember, count_budget](auto&& self, int attempt) -> void {
-            engine_->capture(
+            live_engine_->capture(
                 surface, QStringLiteral("png"), 80,
                 [this, target, remember, count_budget, self, attempt](const QJsonObject& shot,
                                                         const QString& shot_error) {
@@ -1714,8 +1787,12 @@ bool MainWindow::gridIsShowing() const {
     return card_ != nullptr && card_->hasSurface() && surface_ != 0 && surface_ == home_surface_;
 }
 
-bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url) {
-    if (engine_ == nullptr || !engine_->isRunning() || engine_profile_.isEmpty()) {
+bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url, const QString& container) {
+    // The worker photographs a card, so it runs in that card's container engine: the preview sees the page
+    // exactly as the card would — the container's proxy, cookies and permission policy (ADR-071). A card
+    // without a container runs in the home engine.
+    worker_engine_ = engineFor(container);
+    if (worker_engine_ == nullptr || !worker_engine_->isRunning() || engine_profile_.isEmpty()) {
         return false;
     }
     const QString budget = engine_profile_ + QStringLiteral("/previews/budget.json");
@@ -1739,7 +1816,7 @@ bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url) {
 
     // Its own partition (`persist:preview`), so a preview never touches a card's cookies, and hidden, so a
     // window never appears over the grid while the user is reading it (ADR-041, point 2).
-    engine_->createSurface(
+    worker_engine_->createSurface(
         QStringLiteral("persist:preview"), kWorkerViewportWidth, kWorkerViewportHeight, 100, 0,
         [this](const QJsonObject& reply, const QString& error) {
             if (!error.isEmpty()) {
@@ -1759,20 +1836,21 @@ bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url) {
             if (worker_state_ == antikolt::PreviewWorker::Idle) {
                 // The job was abandoned while the engine was creating the surface (the user opened a card):
                 // the fresh surface belongs to nobody, so it is destroyed here instead of leaking.
-                engine_->destroySurface(created, nullptr);
+                worker_engine_->destroySurface(created, nullptr);
                 return;
             }
             worker_surface_ = created;
-            engine_->navigate(created, worker_page_url_,
-                              [this](const QJsonObject&, const QString& navigate_error) {
-                                  if (navigate_error.isEmpty()) {
-                                      return;
-                                  }
-                                  if (worker_state_ == antikolt::PreviewWorker::Loading) {
-                                      finishPreviewWorker(
-                                          false, QStringLiteral("navigáció: %1").arg(navigate_error));
-                                  }
-                              });
+            worker_engine_->navigate(created, worker_page_url_,
+                                     [this](const QJsonObject&, const QString& navigate_error) {
+                                         if (navigate_error.isEmpty()) {
+                                             return;
+                                         }
+                                         if (worker_state_ == antikolt::PreviewWorker::Loading) {
+                                             finishPreviewWorker(
+                                                 false,
+                                                 QStringLiteral("navigáció: %1").arg(navigate_error));
+                                         }
+                                     });
         },
         /*hidden=*/true);
     return true;
@@ -1784,7 +1862,7 @@ void MainWindow::onPreviewWorkerLoaded() {
     }
     worker_state_ = antikolt::PreviewWorker::Capturing;
     qInfo("[shell] preview worker: %s betöltve, felvétel", qUtf8Printable(worker_card_id_));
-    engine_->capture(
+    worker_engine_->capture(
         worker_surface_, QStringLiteral("png"), 80,
         [this](const QJsonObject& shot, const QString& error) {
             // A job that ended while the capture was in flight (deadline, or the user opened a card) must
@@ -1874,9 +1952,10 @@ void MainWindow::finishPreviewWorker(bool produced, const QString& reason) {
     if (worker_deadline_ != nullptr) {
         worker_deadline_->stop();
     }
-    if (surface > 0 && engine_ != nullptr && engine_->isRunning()) {
-        engine_->destroySurface(surface, nullptr);
+    if (surface > 0 && worker_engine_ != nullptr && worker_engine_->isRunning()) {
+        worker_engine_->destroySurface(surface, nullptr);
     }
+    worker_engine_ = nullptr;
     if (!produced) {
         qInfo("[shell] preview worker: leállítva (%s)", qUtf8Printable(reason));
         if (!reason.isEmpty()) {
@@ -1925,14 +2004,16 @@ void MainWindow::schedulePreviewWork() {
             return;
         }
         QString url;
+        QString container;
         for (const QJsonValue& value : cards) {
             const QJsonObject card = value.toObject();
             if (card.value(QStringLiteral("id")).toString() == next) {
                 url = card.value(QStringLiteral("url")).toString();
+                container = card.value(QStringLiteral("container")).toString();
                 break;
             }
         }
-        startPreviewWorker(next, url);
+        startPreviewWorker(next, url, container);
     });
 }
 
@@ -2147,7 +2228,7 @@ void MainWindow::cleanupSessions() {
 
             // The live origin: ask the page first. A card that plays sound or video keeps its session — this was
             // the last place that ignored it, so housekeeping could silence a video in the foreground.
-            engine_->evaluate(
+            live_engine_->evaluate(
                 surface_, LiveMediaPlayingScript(),
                 [this, live_origin, live_pending, live_storages, report](const QJsonObject& reply,
                                                                         const QString& mediaError) {
@@ -2162,7 +2243,7 @@ void MainWindow::cleanupSessions() {
                         }
                         return;
                     }
-                    engine_->clearOriginData(
+                    live_engine_->clearOriginData(
                         surface_, live_origin, live_storages,
                         [this, live_origin, container = live_pending.container, report](
                             const QJsonObject&, const QString& failure) {

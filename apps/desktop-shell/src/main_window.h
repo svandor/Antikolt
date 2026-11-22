@@ -148,7 +148,7 @@ public:
     /// compositor, writes the file into the profile and the name onto the card record. It runs only while
     /// the user is on the grid and yields the moment a card opens: the self test drives this directly, and
     /// `previewWorkerAutoEnabled()` is what keeps the grid filling itself in a real run.
-    bool startPreviewWorker(const QString& cardId, const QString& url);
+    bool startPreviewWorker(const QString& cardId, const QString& url, const QString& container = {});
     /// Where the worker is — the witness a self test reads (`Idle` once a job is over).
     antikolt::PreviewWorker previewWorkerState() const { return worker_state_; }
     /// The surface the last job used. Kept after it is destroyed only so a test can prove the engine no
@@ -196,6 +196,13 @@ protected:
 private:
     void buildToolBar();
     void buildCardArea();
+    /// The engine for one container ("" = the home/grid engine). Container engines are started lazily,
+    /// each with its own `--user-data-dir` under the profile. Returns nullptr only when the engine
+    /// executable is missing.
+    EngineClient* engineFor(const QString& container);
+    /// Wire one engine's signals into the window. The home engine and every container engine get the
+    /// same handlers, so a container's surface behaves exactly like the home one.
+    void wireEngine(EngineClient* engine);
     /// Put the icon in the tray (ADR-043). Does nothing when the platform has no tray or the tray is off.
     void setupTray();
     /// Hide the window, leaving the tray icon as the way back — the close button's real work.
@@ -250,7 +257,18 @@ private:
     LiveCard* card_ = nullptr;
     QLabel* status_ = nullptr;
     QString currentTheme_;
+    /// The home/grid engine: the surface that shows the editable grid, and the process that answers the
+    /// page's bridge calls. A card opens in its *container's* engine instead (ADR-071).
     EngineClient* engine_ = nullptr;
+    /// One engine process per container, keyed by container id. Started lazily when a card of that
+    /// container opens; each gets its own `--user-data-dir`, so a container's profile is its own CEF
+    /// profile and its cookie jar never shares a root with another container's.
+    QHash<QString, EngineClient*> container_engines_;
+    /// The engine that owns the live surface (`surface_`): the home engine while the grid is showing,
+    /// the card's container engine while a card is open.
+    EngineClient* live_engine_ = nullptr;
+    /// The engine that owns the background preview worker's surface (`worker_surface_`).
+    EngineClient* worker_engine_ = nullptr;
     /// The core owns the data; the shell only asks it.
     CoreClient* core_ = nullptr;
     qint64 surface_ = 0;
