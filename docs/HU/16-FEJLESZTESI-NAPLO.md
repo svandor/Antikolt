@@ -3,6 +3,39 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száznyolcadik szelet) — a profil `preview_refresh` bekötése (F6)
+
+A profil most már nemcsak a hibernálást vezeti le, hanem az **előnézet-frissítést** is: a mag kiteszi a levezetett
+profilparamétereket, a shell pedig a háttér-előnézet-munkást ezekhez igazítja. Ez a kulcs a profil többi
+dimenziójához is (motor-élettartam, videófelbontás, `warn`/`hard` sávok) — egyetlen válaszban utazik mind.
+
+### Mi változott
+
+- **`user_prefs` → `profile`:** a mag válasza a `prefs` mellett a levezetett `ProfileParams`-t is küldi
+  (`idle_hibernate_ms`, `preview_refresh`, `video_max_height`, `memory_warn/hard_bytes`, `engine_warm_idle_shutdown_ms`);
+  a `Manual` profilnál `null` (nincs levezetett paraméter).
+- **A shell cache-eli `preview_refresh`:** `refreshUserPrefs()` a válasz `profile`-jából olvassa; a gyári `Balanced`
+  igaz, a `Saver`/`Ultra` hamis, a `Manual` (null) a gyárit hagyja.
+- **A háttér-előnézet-munkás tiszteletben tartja:** `preview_refresh=false`-nál a munkás nem indul (az ADR-041
+  négy feltétele mellett ötödikként).
+- **Új Rust-teszt:** `user_prefs_carry_the_derived_profile_params` — a `saver` profil `preview_refresh=false`-ot,
+  `idle=300000`-et, `video_max_height=720`-at visz, a `manual` pedig `null` profilt.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → 44 önteszt zöld (az egyetlen hiba a cargo fmt volt, javítva)
+scripts/check-repo.ps1       → ALL CHECKS PASSED
+cargo test                   → 155 zöld: 78 + 52 + 9 + 1 + 15
+--prefstest                  → pref_derived_idle=120000 · prefs=ok
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A profil **többi dimenziójának bekötése** (motor-élettartam T1/T2, videófelbontás, `warn`/`hard` sávok a
+  vezérlőhöz — a paraméterek már a shellnél vannak), a **raszter-kezdőlap** és a **hangolási riport**; a 3. tétel
+  szerkesztője.
+
 ## 2026-11-22 (százhetedik szelet) — a profil összeegyeztetése az ADR-020 modellel
 
 A 104. szeletben a `resource_profile` egy önálló string-mező lett, saját `profile_preset`-tel — de a mag már

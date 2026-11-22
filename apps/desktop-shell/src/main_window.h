@@ -384,6 +384,9 @@ private:
     /// 10 minutes until the first `refreshUserPrefs` answers; `ANTIKOLT_HIBERNATE_MS` still overrides for the
     /// self test.
     qint64 idle_hibernate_ms_ = 600000;
+    /// Whether the current profile refreshes previews in the background (ADR-020 `preview_refresh`). The factory
+    /// `Balanced` profile does; `Saver`/`Ultra` do not. Cached from the derived profile in `refreshUserPrefs`.
+    bool preview_refresh_ = true;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------

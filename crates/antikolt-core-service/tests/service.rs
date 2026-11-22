@@ -475,3 +475,46 @@ fn user_prefs_survive_a_restart() {
     again.stop();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn user_prefs_carry_the_derived_profile_params() {
+    // The `user_prefs` reply carries the profile's derived params (ADR-020), so the shell can follow
+    // `preview_refresh` and the governor bands without re-deriving the table. Manual has none (null).
+    let dir = temp_dir("prefs-profile");
+    let mut service = Service::start(&dir);
+
+    // Saver: no background preview refresh, 5-minute hibernation, 720p cap.
+    let set = service.request(
+        "user_prefs_set",
+        json!({ "prefs": { "max_live_cards": 5, "idle_hibernate_ms": 600_000,
+                           "cold_card_ms": 86_400_000, "memory_budget_mb": 512,
+                           "resource_profile": "saver" } }),
+    );
+    assert_eq!(set["ok"], true);
+
+    let reply = service.request("user_prefs", json!({}));
+    assert_eq!(reply["ok"], true);
+    assert_eq!(reply["data"]["profile"]["preview_refresh"], json!(false));
+    assert_eq!(
+        reply["data"]["profile"]["idle_hibernate_ms"],
+        json!(300_000)
+    );
+    assert_eq!(reply["data"]["profile"]["video_max_height"], json!(720));
+
+    // Manual: the profile params are null — the individual values are authoritative.
+    let manual = service.request(
+        "user_prefs_set",
+        json!({ "prefs": { "max_live_cards": 5, "idle_hibernate_ms": 600_000,
+                           "cold_card_ms": 86_400_000, "memory_budget_mb": 512,
+                           "resource_profile": "manual" } }),
+    );
+    assert_eq!(manual["ok"], true);
+    let reply = service.request("user_prefs", json!({}));
+    assert!(
+        reply["data"]["profile"].is_null(),
+        "manual has no derived params"
+    );
+
+    service.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

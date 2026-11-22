@@ -625,8 +625,16 @@ fn handle(
         }
         // ---- user preferences -----------------------------------------------------------------
         // One row of live-card cap and hibernation timings (ADR-072). Read without validation, write after it.
+        // The derived profile params ride alongside, so the shell can follow `preview_refresh`, the governor
+        // bands and the engine lifetime without re-deriving ADR-020's table itself (F6).
         "user_prefs" => match sessions.user_prefs() {
-            Ok(prefs) => (ok_reply(id, json!({ "prefs": prefs })), true),
+            Ok(prefs) => {
+                let profile = prefs.resource_profile.params();
+                (
+                    ok_reply(id, json!({ "prefs": prefs, "profile": profile })),
+                    true,
+                )
+            }
             Err(error) => (error_reply(id, "internal", &error.to_string()), true),
         },
         "user_prefs_set" => {

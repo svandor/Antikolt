@@ -1926,11 +1926,13 @@ bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url, c
     const QString budget = engine_profile_ + QStringLiteral("/previews/budget.json");
     const QString today = QDate::currentDate().toString(Qt::ISODate);
     // The four conditions are previews.h's, not this function's: the window must not be able to forget
-    // one of them (ADR-041, point 1).
+    // one of them (ADR-041, point 1). The fifth is the profile's: Saver/Ultra turn background preview
+    // refresh off (ADR-020 `preview_refresh`), and the worker must honour that too.
     const bool budget_ok = antikolt::previewBudgetAllows(budget, today, kPreviewDailyMax);
     const bool has_candidate =
         !cardId.isEmpty() && !url.isEmpty() && previews_made_ < kPreviewCap;
-    if (!antikolt::previewWorkerCanStart(worker_state_, !gridIsShowing(), budget_ok, has_candidate)) {
+    if (!preview_refresh_ ||
+        !antikolt::previewWorkerCanStart(worker_state_, !gridIsShowing(), budget_ok, has_candidate)) {
         return false;
     }
 
@@ -2499,6 +2501,14 @@ void MainWindow::refreshUserPrefs() {
             if (idle_ != nullptr) {
                 idle_->setInterval(static_cast<int>(idle_hibernate_ms_));
             }
+        }
+        // The derived profile params (ADR-020): the background preview worker follows `preview_refresh`. A `Manual`
+        // profile has no params (the reply carries null), so the factory behaviour stays on.
+        const QJsonObject profile = reply.value(QStringLiteral("profile")).toObject();
+        if (!profile.isEmpty()) {
+            preview_refresh_ = profile.value(QStringLiteral("preview_refresh")).toBool(true);
+        } else {
+            preview_refresh_ = true;
         }
         // An open dock follows the core's answer, not a stale copy of it.
         if (settings_dock_ != nullptr && settings_dock_->isVisible()) {
