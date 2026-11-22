@@ -3,6 +3,31 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizennyolcadik szelet) — a felhasználói kezdőlap sandboxolása (3. tétel)
+
+A szerkeszthető kezdőlap biztonsági zárása: a felhasználói `home.html` a profil könyvtárából töltődik, tehát a
+profil adatfájljait (`antikolt.sqlite3`, kártya-adatok) **nem érheti el** közvetlenül. Ezt most egy teszt rögzíti:
+a Chromium `file://` eredete opak, ezért a `fetch` és az `XHR` is CORS-szel elutasításra kerül.
+
+### Mi változott
+
+- **`--sandboxtest` (új):** a profilba egy `secret.txt` és egy rosszindulatú `home.html` kerül, amely `fetch`-csel és
+  `XHR`-rel próbálja olvasni; a teszt igazolja, hogy mindkettő blokkolva van (`blocked by CORS policy`), tehát a
+  testvérfájl nem szivárog.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (54 önteszt + check-repo)
+--sandboxtest               → sandbox_result={"fetchBlocked":true,"xhrBlocked":true} · sandbox=ok
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A felhasználói HTML a **hídon** keresztül (szándékosan) éri el a kártya-műveleteket; a közvetlen fájl-olvasás
+  zárt. Az F6 leképezés widget-bekötése (a raszter-kattintás → kártyanyitás) marad a termék UI-ja.
+
 ## 2026-11-22 (száztizenhetedik szelet) — a szerkeszthető kezdőlap kiinduló sablonja (3. tétel)
 
 A szerkesztő első, mérhető darabja: ha a felhasználónak még nincs `home.html`-je, a shell egy **működő kiinduló

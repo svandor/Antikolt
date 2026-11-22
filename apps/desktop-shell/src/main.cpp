@@ -2304,6 +2304,93 @@ int runHomeEditCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the custom home is sandboxed (item 3): a user-authored home.html served from the profile must not be able
+/// to read a sibling data file. Chromium's file:// origin is opaque, so both fetch and XHR are refused — this test
+/// pins that property so a future flag change cannot silently reopen it.
+int runSandboxCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    const QString dataDir = QDir::tempPath() + QStringLiteral("/antikolt-sandbox-") +
+                            QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir().mkpath(dataDir);
+    qputenv("ANTIKOLT_CORE_DATA", dataDir.toUtf8());
+
+    {
+        QFile file(dataDir + QStringLiteral("/secret.txt"));
+        file.open(QIODevice::WriteOnly);
+        file.write("TOP-SECRET");
+    }
+    {
+        QFile file(dataDir + QStringLiteral("/home.html"));
+        file.open(QIODevice::WriteOnly);
+        file.write(
+            "<html><head><title>sandbox</title></head><body>"
+            "<script>"
+            "window.__sandbox={fetchBlocked:false,xhrBlocked:false};"
+            "fetch('secret.txt').then(function(r){return r.text();}).then(function(t){"
+            "window.__sandbox.fetchBlocked=false;window.__sandbox.fetchLeaked=t;}).catch(function(){"
+            "window.__sandbox.fetchBlocked=true;});"
+            "try{var x=new XMLHttpRequest();x.open('GET','secret.txt');"
+            "x.onload=function(){window.__sandbox.xhrBlocked=false;window.__sandbox.xhrLeaked=x.responseText;};"
+            "x.onerror=function(){window.__sandbox.xhrBlocked=true;};x.send();}"
+            "catch(e){window.__sandbox.xhrBlocked=true;}"
+            "</script></body></html>");
+    }
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 home_surface = 0;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (url.endsWith(QStringLiteral("/home.html")) && home_surface == 0) {
+                                 home_surface = id;
+                                 loop.quit();
+                             }
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    // Let the fetch and the XHR settle.
+    {
+        QEventLoop loop;
+        QTimer::singleShot(1200, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    QString result;
+    {
+        QEventLoop loop;
+        window.engine()->evaluate(home_surface, QStringLiteral("JSON.stringify(window.__sandbox)"),
+                                  [&](const QJsonObject& reply, const QString& error) {
+                                      if (error.isEmpty()) {
+                                          result = reply.value(QStringLiteral("value")).toString();
+                                      }
+                                      loop.quit();
+                                  });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    const QJsonObject sandbox = QJsonDocument::fromJson(result.toUtf8()).object();
+    const bool fetch_blocked = sandbox.value(QStringLiteral("fetchBlocked")).toBool();
+    const bool xhr_blocked = sandbox.value(QStringLiteral("xhrBlocked")).toBool();
+
+    out << "sandbox_result=" << result << '\n';
+    out << "sandbox_fetch_blocked=" << (fetch_blocked ? "true" : "false") << '\n';
+    out << "sandbox_xhr_blocked=" << (xhr_blocked ? "true" : "false") << '\n';
+    const bool ok = fetch_blocked && xhr_blocked;
+    out << "sandbox=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    QDir(dataDir).removeRecursively();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -8737,6 +8824,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("homeedittest"),
         QStringLiteral("Prove the editable-home starter template is created and served, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption sandboxtest(
+        QStringLiteral("sandboxtest"),
+        QStringLiteral("Prove a custom home cannot read sibling data files, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -8817,6 +8908,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(customhometest);
     parser.addOption(resethometest);
     parser.addOption(homeedittest);
+    parser.addOption(sandboxtest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -8990,6 +9082,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(homeedittest)) {
         return runHomeEditCheck(parser.value(homeedittest));
+    }
+
+    if (parser.isSet(sandboxtest)) {
+        return runSandboxCheck(parser.value(sandboxtest));
     }
 
     if (parser.isSet(enginerestarttest)) {
