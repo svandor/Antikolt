@@ -3,6 +3,38 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százkilencedik szelet) — a hangolási riport (F6)
+
+Az F6 „hangolási riport" tétele egyetlen diagnosztikává áll össze: a `--memoryreport` a teljes memória-vezérlő
+állapotát olvassa egyszerre — a profilt, a büdzsét, az élő felület working set-jét és a kártyánkénti memóriát —, és
+egyetlen táblázatban írja ki. Ez az, amit a hangoláshoz látni kell.
+
+### Mi változott
+
+- **`--memoryreport` (új önteszt/diagnosztika):** a shell egymás után olvassa a mag `user_prefs`-ét (profil + a
+  levezetett paraméterek + büdzsé), a `cards_list`-et (a kártyánkénti `memory_bytes` összege) és a lap
+  `system.memory`-ját (working set + `overBudget`), majd `memory_profile`, `memory_idle_ms`,
+  `memory_preview_refresh`, `memory_video_max_height`, `memory_warn/hard_bytes`, `memory_budget_bytes`,
+  `memory_working_set_bytes`, `memory_over_budget`, `memory_card_sum_bytes` és `memory_cards_measured` mezőket ír.
+- **Őszinte a `manual` profillal:** a `manual`-nak nincs levezetett paramétere, ezért a paraméterek 0-k — a riport a
+  profilt a `prefs.resource_profile`-ból mutatja, és a 0 paraméter nem hiba.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (46 önteszt + check-repo)
+--memoryreport              → memory_profile=manual · memory_budget_bytes=67108864 ·
+                              memory_working_set_bytes=106741760 · memory_over_budget=true ·
+                              memory_card_sum_bytes=117477376 · memory_report=ok
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A **raszter-kezdőlap** (motor leállítva) és a motor-élettartam T1/T2 bekötése — a nagy, 3–4 hetes F6-maradék; a
+  profil `warn`/`hard` sávjainak és a videófelbontásnak a tényleges vezérlő-működése (a jelek már kint vannak);
+  a 3. tétel szerkesztője.
+
 ## 2026-11-22 (száznyolcadik szelet) — a profil `preview_refresh` bekötése (F6)
 
 A profil most már nemcsak a hibernálást vezeti le, hanem az **előnézet-frissítést** is: a mag kiteszi a levezetett

@@ -2186,6 +2186,126 @@ int runCustomHomeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// The tuning report (F6): one read of the whole memory-governor state — the active profile and its params, the
+/// live surface's working set against the budget, and the per-card working sets summed. It is the diagnostics the
+/// "hangolás" item promises: everything a person needs to judge whether the profile fits, in one place.
+int runMemoryReport(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    QJsonObject profile;
+    QString resource_profile;
+    qint64 budget_bytes = 0;
+    qint64 working_set = 0;
+    bool over_budget = false;
+    qint64 card_sum = 0;
+    int cards_measured = 0;
+    qint64 home_surface = 0;
+
+    QEventLoop loop;
+    QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int) {
+                         if (!url.startsWith(QStringLiteral("file:")) || home_surface != 0) {
+                             return;
+                         }
+                         home_surface = id;
+                         // Read the three sources the governor uses: the profile, the cards, the live surface.
+                         window.core()->userPrefs([&, id](const QJsonObject& reply, const QString& error) {
+                             if (error.isEmpty()) {
+                                 const QJsonObject prefs = reply.value(QStringLiteral("prefs")).toObject();
+                                 profile = reply.value(QStringLiteral("profile")).toObject();
+                                 resource_profile =
+                                     prefs.value(QStringLiteral("resource_profile")).toString();
+                                 budget_bytes = static_cast<qint64>(
+                                                    prefs.value(QStringLiteral("memory_budget_mb")).toDouble()) *
+                                                1024 * 1024;
+                             }
+                             window.core()->cardsList([&, id](const QJsonObject& cards_reply,
+                                                              const QString& cards_error) {
+                                 if (cards_error.isEmpty()) {
+                                     const QJsonArray cards =
+                                         cards_reply.value(QStringLiteral("cards")).toArray();
+                                     for (const auto& value : cards) {
+                                         const qint64 bytes = static_cast<qint64>(
+                                             value.toObject()
+                                                 .value(QStringLiteral("memory_bytes"))
+                                                 .toDouble());
+                                         if (bytes > 0) {
+                                             card_sum += bytes;
+                                             ++cards_measured;
+                                         }
+                                     }
+                                 }
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral("window.antikoltNative.request('system.memory', {})"
+                                                    ".then(function(r){window.__memrep=r;},"
+                                                    "function(e){window.__memrep={error:String(e.message)};});"
+                                                    " 'asked'"),
+                                     [&, id](const QJsonObject&, const QString&) {
+                                         QTimer::singleShot(900, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id, QStringLiteral("JSON.stringify(window.__memrep||null)"),
+                                                 [&](const QJsonObject& value, const QString& failure) {
+                                                     if (failure.isEmpty()) {
+                                                         const QJsonObject mem =
+                                                             QJsonDocument::fromJson(
+                                                                 value
+                                                                     .value(QStringLiteral("value"))
+                                                                     .toString()
+                                                                     .toUtf8())
+                                                                 .object();
+                                                         working_set = static_cast<qint64>(
+                                                             mem.value(QStringLiteral("usedBytes")).toDouble());
+                                                         over_budget =
+                                                             mem.value(QStringLiteral("overBudget")).toBool();
+                                                     }
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+                     });
+    QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    out << "memory_profile=" << resource_profile << '\n';
+    out << "memory_idle_ms=" << static_cast<qint64>(profile.value(QStringLiteral("idle_hibernate_ms")).toDouble())
+        << '\n';
+    out << "memory_preview_refresh="
+        << (profile.value(QStringLiteral("preview_refresh")).toBool() ? "true" : "false") << '\n';
+    out << "memory_video_max_height="
+        << static_cast<qint64>(profile.value(QStringLiteral("video_max_height")).toDouble()) << '\n';
+    out << "memory_warn_bytes=" << static_cast<qint64>(profile.value(QStringLiteral("memory_warn_bytes")).toDouble())
+        << '\n';
+    out << "memory_hard_bytes=" << static_cast<qint64>(profile.value(QStringLiteral("memory_hard_bytes")).toDouble())
+        << '\n';
+    out << "memory_budget_bytes=" << budget_bytes << '\n';
+    out << "memory_working_set_bytes=" << working_set << '\n';
+    out << "memory_over_budget=" << (over_budget ? "true" : "false") << '\n';
+    out << "memory_card_sum_bytes=" << card_sum << '\n';
+    out << "memory_cards_measured=" << cards_measured << '\n';
+
+    // The report is honest when the profile is a known kind, the budget is real and the live working set was
+    // measured. A `manual` profile legitimately carries no derived params, so the zero params are not a failure.
+    const bool known_kind = resource_profile == QStringLiteral("fast") ||
+                            resource_profile == QStringLiteral("balanced") ||
+                            resource_profile == QStringLiteral("saver") ||
+                            resource_profile == QStringLiteral("ultra") ||
+                            resource_profile == QStringLiteral("manual");
+    const bool ok = known_kind && budget_bytes > 0 && working_set > 0;
+    out << "memory_report=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the per-card memory breakdown (F6): opening a card and freezing it leaves its working set on the card,
 /// not just in the shell's status line. The freeze boundary is the only honest place to measure — a live card
 /// changes under the meter — so the check drives the same open→freeze cycle a user does.
@@ -8146,6 +8266,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("customhometest"),
         QStringLiteral("Prove a user-authored home.html is served from the profile, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption memoryreport(
+        QStringLiteral("memoryreport"),
+        QStringLiteral("Print the memory-governor tuning report (F6), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption mediatest(
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
@@ -8200,6 +8324,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(prefstest);
     parser.addOption(memorytest);
     parser.addOption(customhometest);
+    parser.addOption(memoryreport);
     parser.addOption(logtest);
     parser.addOption(searchtest);
     parser.addOption(mediacleantest);
@@ -8359,6 +8484,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(customhometest)) {
         return runCustomHomeCheck(parser.value(customhometest));
+    }
+
+    if (parser.isSet(memoryreport)) {
+        return runMemoryReport(parser.value(memoryreport));
     }
 
     if (parser.isSet(previewgentest)) {
