@@ -2250,6 +2250,64 @@ int runResetHomeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
+/// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
+int runEngineRestartCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    const QString profile = QDir::tempPath() + QStringLiteral("/antikolt-restart-") +
+                            QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir().mkpath(profile);
+
+    EngineClient engine;
+    const bool first = engine.start(enginePath, profile);
+    const bool running_after_start = engine.isRunning();
+
+    bool welcome_first = false;
+    {
+        QEventLoop loop;
+        QObject::connect(&engine, &EngineClient::engineReady, &loop, [&](const QJsonObject&) {
+            welcome_first = true;
+            loop.quit();
+        });
+        engine.handshake();
+        QTimer::singleShot(15000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    engine.shutdown();
+    const bool running_after_shutdown = engine.isRunning();
+
+    const bool second = engine.start(enginePath, profile);
+    const bool running_after_restart = engine.isRunning();
+
+    bool welcome_second = false;
+    {
+        QEventLoop loop;
+        QObject::connect(&engine, &EngineClient::engineReady, &loop, [&](const QJsonObject&) {
+            welcome_second = true;
+            loop.quit();
+        });
+        engine.handshake();
+        QTimer::singleShot(15000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "restart_first_start=" << (first ? "true" : "false") << '\n';
+    out << "restart_running_after_start=" << (running_after_start ? "true" : "false") << '\n';
+    out << "restart_welcome_first=" << (welcome_first ? "true" : "false") << '\n';
+    out << "restart_running_after_shutdown=" << (running_after_shutdown ? "true" : "false") << '\n';
+    out << "restart_second_start=" << (second ? "true" : "false") << '\n';
+    out << "restart_running_after_restart=" << (running_after_restart ? "true" : "false") << '\n';
+    out << "restart_welcome_second=" << (welcome_second ? "true" : "false") << '\n';
+    const bool ok = first && running_after_start && welcome_first && !running_after_shutdown && second &&
+                    running_after_restart && welcome_second;
+    out << "engine_restart=" << (ok ? "ok" : "FAILED") << '\n';
+    engine.shutdown();
+    QDir(profile).removeRecursively();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// The tuning report (F6): one read of the whole memory-governor state — the active profile and its params, the
 /// live surface's working set against the budget, and the per-card working sets summed. It is the diagnostics the
 /// "hangolás" item promises: everything a person needs to judge whether the profile fits, in one place.
@@ -8336,6 +8394,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("resethometest"),
         QStringLiteral("Prove resetCustomHome removes the custom home and reloads the grid, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption enginerestarttest(
+        QStringLiteral("enginerestarttest"),
+        QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption memoryreport(
         QStringLiteral("memoryreport"),
         QStringLiteral("Print the memory-governor tuning report (F6), then exit."),
@@ -8395,6 +8457,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(memorytest);
     parser.addOption(customhometest);
     parser.addOption(resethometest);
+    parser.addOption(enginerestarttest);
     parser.addOption(memoryreport);
     parser.addOption(logtest);
     parser.addOption(searchtest);
@@ -8559,6 +8622,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(resethometest)) {
         return runResetHomeCheck(parser.value(resethometest));
+    }
+
+    if (parser.isSet(enginerestarttest)) {
+        return runEngineRestartCheck(parser.value(enginerestarttest));
     }
 
     if (parser.isSet(memoryreport)) {

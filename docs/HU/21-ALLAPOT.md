@@ -69,10 +69,11 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
    tárolása+kiszolgálása és a visszaállítás kész (106., 111. szelet); a **szerkesztő-felület** (a HTML írása a
    termékből) és a felhasználói HTML **sandboxolása** marad hátra.
 4. **Az F6 maradéka** — a büdzsé, a beállítás-felülete, a kártyánkénti memória-bontás, a profil-preset, a
-   médiaminőség-korlát **jele**, a profil **előnézet-frissítése**, a **hangolási riport** és a **motor-élettartam
-   (T1/T2) bekötése** kész (ADR-074/020, 102–110. szelet); a profil **többi dimenziójának** tényleges
-   vezérlő-működése (videófelbontás, `warn`/`hard` sávok) és a **raszter-kezdőlap** (a motor tényleges leállítása +
-   raszter + hideg újraindítás) marad hátra (az ütemterv 3–4 hetes tétele).
+   médiaminőség-korlát **jele**, a profil **előnézet-frissítése**, a **hangolási riport**, a **motor-élettartam
+   (T1/T2) bekötése** és a **motor leállítás/újraindítás ciklusa** kész (ADR-074/020, 102–112. szelet); a profil
+   **többi dimenziójának** tényleges vezérlő-működése (videófelbontás, `warn`/`hard` sávok) és a **raszter-kezdőlap**
+   maradék része (a rács raszterizálása + megjelenítése + kattintás-leképezés) marad hátra (az ütemterv 3–4 hetes
+   tétele).
 
 ## Amihez emberi lépés kell (nem kód)
 

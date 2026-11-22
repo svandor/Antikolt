@@ -3,6 +3,33 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizenkettedik szelet) — a motor újraindíthatóvá tétele (F6, raszter-előfeltétel)
+
+A raszter-kezdőlap (a motor leállítva) előfeltétele, hogy a motor **le tudjon állni és vissza tudjon indulni**.
+Kiderült, hogy az `EngineClient` eddig nem támogatta: a `start()` korán visszatért, mert a `shutdown()`/kilépés
+után a `process_` mutató nem nullázódott. Ezt javítottam, és önteszttel igazoltam a teljes ciklust.
+
+### Mi változott
+
+- **`EngineClient::onProcessFinished`:** a kilépett motor `process_`-jét nullázza (és törli), törli a protokoll-
+  puffert és az engine-info-t — így a `start()` friss folyamatot indít.
+- **`--enginerestarttest` (új):** indítás → üdvözlés → leállítás → újraindítás → üdvözlés, minden állapotot mérve.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (48 önteszt + check-repo)
+--enginerestarttest          → restart_first_start=true · restart_running_after_shutdown=false ·
+                               restart_running_after_restart=true · restart_welcome_second=true · engine_restart=ok
+cargo test                   → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A **raszter-kezdőlap** maga: a rács raszterizálása, a motor leállítása tétlen állapotban, a raszter megjelenítése
+  és a kattintásra hideg újraindítás — a leállítás/újraindítás most már működik, a raszter-megjelenítés a következő
+  lépés; a 3. tétel szerkesztője és sandboxolása.
+
 ## 2026-11-22 (száztizenegyedik szelet) — az egyéni kezdőlap visszaállítása (3. tétel)
 
 A szerkeszthető kezdőlap most már használható körré zárul: a felhasználó beállított `home.html`-jét egyetlen

@@ -423,6 +423,14 @@ void EngineClient::onProcessError() {
 
 void EngineClient::onProcessFinished(int exitCode) {
     failPending(tr("a motorház kilépett (kód %1)").arg(exitCode));
+    // A dead engine must not block a restart (T2, raster home): drop the finished QProcess so `start()` spawns a
+    // fresh one, and clear the protocol state that belonged to the old process.
+    if (process_ != nullptr) {
+        process_->deleteLater();
+        process_ = nullptr;
+    }
+    buffer_.clear();
+    engine_info_ = QJsonObject();
 }
 
 void EngineClient::failPending(const QString& message) {
