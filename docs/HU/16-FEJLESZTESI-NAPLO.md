@@ -3,6 +3,45 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százegyedik szelet) — a `<antikolt-card>` önálló csomagja + a memória-büdzsé (F6)
+
+A két hátralévő nagy útiterv-tételből az a része készült el, ami egy szeletben mérhető: a kártya-komponens
+önálló csomaggá vált (ADR-075), a memória-büdzsé pedig valódi profil-beállítás lett, sávval és önteszttel
+(ADR-074). A teljes szerkeszthető kezdőlap (a felhasználói HTML tárolása és kiszolgálása) és az F6 többi része
+(kártyánkénti bontás, erőforrás-profilok, raszter-kezdőlap) továbbra is nyitott.
+
+### Mi változott
+
+- **`<antikolt-card>` külön csomag (ADR-075):** a komponens + segédei (`hashHue`, `STATUS`, `cardStyles`,
+  `AntikoltCard`, a define-őrző) átkerültek az `app.js`-ből a `home/antikolt-card.js` IIFE-be; a rács és egy
+  felhasználói lap **ugyanezt** tölti (`index.html` a `defer`-sorrendben az `app.js` elé). A konténer/munkaterület
+  `<select>` a `setOptions({containers, workspaces})`-ből olvas, a fókusz-állapot `getPendingFocusId()`-dal;
+  `home/user-home.example.html` egy minimális, saját kezdőlap-példa.
+- **Memória-büdzsé (ADR-074):** `memory_budget_mb` a `UserPrefs`-ben (séma **`0007`**, default `512`, validáció
+  `64..=4096`, `serde(default)` a F6 előtti köteg importjához; az `ALTER … ADD COLUMN` csak hiányzó oszlopnál).
+  A shell `CoreClient::userPrefs` + `refreshUserPrefs()` cache-eli, a `system.memory` `budgetBytes`-ként adja; a
+  rács `#mem` mezője used/budget sávot rajzol (`--mem-fill`). A `--metricstest` most `page_budget_bytes > 0`-t is
+  állít.
+
+### Bizonyíték (mért)
+
+```
+cargo test                   → 152 teszt zöld: 78 + 50 + 8 + 1 + 15 (a séma 0007-re sorszámozódott)
+cargo clippy -D warnings     → 0
+cargo fmt --all -- --check   → tiszta
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (minden önteszt + check-repo)
+--metricstest                → page_budget_bytes=536870912 (512 MiB), metrics=ok
+--addcardtest                → db_status=ok schema=7 cards=… verified=yes
+```
+
+### Ami továbbra is nyitott
+
+- A **teljes** szerkeszthető kezdőlap (a felhasználói HTML tárolása, kiszolgálása és egy szerkesztő-felület) és
+  az F6 többi része: **kártyánkénti memória-bontás**, **erőforrás-profilok**, **raszter-kezdőlap** (motor leállítva)
+  — az ütemterv 3–4 hetes tételei.
+- A büdzsé **beállítás-felülete** (a `user_prefs_set` natív vezérlője) — az érték egyelőre az IPC-n és a
+  profil-költöztetésen át állítható.
+
 ## 2026-11-22 (századik szelet) — a kiadás előtti maradék: popup, profil-gomb, kártya-politika, fogd-és-vidd
 
 Az átadás után hátramaradt, kódból megoldható tételek egy körben: a bejelentkezési popup összekötése (ADR-073), a

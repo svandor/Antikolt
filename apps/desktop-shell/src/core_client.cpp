@@ -112,6 +112,16 @@ void CoreClient::sessionRules(const QJsonObject& rules, ReplyHandler handler) {
     fields.insert(QStringLiteral("rules"), rules);
     send(QStringLiteral("session_rules"), fields, std::move(handler));
 }
+void CoreClient::userPrefs(ReplyHandler handler) {
+    send(QStringLiteral("user_prefs"), {}, std::move(handler));
+}
+
+void CoreClient::userPrefsSet(const QJsonObject& prefs, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("prefs"), prefs);
+    send(QStringLiteral("user_prefs_set"), fields, std::move(handler));
+}
+
 void CoreClient::sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("container_id"), containerId);

@@ -1,0 +1,64 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MPL-2.0
+     A user-authored home page, in miniature. The one thing it must do is load `antikolt-card.js` and
+     define the CSS variables the card's own styles read. Cards are fed through the `card` property. -->
+<html lang="hu" data-theme="grey">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Antikolt — saját kezdőlap (példa)</title>
+    <style>
+      :root {
+        --surface: #ffffff;
+        --surface-raised: #f4f4f5;
+        --border: #d4d4d8;
+        --text: #18181b;
+        --text-muted: #71717a;
+        --accent: #2f6feb;
+        --radius-card: 12px;
+        --radius-control: 8px;
+        --shadow-1: 0 1px 2px rgb(0 0 0 / 8%);
+        --shadow-2: 0 4px 12px rgb(0 0 0 / 14%);
+        --motion-fast: 120ms;
+        --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      body {
+        font-family: Inter, "Segoe UI", system-ui, sans-serif;
+        background: #fafafa;
+        color: var(--text);
+        margin: 0;
+        padding: 24px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Saját kezdőlap</h1>
+    <p>A kártyák a <code>&lt;antikolt-card&gt;</code> komponenssel jelennek meg — a saját lapod tetszőleges HTML/CSS-t
+      rakhat köré.</p>
+    <div class="grid" id="cards"></div>
+
+    <!-- A klasszikus, deferelt betöltés: a fájl-eredetű lapon a modul-szkriptet a Chromium CORS miatt elutasítja. -->
+    <script src="antikolt-card.js" defer></script>
+    <script>
+      // A valódi lap a shell push-jából kapná a rekordokat (window.antikoltAcceptCards); itt minta-adatok.
+      const sampleCards = [
+        { id: "ex1", title: "Hacker News", domain: "news.ycombinator.com", status: "signed_in", pinned: true, notes: "", size: "m", container: { name: "Munka", color: "#2f6feb" }, workspaceId: "" },
+        { id: "ex2", title: "Wikipedia — kezdőlap", domain: "hu.wikipedia.org", status: "unknown", pinned: false, notes: "olvasnivaló", size: "s", container: { name: "Olvasás", color: "#8e44ad" }, workspaceId: "" },
+      ];
+      // A DOMContentLoaded a deferelt antikolt-card.js *után* fut, tehát a komponens már regisztrált.
+      window.addEventListener("DOMContentLoaded", () => {
+        const host = document.getElementById("cards");
+        for (const card of sampleCards) {
+          const element = document.createElement("antikolt-card");
+          element.card = card;
+          host.append(element);
+        }
+      });
+    </script>
+  </body>
+</html>

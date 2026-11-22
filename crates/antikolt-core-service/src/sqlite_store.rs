@@ -32,8 +32,9 @@ pub const DB_FILE_NAME: &str = "antikolt.sqlite3";
 
 /// The schema this core writes. Bumped only with a migration; `0001` was the JSON files, `0002` added `page_text`,
 /// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070),
-/// `0005` the per-container proxy and permission policy (ADR-071), `0006` the one row of user preferences (ADR-072).
-pub const SCHEMA_VERSION: i64 = 6;
+/// `0005` the per-container proxy and permission policy (ADR-071), `0006` the one row of user preferences (ADR-072),
+/// `0007` the memory budget column (F6).
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// The schema version that means "the cards are SQLite-first" (ADR-069). A file at least this version already has the
 /// cards' adoption behind it, which the `0004` migration records in `meta` (the per-store adoption markers live there,
@@ -61,7 +62,7 @@ pub enum DbError {
 
 /// One row of user preferences: the live-card cap and the two hibernation timings.
 ///
-/// Stored in the `user_prefs` table (schema 0006), one row only (`id = 1`, enforced by a CHECK constraint).
+/// Stored in the `user_prefs` table (schema 0007), one row only (`id = 1`, enforced by a CHECK constraint).
 /// A profile that never chose anything gets `defaults()`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserPrefs {
@@ -71,6 +72,18 @@ pub struct UserPrefs {
     pub idle_hibernate_ms: u64,
     /// Idle time before a card goes cold (3600000..=2592000000 ms).
     pub cold_card_ms: u64,
+    /// The memory budget the user asked for (64..=4096 MiB). `system.memory` reports it as `budgetBytes`, so the
+    /// grid can draw a used/budget bar instead of a bare number (F6).
+    ///
+    /// Defaulted on deserialisation so a profile bundle written before F6 (whose prefs lack this field) still imports:
+    /// an older bundle keeps the factory budget instead of being refused.
+    #[serde(default = "default_memory_budget_mb")]
+    pub memory_budget_mb: u32,
+}
+
+/// The factory memory budget, shared by `UserPrefs::default` and the `serde` default.
+pub fn default_memory_budget_mb() -> u32 {
+    512
 }
 
 impl Default for UserPrefs {
@@ -81,6 +94,8 @@ impl Default for UserPrefs {
             // ordered on purpose: cold is the later state, never the earlier one.
             idle_hibernate_ms: 600_000,
             cold_card_ms: 86_400_000,
+            // Half a gibibyte is the factory budget (F6): generous for an idle shell, tight for many live cards.
+            memory_budget_mb: default_memory_budget_mb(),
         }
     }
 }
@@ -107,6 +122,9 @@ impl UserPrefs {
         }
         if self.cold_card_ms <= self.idle_hibernate_ms {
             return Err("cold_card_ms must be greater than idle_hibernate_ms");
+        }
+        if !(64..=4096).contains(&self.memory_budget_mb) {
+            return Err("memory_budget_mb must be between 64 and 4096");
         }
         Ok(())
     }
@@ -285,6 +303,23 @@ impl Db {
                  COMMIT;",
             )?;
         }
+        if self.opened_at_version < 7 {
+            // 0007: the memory budget (F6). One column on the existing one-row table; added only when missing, so a
+            // crash after the ALTER (or a v7 file re-labelled older) does not fail with "duplicate column name".
+            let budget_column_exists: i64 = self.connection.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('user_prefs') WHERE name = 'memory_budget_mb'",
+                [],
+                |row| row.get(0),
+            )?;
+            if budget_column_exists == 0 {
+                self.connection.execute_batch(
+                    "BEGIN;
+                     ALTER TABLE user_prefs ADD COLUMN memory_budget_mb INTEGER NOT NULL DEFAULT 512;
+                     PRAGMA user_version = 7;
+                     COMMIT;",
+                )?;
+            }
+        }
         // The version is written last, monotonically: a step that crashed half-way leaves an older number behind, so the
         // next start retries it instead of believing a migration finished because a table happened to exist.
         self.connection
@@ -329,13 +364,14 @@ impl Db {
     /// The one row of user preferences, or the factory defaults when nothing was ever chosen.
     pub fn user_prefs(&self) -> Result<UserPrefs, DbError> {
         let row: Option<UserPrefs> = self.connection.query_row(
-            "SELECT max_live_cards, idle_hibernate_ms, cold_card_ms FROM user_prefs WHERE id = 1",
+            "SELECT max_live_cards, idle_hibernate_ms, cold_card_ms, memory_budget_mb FROM user_prefs WHERE id = 1",
             [],
             |row| {
                 Ok(UserPrefs {
                     max_live_cards: row.get::<_, i64>(0)? as u32,
                     idle_hibernate_ms: row.get::<_, i64>(1)? as u64,
                     cold_card_ms: row.get::<_, i64>(2)? as u64,
+                    memory_budget_mb: row.get::<_, i64>(3)? as u32,
                 })
             },
         ).optional()?;
@@ -345,16 +381,18 @@ impl Db {
     /// Replace the one row of user preferences. The caller must have validated first.
     pub fn set_user_prefs(&self, prefs: &UserPrefs) -> Result<(), DbError> {
         self.connection.execute(
-            "INSERT INTO user_prefs (id, max_live_cards, idle_hibernate_ms, cold_card_ms)
-             VALUES (1, ?1, ?2, ?3)
+            "INSERT INTO user_prefs (id, max_live_cards, idle_hibernate_ms, cold_card_ms, memory_budget_mb)
+             VALUES (1, ?1, ?2, ?3, ?4)
              ON CONFLICT (id) DO UPDATE SET
                  max_live_cards = excluded.max_live_cards,
                  idle_hibernate_ms = excluded.idle_hibernate_ms,
-                 cold_card_ms = excluded.cold_card_ms",
+                 cold_card_ms = excluded.cold_card_ms,
+                 memory_budget_mb = excluded.memory_budget_mb",
             params![
                 prefs.max_live_cards as i64,
                 prefs.idle_hibernate_ms as i64,
                 prefs.cold_card_ms as i64,
+                prefs.memory_budget_mb as i64,
             ],
         )?;
         Ok(())
@@ -1374,6 +1412,21 @@ mod tests {
             bad.validate().is_ok(),
             "one millisecond longer is a valid, if eccentric, ordering"
         );
+
+        // memory_budget_mb: only 64..=4096.
+        bad = UserPrefs::defaults();
+        bad.memory_budget_mb = 63;
+        assert_eq!(
+            bad.validate(),
+            Err("memory_budget_mb must be between 64 and 4096")
+        );
+        bad.memory_budget_mb = 4097;
+        assert_eq!(
+            bad.validate(),
+            Err("memory_budget_mb must be between 64 and 4096")
+        );
+        bad.memory_budget_mb = 512;
+        assert!(bad.validate().is_ok());
     }
 
     #[test]
@@ -1390,6 +1443,7 @@ mod tests {
             max_live_cards: 7,
             idle_hibernate_ms: 300_000,
             cold_card_ms: 900_000,
+            memory_budget_mb: 768,
         };
         db.set_user_prefs(&changed).expect("write");
         assert_eq!(db.user_prefs().expect("read"), changed);
@@ -1398,6 +1452,7 @@ mod tests {
             max_live_cards: 3,
             idle_hibernate_ms: 120_000,
             cold_card_ms: 60_000,
+            memory_budget_mb: 256,
         };
         db.set_user_prefs(&back).expect("update");
         assert_eq!(

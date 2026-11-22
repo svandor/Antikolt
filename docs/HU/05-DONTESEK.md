@@ -3,6 +3,52 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-075 — A `<antikolt-card>` önálló csomag (2026-11-22)
+
+**Kontextus:** a kártya web-komponense eddig a kezdőlap saját szkriptjében (`app.js`) élt, a rács belső globálisaival
+(`pageContainers`, `pageWorkspaces`, `pendingFocusId`) összenőve — épp az, amit a `04-UTEMTERV` nyitott tétele
+(„a mai kártya a lap saját komponense") felszámolni akart. Egy felhasználó által szerzőtt kezdőlap így nem tudta
+betölteni a kártyát.
+
+**Döntés:**
+
+1. **A komponens egy saját fájlba kerül** (`home/antikolt-card.js`), IIFE-be csomagolva: `hashHue`, `STATUS`,
+   `cardStyles`, az `AntikoltCard` osztály és a `customElements.define` (őrzött). A rács (`app.js`) és egy
+   felhasználói lap **ugyanezt** a fájlt tölti be — egy forrás, nem másolat.
+2. **A menedzsment-vezérlők adatai a hosttól jönnek**: a konténer/munkaterület `<select>` a
+   `setOptions({ containers, workspaces })`-ből olvas; a rács ezt a betöltött táblákkal hívja, egy felhasználói lap
+   üresen hagyja (a kártya akkor is kirajzolódik, a `<select>`-ek nélkül). A fókusz-visszaállítás `pendingFocusId`
+   állapota a csomag belső `let`-je, `getPendingFocusId()`-dal kiolvasva.
+3. **A kártya továbbra is kívülről kapja az adatot** (`element.card = …`), nem a magtól kéri — a komponens
+   agnosztikus arra, honnan jön a rekord, és a shell push-ja továbbra is a rács dolga.
+
+**Következmény:** (+) egy forrás a kártyára, a felhasználó-szerző kezdőlap betöltheti; (+) a csomag önálló, a
+host lapja nem törheti el a kártyát; (−) a **teljes** szerkeszthető kezdőlap (a felhasználói HTML tárolása,
+kiszolgálása és egy szerkesztő-felület) külön, nagyobb tétel marad — ez a szelet a csomagot adja, nem a
+kezdőlap-szerkesztőt.
+
+## ADR-074 — A memória-büdzsé mint profil-beállítás (F6) (2026-11-22)
+
+**Kontextus:** a `system.memory` híd `budgetBytes`-e eddig **mindig 0** volt („nem kitalálunk büdzsét"), a rács
+pedig ezért csak a felhasznált értéket írta ki. Az F6 büdzsé-vezérlője ehhez egy valódi, a felhasználó által
+állítható számot kér, amit a felület sávként mutat.
+
+**Döntés:**
+
+1. **A büdzsé a `user_prefs` sora** (`memory_budget_mb`, séma **`0007`**): default `512` (MiB), validáció
+   `64..=4096`. Az `ALTER TABLE … ADD COLUMN` csak akkor fut, ha az oszlop hiányzik (a 0005 mintájára), különben
+   egy félbehagyott migráció „duplicate column"-nal bukna. A mező `serde(default)`-ot kap, hogy a F6 előtti
+   profil-köteg importja ne bukjon el a hiányzó mezőn.
+2. **A shell cache-eli, nem kérdezi per-kérés**: `CoreClient::userPrefs` + `MainWindow::refreshUserPrefs()` a mag
+   `ready`-je és a profil-import után; a `system.memory` válasz `budgetBytes = memory_budget_mb × MiB`. A mérés
+   (working set) továbbra is a motoré, a büdzsé a profilé — a kettő nem keveredik.
+3. **A rács sávot rajzol**: a `#mem` mező `used / budget MB` szövegét egy used/budget kitöltés egészíti ki
+   (`--mem-fill` inline változó), így a túllépés látható, nem csak szám.
+
+**Következmény:** (+) a büdzsé valódi, perzisztens és a profil-költöztetés viszi; (+) a `--metricstest` most már
+`page_budget_bytes > 0`-t is állít (a régi kemény 0 helyett); (−) a beállítás-felület (a `user_prefs_set` natív
+vezérlője) és az F6 többi része — kártyánkénti bontás, erőforrás-profilok, raszter-kezdőlap — továbbra is nyitott.
+
 ## ADR-071 — A konténer izolációs határ: saját profilkönyvtár, proxy és engedély-politika (2026-11-21)
 
 **Kontextus:** a konténer eddig szűrő és címke volt. A motor minden felületet `nullptr`
@@ -1164,6 +1210,8 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-071 | A konténer izolációs határ (`user_version=5`): partíciónként saját `CefRequestContext` és profilkönyvtár, konténerenként proxy (`system`/`direct`/`fixed`) és engedély-politika (alapból megtagadva); a házirend adatbázis-sor | Elfogadva |
 | ADR-072 | Felhasználói beállítások (`UserPrefs`) SQLite-ban (`user_version=6`): `user_prefs` tábla egyetlen sortal (`CHECK (id = 1)`); `max_live_cards`, `idle_hibernate_ms`, `cold_card_ms` defaulttel és validációval; IPC `user_prefs`/`user_prefs_set`; `profile_export`/`profile_import` bekötése | Elfogadva |
 | ADR-073 | Bejelentkezési popup: gesztus → valódi ablak az opener partíciójában (közös sütik), 60 s, külön követve (`popup_browser`); gesztus nélkül blokkolva; `popup_requested`/`popup_closed` események; a shell a `popup_open` jelzővel függeszti fel a hibernálást | Elfogadva |
+| ADR-074 | Memória-büdzsé (F6): `memory_budget_mb` a `user_prefs`-ben (`user_version=7`, default 512, 64..=4096, `serde(default)`); a shell `refreshUserPrefs`-szel cache-eli, a `system.memory` `budgetBytes`-ként adja; a rács used/budget sávot rajzol; `--metricstest` `page_budget_bytes > 0` | Elfogadva |
+| ADR-075 | `<antikolt-card>` önálló csomag: `home/antikolt-card.js` IIFE, a rács és a felhasználói lap ugyanezt tölti; a konténer/munkaterület `<select>` a `setOptions`-ból, a fókusz-állapot `getPendingFocusId()`-dal | Elfogadva |
 
 ---
 

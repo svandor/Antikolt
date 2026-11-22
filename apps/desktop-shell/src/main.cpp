@@ -1946,12 +1946,17 @@ int runMetricsCheck(const QString& enginePath) {
     const QJsonObject page_memory = QJsonDocument::fromJson(page_state.toUtf8()).object();
     const qint64 page_used =
         static_cast<qint64>(page_memory.value(QStringLiteral("usedBytes")).toDouble());
+    const qint64 page_budget =
+        static_cast<qint64>(page_memory.value(QStringLiteral("budgetBytes")).toDouble());
     out << "dom_nodes=" << dom_nodes << '\n';
     out << "js_heap_bytes=" << heap << '\n';
     out << "engine_working_set_bytes=" << working_set << '\n';
     out << "page_used_bytes=" << page_used << '\n';
+    out << "page_budget_bytes=" << page_budget << '\n';
     out << "page_poll_ticks=" << page_poll_ticks << '\n';
-    const bool ok = dom_nodes > 0 && working_set > 0 && page_used > 0;
+    // The budget (F6) must be a real profile number, not the old hard-coded zero: a zero here means the
+    // `memory_budget_mb` → `budgetBytes` wiring did not reach the page.
+    const bool ok = dom_nodes > 0 && working_set > 0 && page_used > 0 && page_budget > 0;
     out << "metrics=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

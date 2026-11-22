@@ -95,6 +95,9 @@ public:
     /// The rows are the core's answer, not the shell's bookkeeping: `session_list` for the ledger and
     /// `session_due` for what the 24-hour policy would do right now (ADR-033).
     void showSessions();
+    /// Refresh the cached user preferences from the core (live-card cap, hibernation timings and the memory
+    /// budget, F6). The budget is a profile setting that changes rarely, so it is cached, not re-read per query.
+    void refreshUserPrefs();
     /// What the panel is showing, one line per row — the witness a self test reads.
     QString sessionPanelSummary() const;
     /// How many rows the panel holds (0 before the first refresh).
@@ -352,6 +355,9 @@ private:
     QCheckBox* sessions_lock_wipe_ = nullptr;
     /// The container default the core reported (`keep`/`sweep`/`wipe`), sent back unchanged on save.
     QString session_policy_ = QStringLiteral("sweep");
+    /// The profile's memory budget in bytes (`memory_budget_mb` × MiB), cached from the core; the factory 512 MiB
+    /// until the first `refreshUserPrefs` answers. `system.memory` reports it as `budgetBytes` (F6).
+    qint64 memory_budget_bytes_ = 512LL * 1024 * 1024;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------

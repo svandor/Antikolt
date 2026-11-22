@@ -71,6 +71,10 @@ public:
     void sessionDue(qint64 nowMs, bool appLocked, ReplyHandler handler = {});
     /// Replace the container-wide session rules (`session_rules`, ADR-039). The core validates them.
     void sessionRules(const QJsonObject& rules, ReplyHandler handler = {});
+    /// The one row of user preferences (ADR-072): live-card cap, hibernation timings and the memory budget (F6).
+    void userPrefs(ReplyHandler handler = {});
+    /// Replace the user preferences; the core validates them (ADR-072).
+    void userPrefsSet(const QJsonObject& prefs, ReplyHandler handler = {});
     void sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler = {});
     void shutdown();
 

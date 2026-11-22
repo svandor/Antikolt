@@ -42,18 +42,19 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Terület | Teszt | Mit bizonyít (mért kimenet) |
 |---|---|---|
 | Rács, 500 kártya | `--gridscaletest` | 503 kártya, **13** renderelt DOM-elem, 20 ms az első renderig; a görgetéses ugrás `not-measurable` (nincs layout-magasság a harnessben) |
-| Tároló (négy store + felhasználói beállítások) | Rust-tesztek, `--addcardtest` | mind a négy store **SQLite-sorok** (`user_version=6`, WAL): kártyák, konténerek, munkaterületek, munkamenetek, `user_prefs` egyetlen sortal (`CHECK (id = 1)`); a négy `*.json` származtatott export; `db_status=ok schema=6 … verified=yes` mind a négyet soronként méri; a kapcsoló előtti profil store-onként egyszer átvételre kerül (ADR-070, napló 97) |
-| Felhasználói beállítások | Rust-tesztek (`sqlite_store::tests`, `service.rs`) | `UserPrefs` default (`max_live_cards=5`, `idle_hibernate_ms=600_000` — 10 perc, `cold_card_ms=86_400_000` — 24 óra), validáció (tartomány + `cold_card_ms <= idle_hibernate_ms` elutasítva), IPC `user_prefs`/`user_prefs_set`, `profile_export`/`profile_import` bekötése (ADR-072, napló 98) |
+| Tároló (négy store + felhasználói beállítások) | Rust-tesztek, `--addcardtest` | mind a négy store **SQLite-sorok** (`user_version=7`, WAL): kártyák, konténerek, munkaterületek, munkamenetek, `user_prefs` egyetlen sortal (`CHECK (id = 1)`); a négy `*.json` származtatott export; `db_status=ok schema=7 … verified=yes` mind a négyet soronként méri; a kapcsoló előtti profil store-onként egyszer átvételre kerül (ADR-070, napló 97) |
+| Felhasználói beállítások | Rust-tesztek (`sqlite_store::tests`, `service.rs`) | `UserPrefs` default (`max_live_cards=5`, `idle_hibernate_ms=600_000` — 10 perc, `cold_card_ms=86_400_000` — 24 óra, `memory_budget_mb=512`), validáció (tartomány + `cold_card_ms <= idle_hibernate_ms` elutasítva, `memory_budget_mb` 64..=4096), IPC `user_prefs`/`user_prefs_set`, `profile_export`/`profile_import` bekötése (ADR-072/074, napló 98) |
 | Keresés | `--searchtest`, `--tagtest` | ékezet-független cím/webcím/jegyzet/címke, és az **oldalszöveg** is (`search_page_text=ok`) |
 | Konténerek | `--containertest` | színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, használt konténer törlése **áthelyezéssel**, proxy/engedély-szerkesztő a rácson (`container_policy=ok`), partíció-takarítás törléskor (`container_partition_cleanup=ok`) |
 | Munkaterületek | `--workspacetest` | fül-sor a magban tárolt munkaterület-táblából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó |
 | Címkék | `--tagtest` | címke a kártyán, mag-normalizálás (trim/dedup/12×32), kereshető |
-| Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), átnevezés a cím-szerkesztő `Enter`-jével (`wrote_by=gesture`), webcím-átírás (`edit_card_url=ok`), tároló-ellenőrzés (`db_status=ok schema=6 … verified=yes`), kétlépéses törlés (`delete_armed=ok delete_card=ok`, ADR-068); a teszt kitakarít maga után |
+| Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), átnevezés a cím-szerkesztő `Enter`-jével (`wrote_by=gesture`), webcím-átírás (`edit_card_url=ok`), tároló-ellenőrzés (`db_status=ok schema=7 … verified=yes`), kétlépéses törlés (`delete_armed=ok delete_card=ok`, ADR-068); a teszt kitakarít maga után |
+| `<antikolt-card>` csomag | `--gridtest`, `--addcardtest`, `--containertest` | a komponens önálló `home/antikolt-card.js`-ben (ADR-075), a rács és egy felhasználói lap ugyanezt tölti; `home/user-home.example.html` minimális példa; a konténer/munkaterület `<select>` a `setOptions`-ból; a kapu minden kártya-interakciós tesztje zöld |
 | Profil-költöztetés | `--profiletest` | export → import friss profilba → visszaolvasás **fájlból**; ismeretlen séma elutasítva |
 | Munkamenetek | `--sessionpanel`, `--scrollbook`, `--wipetest`, `--cleanuptest` | látszik, mi van életben, mennyi RAM/lemez; `keep`/`sweep`/`wipe` végrehajtás; a „Politika" oszlop legördülővel **kártyánként (origin-szinten)** felülírja a konténer-alapértelmezést (`session_panel=ok`) |
 | Bejelentkezési popup, profil-gomb, fogd-és-vidd | `--partitiontest`, `--profiletest`, `--workspacetest` | popup (ADR-073): gesztus → valódi ablak a kártya partíciójában, 60 s, a hibernálás felfüggesztve (a gesztus-út `not-measurable`); profil-gomb: natív `QFileDialog` a `profile_export`/`import` fölött (a dialógus `not-measurable`, az út `--profiletest`-tel mérve); fogd-és-vidd: kártya → munkaterület-fül a `<select>` mellett (ADR-058) |
 | Előnézet | `--preview*` | a háttér-worker szabályai (ADR-041) és az ütemező mérve |
-| Memória | `--metricstest` | az engine working set-je mérve, a költségvetés nem kitalált |
+| Memória | `--metricstest` | az engine working set-je mérve (`engine_working_set_bytes`), a büdzsé a profil `memory_budget_mb`-je (`budgetBytes`; `page_budget_bytes=536870912` a 512 MiB-nál), a rács used/budget sávot rajzol (ADR-074) |
 | Tálca, napló, téma | `--traytest`, `--logtest`, `--themetest` | a napló nem ír feleslegesen, a témák a helyes színt adják |
 
 ## Ami nyitva van (tudatosan, nem elfelejtve)
@@ -63,9 +64,11 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 2. **A bejelentkezési popup gesztus-útja** — a motor összekötve (ADR-073: gesztus → valódi ablak a kártya
    partíciójában, 60 s, a hibernálás felfüggesztve), de a gesztus-út a harnessben nem mérhető (a szintetikus
    `window.open` nem gesztus): a `popup_requested`/`popup_closed` útja `not-measurable`.
-3. **Szerkeszthető kezdőlap + `<antikolt-card>`** — a `<antikolt-card>` komponens létezik és a rács használja; a
-   felhasználó-szerző kezdőlap (saját HTML a komponenssel) nagyobb tétel.
-4. **Memória-büdzsé (F6)** — büdzsé-vezérlő, kártyánkénti bontás, erőforrás-profilok (az ütemterv 3–4 hetes tétele).
+3. **A teljes szerkeszthető kezdőlap** — a `<antikolt-card>` csomag kész (ADR-075); a felhasználói HTML tárolása,
+   kiszolgálása és egy szerkesztő-felület marad hátra.
+4. **Az F6 maradéka** — a büdzsé kész (ADR-074); a **kártyánkénti memória-bontás**, az **erőforrás-profilok**, a
+   **raszter-kezdőlap** (motor leállítva) és a büdzsé **beállítás-felülete** marad hátra (az ütemterv 3–4 hetes
+   tétele).
 
 ## Amihez emberi lépés kell (nem kód)
 

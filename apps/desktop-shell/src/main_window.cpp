@@ -957,6 +957,8 @@ void MainWindow::startEngine() {
             setStatus(QStringLiteral("mag: %1 %2")
                           .arg(info.value(QStringLiteral("name")).toString(),
                                info.value(QStringLiteral("version")).toString()));
+            // The memory budget (F6) is a profile setting: cache it once the core is there to answer.
+            refreshUserPrefs();
         });
     }
     if (!core_->isRunning()) {
@@ -1402,9 +1404,8 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
             return;
         }
         if (method == QStringLiteral("system.memory")) {
-            // The page asks what the browser costs; the engine measures the live surface. The budget is
-            // not a measurement and is not invented here: until profiles carry a memory budget (F6) it is
-            // reported as 0, and the page shows the used figure alone.
+            // The page asks what the browser costs; the engine measures the live surface, and the budget is the
+            // profile's `memory_budget_mb` (F6) — a cached setting from the core, never invented here.
             if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
                 replyToPage(request, {}, QStringLiteral("nincs élő felület"));
                 return;
@@ -1418,8 +1419,10 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                 const qint64 used = measured.value(QStringLiteral("engine_working_set_bytes"))
                                         .toString()
                                         .toLongLong();
-                replyToPage(request, QJsonObject{{QStringLiteral("usedBytes"), static_cast<double>(used)},
-                                                 {QStringLiteral("budgetBytes"), 0}});
+                replyToPage(request,
+                            QJsonObject{{QStringLiteral("usedBytes"), static_cast<double>(used)},
+                                        {QStringLiteral("budgetBytes"),
+                                         static_cast<double>(memory_budget_bytes_)}});
             });
             return;
         }
@@ -2435,9 +2438,27 @@ void MainWindow::importProfile() {
                       .arg(path)
                       .arg(reply.value(QStringLiteral("cards")).toInt())
                       .arg(reply.value(QStringLiteral("containers")).toInt()));
+        // An imported profile may carry a different memory budget (F6): refresh the cached copy.
+        refreshUserPrefs();
         // The grid must show the imported rows, not the profile it replaced.
         if (home_surface_ != 0) {
             pushCardsToGrid(home_surface_);
+        }
+    });
+}
+
+void MainWindow::refreshUserPrefs() {
+    if (core_ == nullptr || !core_->isRunning()) {
+        return;
+    }
+    core_->userPrefs([this](const QJsonObject& reply, const QString& error) {
+        if (!error.isEmpty()) {
+            return;
+        }
+        const QJsonObject prefs = reply.value(QStringLiteral("prefs")).toObject();
+        const qint64 mb = static_cast<qint64>(prefs.value(QStringLiteral("memory_budget_mb")).toDouble());
+        if (mb >= 64 && mb <= 4096) {
+            memory_budget_bytes_ = mb * 1024 * 1024;
         }
     });
 }
