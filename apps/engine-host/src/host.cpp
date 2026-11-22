@@ -2304,11 +2304,18 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
         state.browser->GetHost()->SetFocus(command.focused);
         link.Reply(command.id);
     } else if (command.op == "install_bridge") {
+        // Same race as `navigate`: the shell sends `install_bridge` right after `create_surface`, while the
+        // browser is still being created. The flag alone is enough when there is no browser yet — `OnLoadEnd`
+        // injects the bridge on the next load, and `install_bridge` always precedes a navigation.
+        state.bridge_enabled = true;
+        if (!state.browser_created.load()) {
+            link.Reply(command.id);
+            return;
+        }
         if (!state.browser || !state.browser->GetMainFrame()) {
             link.ReplyError(command.id, "surface_not_found", "no live surface");
             return;
         }
-        state.bridge_enabled = true;
         state.browser->GetMainFrame()->ExecuteJavaScript(kBridgeScript, "", 0);
         link.Reply(command.id);
     } else if (command.op == "eval") {
