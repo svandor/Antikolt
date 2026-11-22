@@ -1979,6 +1979,7 @@ int runPrefsCheck(const QString& enginePath) {
     window.startEngine();
 
     qint64 page_budget = 0;
+    qint64 derived_idle = 0;
     qint64 home_surface = 0;
     bool over_budget = false;
     QString set_error;
@@ -2001,8 +2002,12 @@ int runPrefsCheck(const QString& enginePath) {
                              prefs.insert(QStringLiteral("resource_profile"), QStringLiteral("ultra"));
                              window.core()->userPrefsSet(
                                  prefs,
-                                 [&, id](const QJsonObject&, const QString& error) {
+                                 [&, id](const QJsonObject& reply, const QString& error) {
                                      set_error = error;
+                                     if (error.isEmpty()) {
+                                         derived_idle = static_cast<qint64>(
+                                             reply.value(QStringLiteral("prefs")).toObject().value(QStringLiteral("idle_hibernate_ms")).toDouble());
+                                     }
                                      window.refreshUserPrefs();
                                      // One beat for the shell's own re-read, then ask the page.
                                      QTimer::singleShot(500, &loop, [&, id] {
@@ -2049,8 +2054,8 @@ int runPrefsCheck(const QString& enginePath) {
         loop.exec();
     }
 
-    // Phase 2: a manual ("kezi") 64 MiB budget is below the live surface's working set, so the page must report
-    // `overBudget` — the signal the media-quality limit shows (F6). `kezi` leaves the 64 as the user set it.
+    // Phase 2: a manual ("manual") 64 MiB budget is below the live surface's working set, so the page must report
+    // `overBudget` — the signal the media-quality limit shows (F6). `manual` leaves the 64 as the user set it.
     bool over_budget_manual = false;
     if (home_surface != 0 && set_error.isEmpty()) {
         QEventLoop band;
@@ -2059,7 +2064,7 @@ int runPrefsCheck(const QString& enginePath) {
         prefs.insert(QStringLiteral("idle_hibernate_ms"), static_cast<qint64>(600000));
         prefs.insert(QStringLiteral("cold_card_ms"), static_cast<qint64>(86400000));
         prefs.insert(QStringLiteral("memory_budget_mb"), 64);
-        prefs.insert(QStringLiteral("resource_profile"), QStringLiteral("kezi"));
+        prefs.insert(QStringLiteral("resource_profile"), QStringLiteral("manual"));
         window.core()->userPrefsSet(prefs, [&](const QJsonObject&, const QString& error) {
             if (!error.isEmpty()) {
                 band.quit();
@@ -2099,10 +2104,11 @@ int runPrefsCheck(const QString& enginePath) {
 
     out << "pref_set_error=" << (set_error.isEmpty() ? QString() : set_error) << '\n';
     out << "pref_budget_bytes=" << page_budget << '\n';
+    out << "pref_derived_idle=" << derived_idle << '\n';
     out << "pref_over_budget_under=" << (over_budget ? "true" : "false") << '\n';
     out << "pref_over_budget_manual=" << (over_budget_manual ? "true" : "false") << '\n';
-    const bool ok = set_error.isEmpty() && page_budget == 256LL * 1024 * 1024 && !over_budget &&
-                    over_budget_manual;
+    const bool ok = set_error.isEmpty() && page_budget == 512LL * 1024 * 1024 &&
+                    derived_idle == 120000 && !over_budget && over_budget_manual;
     out << "prefs=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+use antikolt_core::profile::ProfileKind;
 use antikolt_core::session::{LoginState, SessionLedgerEntry, SessionPolicy, SessionRules};
 use serde::{Deserialize, Serialize};
 
@@ -33,8 +34,9 @@ pub const DB_FILE_NAME: &str = "antikolt.sqlite3";
 /// The schema this core writes. Bumped only with a migration; `0001` was the JSON files, `0002` added `page_text`,
 /// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070),
 /// `0005` the per-container proxy and permission policy (ADR-071), `0006` the one row of user preferences (ADR-072),
-/// `0007` the memory budget column (F6), `0008` the per-card `memory_bytes` (F6), `0009` the resource profile (F6).
-pub const SCHEMA_VERSION: i64 = 9;
+/// `0007` the memory budget column (F6), `0008` the per-card `memory_bytes` (F6), `0009` the resource profile (F6),
+/// `0010` the resource profile values renamed to ADR-020's snake_case names.
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// The schema version that means "the cards are SQLite-first" (ADR-069). A file at least this version already has the
 /// cards' adoption behind it, which the `0004` migration records in `meta` (the per-store adoption markers live there,
@@ -79,11 +81,11 @@ pub struct UserPrefs {
     /// an older bundle keeps the factory budget instead of being refused.
     #[serde(default = "default_memory_budget_mb")]
     pub memory_budget_mb: u32,
-    /// Which resource profile the memory governor follows (F6, `09-CELHARDVER.md` §3): `gyors` |
-    /// `kiegyensulyozott` | `takarekos` | `ultra` | `kezi`. A named profile is a preset — on write, its
-    /// hibernation window and budget override the individual fields; `kezi` leaves them manual.
+    /// Which resource profile the memory governor follows (F6, ADR-020 / `09-CELHARDVER.md` §3): a built-in
+    /// profile (Fast/Balanced/Saver/Ultra) or Manual. A built-in profile is a preset — on write, its hibernation
+    /// window overrides the individual field; `Manual` leaves the individual values authoritative.
     #[serde(default = "default_resource_profile")]
-    pub resource_profile: String,
+    pub resource_profile: ProfileKind,
 }
 
 /// The factory memory budget, shared by `UserPrefs::default` and the `serde` default.
@@ -91,20 +93,30 @@ pub fn default_memory_budget_mb() -> u32 {
     512
 }
 
-/// The factory resource profile: `kiegyensulyozott`, the every-day preset.
-pub fn default_resource_profile() -> String {
-    "kiegyensulyozott".to_string()
+/// The factory resource profile: `Balanced`, the every-day preset (ADR-020).
+pub fn default_resource_profile() -> ProfileKind {
+    ProfileKind::Balanced
 }
 
-/// The preset a named profile imposes on the fields that are already wired: the hibernation window (from the
-/// profile table) and the budget (a tighter number for the thriftier profiles). `kezi` has no preset — the
-/// individual values are authoritative. Unknown strings fall back to the factory profile.
-pub fn profile_preset(profile: &str) -> (u64, u32) {
-    match profile {
-        "gyors" => (900_000, 1024),
-        "takarekos" => (300_000, 384),
-        "ultra" => (120_000, 256),
-        _ => (600_000, 512), // kiegyensulyozott (the factory profile)
+/// The profile's snake_case wire/SQL name, kept in one place so the database and the JSON agree.
+pub fn profile_kind_to_str(kind: ProfileKind) -> &'static str {
+    match kind {
+        ProfileKind::Fast => "fast",
+        ProfileKind::Balanced => "balanced",
+        ProfileKind::Saver => "saver",
+        ProfileKind::Ultra => "ultra",
+        ProfileKind::Manual => "manual",
+    }
+}
+
+/// Read a stored profile name; anything unrecognised (an older build's value) falls back to `Balanced`.
+pub fn profile_kind_from_str(value: &str) -> ProfileKind {
+    match value {
+        "fast" => ProfileKind::Fast,
+        "saver" => ProfileKind::Saver,
+        "ultra" => ProfileKind::Ultra,
+        "manual" => ProfileKind::Manual,
+        _ => ProfileKind::Balanced,
     }
 }
 
@@ -118,7 +130,7 @@ impl Default for UserPrefs {
             cold_card_ms: 86_400_000,
             // Half a gibibyte is the factory budget (F6): generous for an idle shell, tight for many live cards.
             memory_budget_mb: default_memory_budget_mb(),
-            resource_profile: default_resource_profile(),
+            resource_profile: ProfileKind::Balanced,
         }
     }
 }
@@ -148,14 +160,6 @@ impl UserPrefs {
         }
         if !(64..=4096).contains(&self.memory_budget_mb) {
             return Err("memory_budget_mb must be between 64 and 4096");
-        }
-        if !matches!(
-            self.resource_profile.as_str(),
-            "gyors" | "kiegyensulyozott" | "takarekos" | "ultra" | "kezi"
-        ) {
-            return Err(
-                "resource_profile must be one of gyors, kiegyensulyozott, takarekos, ultra, kezi",
-            );
         }
         Ok(())
     }
@@ -385,6 +389,19 @@ impl Db {
                 )?;
             }
         }
+        if self.opened_at_version < 10 {
+            // 0010: the resource profile values now follow ADR-020's snake_case names (`ProfileKind`), not the
+            // Hungarian names the 0009 column shipped with. Rewrite the one row, then bump.
+            self.connection.execute_batch(
+                "BEGIN;
+                 UPDATE user_prefs SET resource_profile = 'fast' WHERE resource_profile = 'gyors';
+                 UPDATE user_prefs SET resource_profile = 'balanced' WHERE resource_profile = 'kiegyensulyozott';
+                 UPDATE user_prefs SET resource_profile = 'saver' WHERE resource_profile = 'takarekos';
+                 UPDATE user_prefs SET resource_profile = 'manual' WHERE resource_profile = 'kezi';
+                 PRAGMA user_version = 10;
+                 COMMIT;",
+            )?;
+        }
         // The version is written last, monotonically: a step that crashed half-way leaves an older number behind, so the
         // next start retries it instead of believing a migration finished because a table happened to exist.
         self.connection
@@ -438,7 +455,7 @@ impl Db {
                     idle_hibernate_ms: row.get::<_, i64>(1)? as u64,
                     cold_card_ms: row.get::<_, i64>(2)? as u64,
                     memory_budget_mb: row.get::<_, i64>(3)? as u32,
-                    resource_profile: row.get(4)?,
+                    resource_profile: profile_kind_from_str(&row.get::<_, String>(4)?),
                 })
             },
         ).optional()?;
@@ -461,7 +478,7 @@ impl Db {
                 prefs.idle_hibernate_ms as i64,
                 prefs.cold_card_ms as i64,
                 prefs.memory_budget_mb as i64,
-                prefs.resource_profile,
+                profile_kind_to_str(prefs.resource_profile),
             ],
         )?;
         Ok(())
@@ -1511,26 +1528,37 @@ mod tests {
         );
         bad.memory_budget_mb = 512;
         assert!(bad.validate().is_ok());
-
-        // resource_profile: only the five known names.
-        bad.resource_profile = "maximal".to_string();
-        assert_eq!(
-            bad.validate(),
-            Err("resource_profile must be one of gyors, kiegyensulyozott, takarekos, ultra, kezi")
-        );
-        bad.resource_profile = "gyors".to_string();
-        assert!(bad.validate().is_ok());
     }
 
     #[test]
-    fn the_profile_preset_maps_a_name_to_its_hibernation_and_budget() {
-        assert_eq!(profile_preset("gyors"), (900_000, 1024));
-        assert_eq!(profile_preset("kiegyensulyozott"), (600_000, 512));
-        assert_eq!(profile_preset("takarekos"), (300_000, 384));
-        assert_eq!(profile_preset("ultra"), (120_000, 256));
-        // Manual and unknown fall back to the factory profile.
-        assert_eq!(profile_preset("kezi"), (600_000, 512));
-        assert_eq!(profile_preset("ismeretlen"), (600_000, 512));
+    fn the_profile_name_and_kind_round_trip_and_map_to_adr020_params() {
+        // The stored string ↔ enum round trip (one place, so the database and the wire agree).
+        assert_eq!(profile_kind_to_str(ProfileKind::Fast), "fast");
+        assert_eq!(profile_kind_to_str(ProfileKind::Manual), "manual");
+        assert_eq!(profile_kind_from_str("saver"), ProfileKind::Saver);
+        assert_eq!(
+            profile_kind_from_str("kiegyensulyozott"),
+            ProfileKind::Balanced,
+            "an older build's name falls back to the factory profile"
+        );
+        // The built-in profile's hibernation window is ADR-020's (15/10/5/2 minutes), and Manual has none.
+        assert_eq!(
+            ProfileKind::Fast.params().map(|p| p.idle_hibernate_ms),
+            Some(900_000)
+        );
+        assert_eq!(
+            ProfileKind::Balanced.params().map(|p| p.idle_hibernate_ms),
+            Some(600_000)
+        );
+        assert_eq!(
+            ProfileKind::Saver.params().map(|p| p.idle_hibernate_ms),
+            Some(300_000)
+        );
+        assert_eq!(
+            ProfileKind::Ultra.params().map(|p| p.idle_hibernate_ms),
+            Some(120_000)
+        );
+        assert!(ProfileKind::Manual.params().is_none());
     }
 
     #[test]
@@ -1548,7 +1576,7 @@ mod tests {
             idle_hibernate_ms: 300_000,
             cold_card_ms: 900_000,
             memory_budget_mb: 768,
-            resource_profile: "takarekos".to_string(),
+            resource_profile: ProfileKind::Saver,
         };
         db.set_user_prefs(&changed).expect("write");
         assert_eq!(db.user_prefs().expect("read"), changed);
@@ -1558,7 +1586,7 @@ mod tests {
             idle_hibernate_ms: 120_000,
             cold_card_ms: 60_000,
             memory_budget_mb: 256,
-            resource_profile: "ultra".to_string(),
+            resource_profile: ProfileKind::Ultra,
         };
         db.set_user_prefs(&back).expect("update");
         assert_eq!(

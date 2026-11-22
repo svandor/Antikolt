@@ -175,7 +175,7 @@ fn the_database_is_the_store_and_the_report_proves_the_export() {
 
     let status = service.request("db_status", json!({ "sync": true }));
     assert_eq!(status["ok"], true, "db_status answered: {status}");
-    assert_eq!(status["data"]["schema"], json!(9));
+    assert_eq!(status["data"]["schema"], json!(10));
     assert_eq!(status["data"]["verified"], true);
     // Three cards, four containers, three workspaces and the rules of an empty ledger: every store's export is checked.
     assert_eq!(status["data"]["checked"], json!(11), "every row is checked");

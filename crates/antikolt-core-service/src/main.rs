@@ -27,6 +27,7 @@ mod workspaces;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+use antikolt_core::profile::ProfileKind;
 use antikolt_core::session::{SessionLedgerEntry, SessionRules};
 use antikolt_ipc::{decode_json_frame, encode_json_frame, FrameError};
 use serde_json::{json, Value};
@@ -637,15 +638,14 @@ fn handle(
             };
             match serde_json::from_value::<UserPrefs>(raw.clone()) {
                 Ok(mut prefs) => {
-                    // A named profile is a preset (F6, `09-CELHARDVER.md` §3): its hibernation window and budget
-                    // are the profile's, not what the client sent. But only when the client *explicitly* sent the
-                    // profile — an omitted field means "keep the individual values", and the serde default must not
-                    // silently pick a preset. `kezi` leaves the individual values authoritative.
-                    if let Some(profile) = raw.get("resource_profile").and_then(Value::as_str) {
-                        if profile != "kezi" {
-                            let (idle, budget) = sqlite_store::profile_preset(profile);
-                            prefs.idle_hibernate_ms = idle;
-                            prefs.memory_budget_mb = budget;
+                    // A built-in profile is a preset (F6, ADR-020): its hibernation window is the profile's, not
+                    // what the client sent. Only when the client *explicitly* sent the profile — an omitted field
+                    // must not silently pick a preset. `Manual` leaves the individual values authoritative.
+                    if let Ok(kind) = serde_json::from_value::<ProfileKind>(
+                        raw.get("resource_profile").cloned().unwrap_or_default(),
+                    ) {
+                        if let Some(params) = kind.params() {
+                            prefs.idle_hibernate_ms = params.idle_hibernate_ms;
                         }
                     }
                     match sessions.set_user_prefs(prefs) {

@@ -2559,11 +2559,11 @@ void MainWindow::showSettings() {
         profile_layout->setContentsMargins(0, 0, 0, 0);
         profile_layout->addWidget(new QLabel(QStringLiteral("Erőforrás-profil:"), profile));
         prefs_profile_ = new QComboBox(profile);
-        prefs_profile_->addItem(QStringLiteral("Gyors"), QStringLiteral("gyors"));
-        prefs_profile_->addItem(QStringLiteral("Kiegyensúlyozott"), QStringLiteral("kiegyensulyozott"));
-        prefs_profile_->addItem(QStringLiteral("Takarékos"), QStringLiteral("takarekos"));
+        prefs_profile_->addItem(QStringLiteral("Gyors"), QStringLiteral("fast"));
+        prefs_profile_->addItem(QStringLiteral("Kiegyensúlyozott"), QStringLiteral("balanced"));
+        prefs_profile_->addItem(QStringLiteral("Takarékos"), QStringLiteral("saver"));
         prefs_profile_->addItem(QStringLiteral("Ultra"), QStringLiteral("ultra"));
-        prefs_profile_->addItem(QStringLiteral("Kézi"), QStringLiteral("kezi"));
+        prefs_profile_->addItem(QStringLiteral("Kézi"), QStringLiteral("manual"));
         prefs_profile_->setToolTip(QStringLiteral(
             "A névvel ellátott profil preset: felülírja a hibernálást és a büdzsét. A Kézi a fentieket hagyja."));
         profile_layout->addWidget(prefs_profile_);
@@ -2607,7 +2607,8 @@ void MainWindow::fillSettingsDock(const QJsonObject& prefs) {
         prefs_budget_mb_->setValue(prefs.value(QStringLiteral("memory_budget_mb")).toInt(512));
     }
     if (prefs_profile_ != nullptr) {
-        const QString profile = prefs.value(QStringLiteral("resource_profile")).toString(QStringLiteral("kiegyensulyozott"));
+        const QString profile =
+            prefs.value(QStringLiteral("resource_profile")).toString(QStringLiteral("balanced"));
         const int index = prefs_profile_->findData(profile);
         prefs_profile_->setCurrentIndex(index >= 0 ? index : 1);
     }
@@ -2630,7 +2631,7 @@ void MainWindow::saveUserPrefs() {
                  prefs_budget_mb_ != nullptr ? prefs_budget_mb_->value() : 512);
     prefs.insert(QStringLiteral("resource_profile"),
                  prefs_profile_ != nullptr ? prefs_profile_->currentData().toString()
-                                           : QStringLiteral("kiegyensulyozott"));
+                                           : QStringLiteral("balanced"));
     core_->userPrefsSet(prefs, [this](const QJsonObject&, const QString& error) {
         if (!error.isEmpty()) {
             setStatus(QStringLiteral("a beállítások nem mentődtek: %1").arg(error));

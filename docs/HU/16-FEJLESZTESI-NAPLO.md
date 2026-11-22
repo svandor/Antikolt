@@ -3,6 +3,39 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százhetedik szelet) — a profil összeegyeztetése az ADR-020 modellel
+
+A 104. szeletben a `resource_profile` egy önálló string-mező lett, saját `profile_preset`-tel — de a mag már
+tartalmazta az ADR-020 **teljes** profilmodelljét (`antikolt-core::profile::ProfileKind`/`ProfileParams`), amit akkor
+nem vettem észre. Ez a szelet a párhuzamos modellt megszünteti: a profil most az ADR-020 enum, egy forrással.
+
+### Mi változott
+
+- **`resource_profile` → `ProfileKind` (ADR-020):** a `String` helyett a mag `ProfileKind` enumja (`Fast`/`Balanced`/
+  `Saver`/`Ultra`/`Manual`, snake_case a vezetéken és az SQL-ben); a `serde(default)` a gyári `Balanced`.
+- **`profile_preset` eltávolítva:** a levezetés a `ProfileKind::params()`-ból jön (15/10/5/2 perc hibernálás, plusz
+  motor-élettartam, előnézet-frissítés, videófelbontás és sávok). A **büdzsé-levezetést eldobtam** — az ADR-020
+  profilja nem a `memory_budget_mb`-t állítja (az egy külön felhasználói beállítás), hanem a vezérlő `warn`/`hard`
+  sávjait.
+- **Séma `0010`:** a 0009-ben bekerült magyar értékeket (`gyors`/`kiegyensulyozott`/`takarekos`/`kezi`) átírja az
+  ADR-020 snake_case neveire; ismeretlen érték a `profile_kind_from_str`-ben `Balanced`-re esik vissza.
+- **`--prefstest` a helyes állítással:** az „ultra" profil a hibernálást vezeti le (`derived_idle=120000`), a büdzsé
+  külön marad (`pref_budget_bytes=536870912` a küldött 512-ből).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (44 önteszt + check-repo)
+--prefstest                 → pref_derived_idle=120000 · pref_budget_bytes=536870912 · prefs=ok
+--addcardtest               → db_status=ok schema=10 … verified=yes
+cargo test                  → 154 zöld: 78 + 52 + 8 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A profil **többi dimenziójának bekötése** (motor-élettartam T1/T2, előnézet-frissítés, videófelbontás, a
+  `warn`/`hard` sávok a vezérlőhöz), a **raszter-kezdőlap** és a **hangolási riport**; a 3. tétel szerkesztője.
+
 ## 2026-11-22 (százhatodik szelet) — a felhasználó-szerző kezdőlap kiszolgálása (3. tétel magja)
 
 A „teljes szerkeszthető kezdőlap" tételből a **tárolás + kiszolgálás** készült el: a shell most egy profilban lévő
