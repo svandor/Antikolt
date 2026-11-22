@@ -676,10 +676,24 @@ QString MainWindow::engineExecutable() {
     return {};
 }
 
+QString MainWindow::coreDataDir() {
+    const QString fromEnvironment = qEnvironmentVariable("ANTIKOLT_CORE_DATA");
+    if (!fromEnvironment.isEmpty()) {
+        return fromEnvironment;
+    }
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/core");
+}
+
 QString MainWindow::homePageUrl() {
     const QString fromEnvironment = qEnvironmentVariable("ANTIKOLT_HOME");
     if (!fromEnvironment.isEmpty()) {
         return QUrl::fromLocalFile(fromEnvironment).toString();
+    }
+    // A user-authored home page (item 3, editable home): one `home.html` in the core's data directory, served
+    // instead of the built-in grid when it exists. The same directory the core uses, so the profile carries it.
+    const QString customHome = coreDataDir() + QStringLiteral("/home.html");
+    if (QFileInfo::exists(customHome)) {
+        return QUrl::fromLocalFile(QDir::cleanPath(customHome)).toString();
     }
     const QString appDir = QCoreApplication::applicationDirPath();
     const QStringList candidates = {
@@ -969,12 +983,7 @@ void MainWindow::startEngine() {
         // `ANTIKOLT_CORE_DATA` exists for the self tests: the 500-card scale check must not seed a developer's
         // own grid with five hundred probe cards (and must not read their cards either). Unset means the profile
         // directory, which is what the product uses.
-        const QString fromEnvironment = qEnvironmentVariable("ANTIKOLT_CORE_DATA");
-        const QString coreData =
-            !fromEnvironment.isEmpty()
-                ? fromEnvironment
-                : QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
-                      QStringLiteral("/core");
+        const QString coreData = coreDataDir();
         QDir().mkpath(coreData);
         if (corePath.isEmpty()) {
             setStatus(QStringLiteral("a mag nem található (ANTIKOLT_CORE) — a rács egyelőre mintaadatot mutat"));

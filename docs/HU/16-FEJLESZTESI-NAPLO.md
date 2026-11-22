@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százhatodik szelet) — a felhasználó-szerző kezdőlap kiszolgálása (3. tétel magja)
+
+A „teljes szerkeszthető kezdőlap" tételből a **tárolás + kiszolgálás** készült el: a shell most egy profilban lévő
+`home.html`-t szolgál a beépített rács helyett. A szerkesztő-felület (a HTML írása a termékből) külön, nagyobb tétel —
+a felhasználó egyelőre kívülről teszi a fájlt a profilba, és a shell betölti.
+
+### Mi változott
+
+- **`home.html` a mag adatkönyvtárában felülírja a beépített rácsot:** `MainWindow::homePageUrl()` sorrendje:
+  `ANTIKOLT_HOME` → `<coreData>/home.html` → a beépített `home/index.html`. A `coreDataDir()` statikus segéd
+  (`ANTIKOLT_CORE_DATA` vagy a platform app-data + `/core`) az egyetlen hely, ahol a mag adatkönyvtárát kiszámoljuk —
+  a `startEngine` is ezt használja, így a két út nem tud eltérni.
+- **A profil viszi:** a `home.html` a mag adatkönyvtárában van, tehát a profil-költöztetés (ADR-059) ugyanúgy viszi,
+  mint a kártyákat; a felhasználói lap ugyanabból a könyvtárból töltheti az `antikolt-card.js`-t is.
+- **`--customhometest` (új önteszt):** egy karcolt adatkönyvtárba írt `home.html`-t a shell betölt, és a lap címe
+  („sajat kezdolap") bizonyítja, hogy a felhasználói fájl, nem a rács került a felületre.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (44 önteszt + check-repo)
+--customhometest            → custom_home_title=sajat kezdolap · custom_home=ok
+cargo test                  → 154 zöld: 78 + 52 + 8 + 1 + 15
+```
+
+### Ami továbbra is nyitott (3. tétel)
+
+- A **szerkesztő-felület** (a HTML írása a termékből) és a **biztonságos betöltés** finomítása (a felhasználói HTML
+  egy teljes jogú `file://`-lap, nem sandboxolt) — valamint az F6 maradéka (motor-élettartam T1/T2,
+  előnézet-frissítés, GPU, raszter-kezdőlap, hangolási riport).
+
 ## 2026-11-22 (százötödik szelet) — a médiaminőség-korlát jele (F6)
 
 A médiaminőség-korlát az a része, amit a böngészőből őszintén meg lehet csinálni: a **jelzés**, nem a videó

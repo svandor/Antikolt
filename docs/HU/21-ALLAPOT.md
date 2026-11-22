@@ -50,6 +50,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Címkék | `--tagtest` | címke a kártyán, mag-normalizálás (trim/dedup/12×32), kereshető |
 | Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), átnevezés a cím-szerkesztő `Enter`-jével (`wrote_by=gesture`), webcím-átírás (`edit_card_url=ok`), tároló-ellenőrzés (`db_status=ok schema=7 … verified=yes`), kétlépéses törlés (`delete_armed=ok delete_card=ok`, ADR-068); a teszt kitakarít maga után |
 | `<antikolt-card>` csomag | `--gridtest`, `--addcardtest`, `--containertest` | a komponens önálló `home/antikolt-card.js`-ben (ADR-075), a rács és egy felhasználói lap ugyanezt tölti; `home/user-home.example.html` minimális példa; a konténer/munkaterület `<select>` a `setOptions`-ból; a kapu minden kártya-interakciós tesztje zöld |
+| Szerkeszthető kezdőlap (tárolás+kiszolgálás) | `--customhometest` | a mag adatkönyvtárában lévő `home.html` felülírja a beépített rácsot (`ANTIKOLT_HOME` → `<coreData>/home.html` → `home/index.html`); a felhasználói lap a profilból töltődik (`custom_home_title=sajat kezdolap`) |
 | Profil-költöztetés | `--profiletest` | export → import friss profilba → visszaolvasás **fájlból**; ismeretlen séma elutasítva |
 | Munkamenetek | `--sessionpanel`, `--scrollbook`, `--wipetest`, `--cleanuptest` | látszik, mi van életben, mennyi RAM/lemez; `keep`/`sweep`/`wipe` végrehajtás; a „Politika" oszlop legördülővel **kártyánként (origin-szinten)** felülírja a konténer-alapértelmezést (`session_panel=ok`) |
 | Bejelentkezési popup, profil-gomb, fogd-és-vidd | `--partitiontest`, `--profiletest`, `--workspacetest` | popup (ADR-073): gesztus → valódi ablak a kártya partíciójában, 60 s, a hibernálás felfüggesztve (a gesztus-út `not-measurable`); profil-gomb: natív `QFileDialog` a `profile_export`/`import` fölött (a dialógus `not-measurable`, az út `--profiletest`-tel mérve); fogd-és-vidd: kártya → munkaterület-fül a `<select>` mellett (ADR-058) |
@@ -64,8 +65,9 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 2. **A bejelentkezési popup gesztus-útja** — a motor összekötve (ADR-073: gesztus → valódi ablak a kártya
    partíciójában, 60 s, a hibernálás felfüggesztve), de a gesztus-út a harnessben nem mérhető (a szintetikus
    `window.open` nem gesztus): a `popup_requested`/`popup_closed` útja `not-measurable`.
-3. **A teljes szerkeszthető kezdőlap** — a `<antikolt-card>` csomag kész (ADR-075); a felhasználói HTML tárolása,
-   kiszolgálása és egy szerkesztő-felület marad hátra.
+3. **A teljes szerkeszthető kezdőlap** — a `<antikolt-card>` csomag (ADR-075) és a felhasználói HTML
+   tárolása+kiszolgálása kész (106. szelet); a **szerkesztő-felület** (a HTML írása a termékből) és a felhasználói
+   HTML **sandboxolása** marad hátra.
 4. **Az F6 maradéka** — a büdzsé, a beállítás-felülete, a kártyánkénti memória-bontás, a profil-preset és a
    médiaminőség-korlát **jele** kész (ADR-074, 102–105. szelet); a profil **többi dimenziója** (motor-élettartam,
    előnézet-frissítés, GPU), a **raszter-kezdőlap** (motor leállítva) és a **hangolási riport** marad hátra (az

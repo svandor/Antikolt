@@ -2109,6 +2109,77 @@ int runPrefsCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove a user-authored home page is served from the profile (item 3, editable home): a `home.html` in the
+/// core's data directory overrides the built-in grid, so a user's own HTML — which can load `<antikolt-card>`
+/// from the same directory — becomes the home page. The check uses a scratch data dir, like the scale check.
+int runCustomHomeCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    const QString dataDir = QDir::tempPath() + QStringLiteral("/antikolt-customhome-") +
+                            QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir().mkpath(dataDir);
+    qputenv("ANTIKOLT_CORE_DATA", dataDir.toUtf8());
+
+    const QString homeFile = dataDir + QStringLiteral("/home.html");
+    {
+        QFile file(homeFile);
+        if (!file.open(QIODevice::WriteOnly)) {
+            out << "custom_home=FAILED (cannot write " << homeFile << ")\n";
+            out.flush();
+            return 1;
+        }
+        file.write("<html><head><title>sajat kezdolap</title></head>"
+                   "<body><h1 id=\"mark\">egyedi</h1></body></html>");
+    }
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    QString loaded_url;
+    qint64 home_surface = 0;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:")) || home_surface != 0) {
+                                 return;
+                             }
+                             home_surface = id;
+                             loaded_url = url;
+                             loop.quit();
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    QString title;
+    if (home_surface != 0) {
+        QEventLoop title_loop;
+        window.engine()->evaluate(
+            home_surface, QStringLiteral("document.title"),
+            [&](const QJsonObject& reply, const QString& error) {
+                if (error.isEmpty()) {
+                    title = reply.value(QStringLiteral("value")).toString();
+                }
+                title_loop.quit();
+            });
+        QTimer::singleShot(10000, &title_loop, &QEventLoop::quit);
+        title_loop.exec();
+    }
+
+    const bool served = loaded_url.endsWith(QStringLiteral("/home.html"));
+    out << "custom_home_url=" << loaded_url << '\n';
+    out << "custom_home_title=" << title << '\n';
+    const bool ok = served && title == QStringLiteral("sajat kezdolap");
+    out << "custom_home=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    QDir(dataDir).removeRecursively();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the per-card memory breakdown (F6): opening a card and freezing it leaves its working set on the card,
 /// not just in the shell's status line. The freeze boundary is the only honest place to measure — a live card
 /// changes under the meter — so the check drives the same open→freeze cycle a user does.
@@ -8065,6 +8136,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("memorytest"),
         QStringLiteral("Prove a frozen card keeps its working set (per-card breakdown), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption customhometest(
+        QStringLiteral("customhometest"),
+        QStringLiteral("Prove a user-authored home.html is served from the profile, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption mediatest(
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
@@ -8118,6 +8193,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(metricstest);
     parser.addOption(prefstest);
     parser.addOption(memorytest);
+    parser.addOption(customhometest);
     parser.addOption(logtest);
     parser.addOption(searchtest);
     parser.addOption(mediacleantest);
@@ -8273,6 +8349,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(memorytest)) {
         return runMemoryCheck(parser.value(memorytest));
+    }
+
+    if (parser.isSet(customhometest)) {
+        return runCustomHomeCheck(parser.value(customhometest));
     }
 
     if (parser.isSet(previewgentest)) {

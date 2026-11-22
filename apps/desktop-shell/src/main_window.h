@@ -82,8 +82,12 @@ public:
     /// Where the core service lives. Honours ANTIKOLT_CORE, then the Cargo build layout.
     static QString coreExecutable();
 
-    /// The home page to load in the engine (the editable card grid).
+    /// The home page to load in the engine (the editable card grid). A user-authored `home.html` in the core's
+    /// data directory overrides the built-in grid (item 3: editable home, storage + serving).
     static QString homePageUrl();
+
+    /// Where the core keeps its data. Honours `ANTIKOLT_CORE_DATA`, then the platform app-data location.
+    static QString coreDataDir();
 
     /// The live card, exposed so the embedding self test can drive it.
     LiveCard* liveCard() const { return card_; }
