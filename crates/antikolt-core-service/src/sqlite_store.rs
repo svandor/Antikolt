@@ -33,8 +33,8 @@ pub const DB_FILE_NAME: &str = "antikolt.sqlite3";
 /// The schema this core writes. Bumped only with a migration; `0001` was the JSON files, `0002` added `page_text`,
 /// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070),
 /// `0005` the per-container proxy and permission policy (ADR-071), `0006` the one row of user preferences (ADR-072),
-/// `0007` the memory budget column (F6).
-pub const SCHEMA_VERSION: i64 = 7;
+/// `0007` the memory budget column (F6), `0008` the per-card `memory_bytes` (F6).
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// The schema version that means "the cards are SQLite-first" (ADR-069). A file at least this version already has the
 /// cards' adoption behind it, which the `0004` migration records in `meta` (the per-store adoption markers live there,
@@ -320,6 +320,23 @@ impl Db {
                 )?;
             }
         }
+        if self.opened_at_version < 8 {
+            // 0008: the per-card working set (F6). A card that was never frozen reports 0, which is exactly
+            // "not measured" — no NULL needed. Added only when missing (the 0007 idiom).
+            let memory_column_exists: i64 = self.connection.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('cards') WHERE name = 'memory_bytes'",
+                [],
+                |row| row.get(0),
+            )?;
+            if memory_column_exists == 0 {
+                self.connection.execute_batch(
+                    "BEGIN;
+                     ALTER TABLE cards ADD COLUMN memory_bytes INTEGER NOT NULL DEFAULT 0;
+                     PRAGMA user_version = 8;
+                     COMMIT;",
+                )?;
+            }
+        }
         // The version is written last, monotonically: a step that crashed half-way leaves an older number behind, so the
         // next start retries it instead of believing a migration finished because a table happened to exist.
         self.connection
@@ -418,6 +435,16 @@ impl Db {
         Ok(())
     }
 
+    /// Write the card's last-known working set in bytes (F6, per-card breakdown). A single-column update, so a
+    /// capture never touches the note or title the user just changed.
+    pub fn set_card_memory(&self, card_id: &str, bytes: i64) -> Result<(), DbError> {
+        self.connection.execute(
+            "UPDATE cards SET memory_bytes = ?2 WHERE id = ?1",
+            params![card_id, bytes],
+        )?;
+        Ok(())
+    }
+
     /// Replace the whole card table in one transaction — the import path (`profile_import`, ADR-059) and the first
     /// write of a fresh or migrated profile. A reader never sees half a profile, and a failed insert leaves the old
     /// list intact instead of half of a new one.
@@ -438,7 +465,7 @@ impl Db {
             .connection
             .query_row(
                 "SELECT id, title, url, container, status, pinned, notes, preview_ref,
-                        last_opened_at_ms, page_text, workspace, tags
+                        last_opened_at_ms, page_text, workspace, tags, memory_bytes
                  FROM cards WHERE id = ?1",
                 params![card_id],
                 |row| {
@@ -458,6 +485,7 @@ impl Db {
                         page_text: row.get(9)?,
                         workspace: row.get(10)?,
                         tags: serde_json::from_str(&tags).unwrap_or_default(),
+                        memory_bytes: row.get(12)?,
                     })
                 },
             )
@@ -491,7 +519,7 @@ impl Db {
     pub fn all_cards(&self) -> Result<Vec<Card>, DbError> {
         let mut statement = self.connection.prepare(
             "SELECT id, title, url, container, status, pinned, notes, preview_ref,
-                    last_opened_at_ms, page_text, workspace, tags
+                    last_opened_at_ms, page_text, workspace, tags, memory_bytes
              FROM cards
              ORDER BY last_opened_at_ms DESC, LOWER(title) ASC",
         )?;
@@ -512,6 +540,7 @@ impl Db {
                 page_text: row.get(9)?,
                 workspace: row.get(10)?,
                 tags: serde_json::from_str(&tags).unwrap_or_default(),
+                memory_bytes: row.get(12)?,
             })
         })?;
         let mut cards = Vec::new();
@@ -842,13 +871,14 @@ fn upsert_card_row(connection: &Connection, card: &Card) -> Result<(), rusqlite:
     let tags = serde_json::to_string(&card.tags).unwrap_or_else(|_| "[]".to_string());
     connection.execute(
         "INSERT INTO cards (id, title, url, container, status, pinned, notes, preview_ref,
-                            last_opened_at_ms, page_text, workspace, tags)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                            last_opened_at_ms, page_text, workspace, tags, memory_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT (id) DO UPDATE SET
              title = excluded.title, url = excluded.url, container = excluded.container,
              status = excluded.status, pinned = excluded.pinned, notes = excluded.notes,
              preview_ref = excluded.preview_ref, last_opened_at_ms = excluded.last_opened_at_ms,
-             page_text = excluded.page_text, workspace = excluded.workspace, tags = excluded.tags",
+             page_text = excluded.page_text, workspace = excluded.workspace, tags = excluded.tags,
+             memory_bytes = excluded.memory_bytes",
         params![
             card.id,
             card.title,
@@ -861,7 +891,8 @@ fn upsert_card_row(connection: &Connection, card: &Card) -> Result<(), rusqlite:
             card.last_opened_at_ms as i64,
             card.page_text,
             card.workspace,
-            tags
+            tags,
+            card.memory_bytes
         ],
     )?;
     Ok(())
@@ -929,6 +960,7 @@ mod tests {
             page_text: "a lap szövege".to_string(),
             workspace: "w-work".to_string(),
             tags: vec!["próba".to_string(), "adatbázis".to_string()],
+            memory_bytes: 112_525_312,
         }
     }
 

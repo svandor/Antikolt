@@ -60,6 +60,8 @@ public:
     /// The database mirror (ADR-064): `sync` writes the JSON stores into the SQLite file and checks the first card.
     void dbStatus(bool sync, ReplyHandler handler = {});
     void cardPageText(const QString& cardId, const QString& text, ReplyHandler handler = {});
+    /// Store one card's last-known working set in bytes (`card_memory`, F6, per-card breakdown).
+    void cardMemory(const QString& cardId, qint64 bytes, ReplyHandler handler = {});
     /// Remove one card (ADR-061). The page's add/delete loop needs it, and so does a user who mistyped a URL.
     void cardDelete(const QString& cardId, ReplyHandler handler = {});
     /// The session ledger and its policy (`docs/HU/10-MUNKAMENET.md`).

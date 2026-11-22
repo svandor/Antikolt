@@ -1566,6 +1566,20 @@ void MainWindow::freezeCard() {
                     });
             });
     }
+    // Before the surface goes away: its working set, so the grid can show per-card memory (F6). Measured at the
+    // freeze boundary, not continuously — a background measurement would itself cost memory it claims to save.
+    if (core_ != nullptr && core_->isRunning() && !current_card_id_.isEmpty()) {
+        live_engine_->metrics(surface, [this](const QJsonObject& measured, const QString& error) {
+            if (!error.isEmpty() || current_card_id_.isEmpty()) {
+                return;
+            }
+            const qint64 bytes =
+                measured.value(QStringLiteral("engine_working_set_bytes")).toString().toLongLong();
+            if (bytes > 0) {
+                core_->cardMemory(current_card_id_, bytes, [](const QJsonObject&, const QString&) {});
+            }
+        });
+    }
     live_engine_->snapshot(surface, [this, surface](const QJsonObject& result, const QString& error) {
         if (!error.isEmpty()) {
             return_to_grid_ = false;

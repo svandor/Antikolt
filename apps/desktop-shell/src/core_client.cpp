@@ -142,6 +142,13 @@ void CoreClient::cardPageText(const QString& cardId, const QString& text, ReplyH
     send(QStringLiteral("card_page_text"), fields, std::move(handler));
 }
 
+void CoreClient::cardMemory(const QString& cardId, qint64 bytes, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("id_of_card"), cardId);
+    fields.insert(QStringLiteral("memory_bytes"), static_cast<qint64>(bytes));
+    send(QStringLiteral("card_memory"), fields, std::move(handler));
+}
+
 void CoreClient::cardDelete(const QString& cardId, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("id_of_card"), cardId);

@@ -2050,6 +2050,106 @@ int runPrefsCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the per-card memory breakdown (F6): opening a card and freezing it leaves its working set on the card,
+/// not just in the shell's status line. The freeze boundary is the only honest place to measure — a live card
+/// changes under the meter — so the check drives the same open→freeze cycle a user does.
+int runMemoryCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_HIBERNATE_MS", "1200");  // a short freeze clock, like the lifecycle check
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    EngineClient* client = window.engine();
+    QEventLoop loop;
+    qint64 home_surface = 0;
+    qint64 card_surface = 0;
+    bool home_loaded = false;
+    bool clicked = false;
+    bool closed = false;
+    qint64 memory_bytes = 0;
+
+    QObject::connect(client, &EngineClient::surfaceClosed, &loop, [&](qint64 id) {
+        if (id == card_surface) {
+            closed = true;
+            out << "card_closed=" << id << '\n';
+            loop.quit();
+        }
+    });
+    QObject::connect(client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int) {
+                         if (home_loaded || !url.startsWith(QStringLiteral("file:"))) {
+                             return;
+                         }
+                         home_loaded = true;
+                         home_surface = id;
+                         out << "home_loaded=" << url << '\n';
+                         QTimer::singleShot(500, &loop, [&, id] {
+                             client->evaluate(
+                                 id,
+                                 QStringLiteral(
+                                     "(function(){var els=document.querySelectorAll('#viewport "
+                                     "antikolt-card');for(var i=0;i<els.length;i++){if(els[i].card"
+                                     "&&!els[i].card.pinned){els[i].click();return 'clicked';}}"
+                                     "return 'no-unpinned-card';})()"),
+                                 [&](const QJsonObject& reply, const QString& error) {
+                                     clicked = error.isEmpty() &&
+                                               reply.value(QStringLiteral("value")).toString() ==
+                                                   QStringLiteral("clicked");
+                                     out << "card_click=" << (clicked ? "ok" : "FAILED") << '\n';
+                                 });
+                         });
+                     });
+    QObject::connect(client, &EngineClient::surfaceCreated, &loop, [&](qint64 id) {
+        if (!home_loaded || id == home_surface || card_surface != 0) {
+            return;
+        }
+        card_surface = id;
+    });
+
+    QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    // After the freeze the core holds the working set the shell measured. Poll: the capture is async and may
+    // land a moment after the surface-closed signal.
+    if (closed) {
+        QEventLoop poll;
+        int ticks = 0;
+        auto* timer = new QTimer(&poll);
+        QObject::connect(timer, &QTimer::timeout, &poll, [&] {
+            ++ticks;
+            window.core()->cardsList([&](const QJsonObject& reply, const QString& error) {
+                if (error.isEmpty()) {
+                    const QJsonArray cards = reply.value(QStringLiteral("cards")).toArray();
+                    for (const auto& value : cards) {
+                        const qint64 bytes = static_cast<qint64>(
+                            value.toObject().value(QStringLiteral("memory_bytes")).toDouble());
+                        if (bytes > 0) {
+                            memory_bytes = bytes;
+                        }
+                    }
+                }
+                if (memory_bytes > 0 || ticks >= 20) {
+                    poll.quit();
+                }
+            });
+        });
+        timer->start(250);
+        QTimer::singleShot(8000, &poll, &QEventLoop::quit);
+        poll.exec();
+    }
+
+    out << "memory_bytes=" << memory_bytes << '\n';
+    const bool ok = closed && memory_bytes > 0;
+    out << "memory=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove previews are *produced*: opening a card gives it a picture, and the grid can show it.
 ///
 /// A card pointing at the local probe origin is written into the core without a preview. The grid shows it
@@ -7902,6 +8002,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("prefstest"),
         QStringLiteral("Prove the memory budget reaches the page after a user_prefs_set, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption memorytest(
+        QStringLiteral("memorytest"),
+        QStringLiteral("Prove a frozen card keeps its working set (per-card breakdown), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption mediatest(
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
@@ -7954,6 +8058,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(themetest);
     parser.addOption(metricstest);
     parser.addOption(prefstest);
+    parser.addOption(memorytest);
     parser.addOption(logtest);
     parser.addOption(searchtest);
     parser.addOption(mediacleantest);
@@ -8105,6 +8210,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(prefstest)) {
         return runPrefsCheck(parser.value(prefstest));
+    }
+
+    if (parser.isSet(memorytest)) {
+        return runMemoryCheck(parser.value(memorytest));
     }
 
     if (parser.isSet(previewgentest)) {

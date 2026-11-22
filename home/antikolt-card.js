@@ -426,7 +426,16 @@
         );
       });
 
-      meta.append(dot, containerSelect, workspaceSelect, domain, noteButton, badge, removeButton);
+      meta.append(dot, containerSelect, workspaceSelect, domain);
+      // The working set the shell measured at freeze (F6): a hint, not a live number — the card is on disk now.
+      if (card.memoryBytes > 0) {
+        const memory = document.createElement("span");
+        memory.className = "card-memory";
+        memory.textContent = `≈${Math.max(1, Math.round(card.memoryBytes / 1048576))} MB`;
+        memory.title = "a lap utolsó munkakészlete fagyasztáskor";
+        meta.append(memory);
+      }
+      meta.append(noteButton, badge, removeButton);
       body.append(title, meta);
       // Tags (ADR-055): the chips a user typed, plus the inline way to add one. No dialog and no separate screen:
       // a tag is a word, and typing it where it belongs is the whole interaction.
@@ -537,6 +546,7 @@
     .card[data-size="s"] .card-title { -webkit-line-clamp: 1; }
     .card-meta { display: flex; align-items: center; gap: 4px; font: 11px/1.45 Inter, "Segoe UI", system-ui, sans-serif; color: var(--text-muted); min-width: 0; }
     .card-domain { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card-memory { font-variant-numeric: tabular-nums; color: var(--text-muted); flex: none; }
     .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
     .badge { margin-left: auto; flex: none; }
     .pin { background: none; border: 0; padding: 0 2px; font: inherit; color: inherit; cursor: pointer; border-radius: 4px; }

@@ -3,6 +3,40 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százharmadik szelet) — a kártyánkénti memória-bontás (F6)
+
+Az F6 „kártyánkénti bontás" tétele eddig hiányzott: a `system.memory` az élő felületet mérte, a kártya pedig nem
+tudta, mennyibe került, amikor még élt. Ez a szelet a fagyasztás határán méri a working set-et és a kártyára írja.
+
+### Mi változott
+
+- **`memory_bytes` a kártyán (séma `0008`):** a `Card` kapott egy `i64` mezőt (`serde(default)`, `0` = „még nem
+  mérve"), az `ALTER … ADD COLUMN` a 0007 idempotens mintájára; az `upsert()` megőrzi a tárolt értéket, ha a lap
+  0-val küldi a rekordot („nem mértem", nem „töröld"), URL-változásnál pedig a szöveggel együtt eldobja — mindkettő
+  a working set a régi laphoz tartozik.
+- **`card_memory` IPC-op + `CoreClient::cardMemory`:** egyoszlopos írás, hogy a mérés ne versenyezzen egy épp
+  gépelt jegyzettel (a `card_page_text` mintájára, ADR-049).
+- **A shell fagyasztáskor mér:** `freezeCard()` a pillanatkép előtt lekéri a felület `engine_working_set_bytes`-ét
+  és a magba írja — a fagyasztás a természetes határ (egy élő kártya a mérő alatt is változik), folyamatos mérés
+  pedig maga is memóriát enne.
+- **A rács mutatja:** a kártya `meta`-sora egy `≈N MB` jelzést kap (`card-memory`), a `pageCardFromCore` pedig a
+  `memoryBytes` mezőt viszi át.
+- **`--memorytest` (új önteszt):** kártya megnyit → fagyaszt → a magban a kártya `memory_bytes > 0`.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (42 önteszt + check-repo)
+--memorytest                 → memory_bytes=117633024 (~112 MiB) · memory=ok
+cargo test                   → 153 zöld: 78 + 51 + 8 + 1 + 15
+--addcardtest                → db_status=ok schema=8 … verified=yes
+```
+
+### Ami továbbra is nyitott (F6)
+
+- **Erőforrás-profilok** (Gyors/Kiegyensúlyozott/Takarékos/Ultra), **médiaminőség-korlát** (720p a narancs sávban),
+  **raszter-kezdőlap** (motor leállítva) és a **hangolási riport** — az ütemterv 3–4 hetes tételei.
+
 ## 2026-11-22 (százkettedik szelet) — a beállítások felületi vezérlője + az idle-időzítő a profilból
 
 Az ADR-072 (UserPrefs) és ADR-074 (memória-büdzsé) története eddig az IPC-nél ért véget: a négy beállítás

@@ -298,6 +298,28 @@ fn handle(
                 Err(error) => (error_reply(id, "internal", &error.to_string()), true),
             }
         }
+        // The working set is stored on its own for the same reason the text is: a single-column write, so a
+        // capture never races a pin or note the user just made (F6, per-card breakdown).
+        "card_memory" => {
+            let (Some(card_id), Some(bytes)) = (
+                request.get("id_of_card").and_then(Value::as_str),
+                request.get("memory_bytes").and_then(Value::as_i64),
+            ) else {
+                return (
+                    error_reply(
+                        id,
+                        "invalid_argument",
+                        "card_memory needs id_of_card and memory_bytes",
+                    ),
+                    true,
+                );
+            };
+            match store.set_card_memory(card_id, bytes) {
+                Ok(Some(card)) => (ok_reply(id, json!({ "card": card })), true),
+                Ok(None) => (error_reply(id, "not_found", "no card with that id"), true),
+                Err(error) => (error_reply(id, "internal", &error.to_string()), true),
+            }
+        }
         // ---- workspace table ------------------------------------------------------------------
         // The tabs the grid shows live here (ADR-056), in the database since ADR-070. The page used to invent the
         // assignment, which meant the thirteenth card silently claimed to be in "Olvasnivaló".

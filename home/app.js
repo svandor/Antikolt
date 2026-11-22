@@ -236,6 +236,9 @@ function pageCardFromCore(row, index) {
     // put every thirteenth card into "Olvasnivaló" whether the user asked for it or not. An empty field means the
     // first workspace — what every card written before the table existed means.
     workspaceId: String(row.workspace ?? "") || (PAGE_WORKSPACES[0]?.id ?? "w-home"),
+    // The live surface's working set, captured when the card was last frozen (F6, per-card breakdown). 0 means
+    // "never frozen yet"; the card shows the figure only when it is real.
+    memoryBytes: Number(row.memory_bytes) || 0,
   };
 }
 

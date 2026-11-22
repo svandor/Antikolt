@@ -77,6 +77,10 @@ pub struct Card {
     /// trimmed, de-duplicated case-insensitively, at most [`MAX_TAGS`] of them, each at most [`MAX_TAG_LEN`].
     #[serde(default)]
     pub tags: Vec<String>,
+    /// The live surface's working set in bytes, captured when the card was last frozen (F6, per-card
+    /// breakdown). `0` means "never measured" — a card that has not been frozen yet.
+    #[serde(default)]
+    pub memory_bytes: i64,
 }
 
 fn default_status() -> String {
@@ -161,9 +165,18 @@ impl CardStore {
         // page that was frozen, so it must not follow the card to its new address (ADR-063/ADR-049).
         if let Some(existing) = self.db.card(&card.id)? {
             if existing.url != card.url {
+                // The capture and the working set belong to the page that was frozen; a new address must not
+                // inherit either (ADR-063 / F6).
                 card.page_text = String::new();
-            } else if card.page_text.is_empty() {
-                card.page_text = existing.page_text;
+                card.memory_bytes = 0;
+            } else {
+                if card.page_text.is_empty() {
+                    card.page_text = existing.page_text;
+                }
+                // The page never carries the working set: a 0 means "I did not measure it", not "clear it" (F6).
+                if card.memory_bytes == 0 {
+                    card.memory_bytes = existing.memory_bytes;
+                }
             }
         }
         self.db.upsert_card(&card)?;
@@ -179,6 +192,17 @@ impl CardStore {
         card.page_text = Self::cap_page_text(text);
         self.db.upsert_card(&card)?;
         Ok(Some(card))
+    }
+
+    /// Store the card's last-known working set in bytes (`card_memory`, F6, per-card breakdown). A single-column
+    /// write, so a capture never touches the note or title the user just changed.
+    pub fn set_card_memory(
+        &mut self,
+        card_id: &str,
+        bytes: i64,
+    ) -> Result<Option<Card>, StoreError> {
+        self.db.set_card_memory(card_id, bytes)?;
+        Ok(self.db.card(card_id)?)
     }
 
     /// Move every card from one container to another (`container_delete` with `move_to`, ADR-054), in one statement.
@@ -394,6 +418,7 @@ fn seed_cards() -> Vec<Card> {
             page_text: String::new(),
             tags: Vec::new(),
             workspace: String::new(),
+            memory_bytes: 0,
         },
         Card {
             id: "01SEED000000000000000002".to_string(),
@@ -408,6 +433,7 @@ fn seed_cards() -> Vec<Card> {
             page_text: String::new(),
             tags: Vec::new(),
             workspace: String::new(),
+            memory_bytes: 0,
         },
         Card {
             id: "01SEED000000000000000003".to_string(),
@@ -422,6 +448,7 @@ fn seed_cards() -> Vec<Card> {
             page_text: String::new(),
             tags: Vec::new(),
             workspace: String::new(),
+            memory_bytes: 0,
         },
     ]
 }
@@ -455,6 +482,7 @@ mod tests {
             page_text: String::new(),
             workspace: String::new(),
             tags: Vec::new(),
+            memory_bytes: 0,
         }
     }
 
@@ -741,6 +769,35 @@ mod tests {
             .expect("set")
             .expect("card");
         assert_eq!(recaptured.page_text, "az új oldal szövege");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_card_upsert_without_memory_keeps_the_capture_and_a_url_change_drops_it() {
+        let dir = temp_dir("memory-bytes");
+        let mut store = CardStore::open(&dir).expect("open");
+        let mut card = store.list().expect("list")[0].clone();
+        let stored = store.upsert(card.clone()).expect("upsert");
+        store.set_card_memory(&stored.id, 123_456).expect("memory");
+
+        // A pin/note arrives without the working set (0 = "not sent"); the stored value must survive (F6).
+        card.pinned = true;
+        card.memory_bytes = 0;
+        let saved = store.upsert(card).expect("upsert");
+        assert_eq!(
+            saved.memory_bytes, 123_456,
+            "a 0 means not measured, not cleared"
+        );
+
+        // A URL change drops the working set with the text: both belong to the old page.
+        let mut moved = saved.clone();
+        moved.url = "https://masik.hu/".to_string();
+        moved.memory_bytes = 0;
+        let after = store.upsert(moved).expect("upsert");
+        assert_eq!(
+            after.memory_bytes, 0,
+            "the working set belongs to the old page"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
