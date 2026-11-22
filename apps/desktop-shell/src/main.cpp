@@ -1963,6 +1963,93 @@ int runMetricsCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the memory budget is a *profile setting* that reaches the page, not a shell constant (ADR-074).
+///
+/// The core is told a different budget (`memory_budget_mb: 256`), the shell re-reads it, and the page's
+/// `system.memory` answer carries exactly that budget in bytes. A shell that kept the factory 512 MiB — or
+/// the old hard-coded zero — fails here.
+int runPrefsCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 page_budget = 0;
+    QString set_error;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             // The grid only loads after the core answers its card list, so the core is ready
+                             // here (measured by --gridtest). A budget of 256 MiB must reach the page.
+                             QJsonObject prefs;
+                             prefs.insert(QStringLiteral("max_live_cards"), 5);
+                             prefs.insert(QStringLiteral("idle_hibernate_ms"), static_cast<qint64>(600000));
+                             prefs.insert(QStringLiteral("cold_card_ms"), static_cast<qint64>(86400000));
+                             prefs.insert(QStringLiteral("memory_budget_mb"), 256);
+                             window.core()->userPrefsSet(
+                                 prefs,
+                                 [&, id](const QJsonObject&, const QString& error) {
+                                     set_error = error;
+                                     window.refreshUserPrefs();
+                                     // One beat for the shell's own re-read, then ask the page.
+                                     QTimer::singleShot(500, &loop, [&, id] {
+                                         window.engine()->evaluate(
+                                             id,
+                                             QStringLiteral(
+                                                 "window.antikoltNative.request('system.memory', {})"
+                                                 ".then(function(r){window.__pref=r;},"
+                                                 "function(e){window.__pref={error:String(e.message)};});"
+                                                 " 'asked'"),
+                                             [&, id](const QJsonObject&, const QString&) {
+                                                 QTimer::singleShot(900, &loop, [&, id] {
+                                                     window.engine()->evaluate(
+                                                         id,
+                                                         QStringLiteral(
+                                                             "JSON.stringify(window.__pref||null)"),
+                                                         [&](const QJsonObject& value,
+                                                             const QString& failure) {
+                                                             if (failure.isEmpty()) {
+                                                                 const QJsonObject mem =
+                                                                     QJsonDocument::fromJson(
+                                                                         value
+                                                                             .value(QStringLiteral(
+                                                                                 "value"))
+                                                                             .toString()
+                                                                             .toUtf8())
+                                                                         .object();
+                                                                 page_budget = static_cast<qint64>(
+                                                                     mem.value(QStringLiteral(
+                                                                                  "budgetBytes"))
+                                                                         .toDouble());
+                                                             }
+                                                             loop.quit();
+                                                         });
+                                                 });
+                                             });
+                                     });
+                                 });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "pref_set_error=" << (set_error.isEmpty() ? QString() : set_error) << '\n';
+    out << "pref_budget_bytes=" << page_budget << '\n';
+    const bool ok = set_error.isEmpty() && page_budget == 256LL * 1024 * 1024;
+    out << "prefs=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove previews are *produced*: opening a card gives it a picture, and the grid can show it.
 ///
 /// A card pointing at the local probe origin is written into the core without a preview. The grid shows it
@@ -7811,6 +7898,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("metricstest"),
         QStringLiteral("Prove the memory figure is measured by the engine, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption prefstest(
+        QStringLiteral("prefstest"),
+        QStringLiteral("Prove the memory budget reaches the page after a user_prefs_set, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption mediatest(
         QStringLiteral("mediatest"),
         QStringLiteral("Prove the site theme reaches the page, then exit."),
@@ -7862,6 +7953,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(pinginstance);
     parser.addOption(themetest);
     parser.addOption(metricstest);
+    parser.addOption(prefstest);
     parser.addOption(logtest);
     parser.addOption(searchtest);
     parser.addOption(mediacleantest);
@@ -8009,6 +8101,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(metricstest)) {
         return runMetricsCheck(parser.value(metricstest));
+    }
+
+    if (parser.isSet(prefstest)) {
+        return runPrefsCheck(parser.value(prefstest));
     }
 
     if (parser.isSet(previewgentest)) {

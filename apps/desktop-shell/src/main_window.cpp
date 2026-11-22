@@ -321,13 +321,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(engine_, &EngineClient::bridgeCall, this, &MainWindow::handleBridgeCall);
 
-    // The hibernation clock: ten minutes of no user activity put the live card back on disk, which is
-    // the memory promise in one timer. `ANTIKOLT_HIBERNATE_MS` shortens it for the self test; without
-    // that a check would have to wait ten minutes to prove anything.
+    // The hibernation clock: `user_prefs.idle_hibernate_ms` of no user activity put the live card back on
+    // disk, which is the memory promise in one timer (ADR-072). `ANTIKOLT_HIBERNATE_MS` shortens it for the
+    // self test; without that a check would have to wait ten minutes to prove anything.
     const int configured_ms = qEnvironmentVariableIntValue("ANTIKOLT_HIBERNATE_MS");
+    if (configured_ms > 0) {
+        idle_hibernate_ms_ = configured_ms;
+    }
     idle_ = new QTimer(this);
     idle_->setSingleShot(true);
-    idle_->setInterval(configured_ms > 0 ? configured_ms : 10 * 60 * 1000);
+    idle_->setInterval(static_cast<int>(idle_hibernate_ms_));
     connect(idle_, &QTimer::timeout, this, &MainWindow::onIdleTimeout);
     // Activity is what the user does, not what the engine reports: mouse and keyboard, wherever they
     // land inside the shell. The page's own input arrives in the engine's process, so the card also
@@ -2460,6 +2463,130 @@ void MainWindow::refreshUserPrefs() {
         if (mb >= 64 && mb <= 4096) {
             memory_budget_bytes_ = mb * 1024 * 1024;
         }
+        // The hibernation window is a profile setting too (ADR-072). The self-test override always wins;
+        // otherwise the timer follows the core. The clock is re-armed only when a card is live, so a change
+        // here affects the next window, not a running one.
+        const qint64 idle = static_cast<qint64>(prefs.value(QStringLiteral("idle_hibernate_ms")).toDouble());
+        if (qEnvironmentVariableIntValue("ANTIKOLT_HIBERNATE_MS") <= 0 && idle >= 60000 && idle <= 3600000) {
+            idle_hibernate_ms_ = idle;
+            if (idle_ != nullptr) {
+                idle_->setInterval(static_cast<int>(idle_hibernate_ms_));
+            }
+        }
+        // An open dock follows the core's answer, not a stale copy of it.
+        if (settings_dock_ != nullptr && settings_dock_->isVisible()) {
+            fillSettingsDock(prefs);
+        }
+    });
+}
+
+void MainWindow::showSettings() {
+    if (settings_dock_ == nullptr) {
+        settings_dock_ = new QDockWidget(QStringLiteral("Beállítások"), this);
+        settings_dock_->setObjectName(QStringLiteral("settings"));
+        auto* panel = new QWidget(settings_dock_);
+        auto* layout = new QVBoxLayout(panel);
+
+        // The units a person thinks in (cards, minutes, hours, MiB); the core stores the raw numbers and
+        // validates them (ADR-072). A dock like the session panel, not a modal.
+        auto* live = new QWidget(panel);
+        auto* live_layout = new QHBoxLayout(live);
+        live_layout->setContentsMargins(0, 0, 0, 0);
+        live_layout->addWidget(new QLabel(QStringLiteral("Élő kártyák (max):"), live));
+        prefs_live_cards_ = new QSpinBox(live);
+        prefs_live_cards_->setRange(1, 12);
+        live_layout->addWidget(prefs_live_cards_);
+        layout->addWidget(live);
+
+        auto* idle = new QWidget(panel);
+        auto* idle_layout = new QHBoxLayout(idle);
+        idle_layout->setContentsMargins(0, 0, 0, 0);
+        idle_layout->addWidget(new QLabel(QStringLiteral("Hibernálás tétlenség után (perc):"), idle));
+        prefs_idle_minutes_ = new QSpinBox(idle);
+        prefs_idle_minutes_->setRange(1, 60);
+        idle_layout->addWidget(prefs_idle_minutes_);
+        layout->addWidget(idle);
+
+        auto* cold = new QWidget(panel);
+        auto* cold_layout = new QHBoxLayout(cold);
+        cold_layout->setContentsMargins(0, 0, 0, 0);
+        cold_layout->addWidget(new QLabel(QStringLiteral("Hideg kártya (óra):"), cold));
+        prefs_cold_hours_ = new QSpinBox(cold);
+        prefs_cold_hours_->setRange(1, 720);
+        cold_layout->addWidget(prefs_cold_hours_);
+        layout->addWidget(cold);
+
+        auto* budget = new QWidget(panel);
+        auto* budget_layout = new QHBoxLayout(budget);
+        budget_layout->setContentsMargins(0, 0, 0, 0);
+        budget_layout->addWidget(new QLabel(QStringLiteral("Memória-büdzsé (MiB):"), budget));
+        prefs_budget_mb_ = new QSpinBox(budget);
+        prefs_budget_mb_->setRange(64, 4096);
+        budget_layout->addWidget(prefs_budget_mb_);
+        layout->addWidget(budget);
+
+        auto* save = new QPushButton(QStringLiteral("Mentés"), panel);
+        save->setObjectName(QStringLiteral("prefsSave"));
+        connect(save, &QPushButton::clicked, this, &MainWindow::saveUserPrefs);
+        layout->addWidget(save);
+        layout->addStretch(1);
+
+        settings_dock_->setWidget(panel);
+        addDockWidget(Qt::RightDockWidgetArea, settings_dock_);
+    }
+    settings_dock_->show();
+    settings_dock_->raise();
+    // Fill from the core's current row, not from a shell-side guess.
+    if (core_ != nullptr && core_->isRunning()) {
+        core_->userPrefs([this](const QJsonObject& reply, const QString& error) {
+            if (!error.isEmpty()) {
+                return;
+            }
+            fillSettingsDock(reply.value(QStringLiteral("prefs")).toObject());
+        });
+    }
+}
+
+void MainWindow::fillSettingsDock(const QJsonObject& prefs) {
+    if (prefs_live_cards_ != nullptr) {
+        prefs_live_cards_->setValue(prefs.value(QStringLiteral("max_live_cards")).toInt(5));
+    }
+    if (prefs_idle_minutes_ != nullptr) {
+        prefs_idle_minutes_->setValue(static_cast<int>(
+            std::lround(prefs.value(QStringLiteral("idle_hibernate_ms")).toDouble() / 60000.0)));
+    }
+    if (prefs_cold_hours_ != nullptr) {
+        prefs_cold_hours_->setValue(static_cast<int>(
+            std::lround(prefs.value(QStringLiteral("cold_card_ms")).toDouble() / 3600000.0)));
+    }
+    if (prefs_budget_mb_ != nullptr) {
+        prefs_budget_mb_->setValue(prefs.value(QStringLiteral("memory_budget_mb")).toInt(512));
+    }
+}
+
+void MainWindow::saveUserPrefs() {
+    if (core_ == nullptr || !core_->isRunning()) {
+        setStatus(QStringLiteral("a mag nem fut, a beállítások nem menthetők"));
+        return;
+    }
+    QJsonObject prefs;
+    prefs.insert(QStringLiteral("max_live_cards"), prefs_live_cards_ != nullptr ? prefs_live_cards_->value() : 5);
+    prefs.insert(QStringLiteral("idle_hibernate_ms"),
+                 static_cast<qint64>((prefs_idle_minutes_ != nullptr ? prefs_idle_minutes_->value() : 10) *
+                                     60000LL));
+    prefs.insert(QStringLiteral("cold_card_ms"),
+                 static_cast<qint64>((prefs_cold_hours_ != nullptr ? prefs_cold_hours_->value() : 24) *
+                                     3600000LL));
+    prefs.insert(QStringLiteral("memory_budget_mb"),
+                 prefs_budget_mb_ != nullptr ? prefs_budget_mb_->value() : 512);
+    core_->userPrefsSet(prefs, [this](const QJsonObject&, const QString& error) {
+        if (!error.isEmpty()) {
+            setStatus(QStringLiteral("a beállítások nem mentődtek: %1").arg(error));
+            return;
+        }
+        setStatus(QStringLiteral("beállítások mentve"));
+        // Re-read what the core accepted: the cache (budget, hibernation window) follows the stored row.
+        refreshUserPrefs();
     });
 }
 
@@ -2472,6 +2599,7 @@ void MainWindow::buildToolBar() {
     toolbar->addAction(QStringLiteral("⌂ Kezdőlap"), this, &MainWindow::loadHome);
     toolbar->addAction(QStringLiteral("❄ Fagyasztás"), this, &MainWindow::freezeCard);
     toolbar->addAction(QStringLiteral("🗂 Munkamenetek"), this, &MainWindow::showSessions);
+    toolbar->addAction(QStringLiteral("⚙ Beállítások"), this, &MainWindow::showSettings);
 
     // Portable profile bundle (ADR-059): the shell owns the native file dialog; the core does the export/import.
     // The dialog cannot be clicked by the harness, so the button is the product's entry point while `--profiletest`

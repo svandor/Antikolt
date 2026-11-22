@@ -107,6 +107,7 @@ $engineChecks = @(
     @{ Name = 'previewgentest'; Args = @('--previewgentest') },
     @{ Name = 'previewworkertest'; Args = @('--previewworkertest') },
     @{ Name = 'metricstest'; Args = @('--metricstest') },
+    @{ Name = 'prefstest'; Args = @('--prefstest') },
     @{ Name = 'mediatest'; Args = @('--mediatest') },
     @{ Name = 'themetest'; Args = @('--themetest') },
     @{ Name = 'searchtest'; Args = @('--searchtest') },

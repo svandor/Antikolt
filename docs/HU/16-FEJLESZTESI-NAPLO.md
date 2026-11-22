@@ -3,6 +3,40 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százkettedik szelet) — a beállítások felületi vezérlője + az idle-időzítő a profilból
+
+Az ADR-072 (UserPrefs) és ADR-074 (memória-büdzsé) története eddig az IPC-nél ért véget: a négy beállítás
+(`max_live_cards`, `idle_hibernate_ms`, `cold_card_ms`, `memory_budget_mb`) a magban élt, de a felületen nem volt
+natív vezérlő, és a shell hibernáló-órája a kemény 10 percet használta. Ez a szelet mindkettőt megszünteti.
+
+### Mi változott
+
+- **Beállítások dokk (`main_window.{h,cpp}`):** `showSettings()` a Munkamenetek panel mintájára egy
+  `QDockWidget`-et épít négy `QSpinBox`-szal (élő kártyák 1..12, hibernálás 1..60 perc, hideg kártya 1..720 óra,
+  büdzsé 64..4096 MiB) és egy Mentés gombbal; `saveUserPrefs()` a mag `user_prefs_set`-jével ír (a mag validál),
+  majd `refreshUserPrefs()` újraolvassa, amit a mag elfogadott. A toolbar „⚙ Beállítások" gombbal nyílik.
+- **Az idle-időzítő a profilból:** `refreshUserPrefs()` most az `idle_hibernate_ms`-et is cache-eli
+  (`idle_hibernate_ms_`) és az `idle_` intervallumát állítja; az `ANTIKOLT_HIBERNATE_MS` felülbírálat (az önteszt
+  gyorsítása) továbbra is elsőbbséget élvez, a kemény 10 perc csak a mag válasza előtti gyári érték.
+- **`--prefstest` (új önteszt):** a shell a magtól 256 MiB-os büdzsét kér, újraolvassa, majd a lap
+  `system.memory` válasza pontosan ezt hordozza (`budgetBytes = 268435456`) — a büdzsé-írás a lapig ér, nem csak a
+  magig.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (41 önteszt + check-repo)
+--prefstest                 → pref_set_error= · pref_budget_bytes=268435456 · prefs=ok
+cargo test                  → 152 zöld: 78 + 50 + 8 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A beállítás-dokk a harnessben **nem kattintható** (`not-measurable`), mint a fájlválasztó — az alatta lévő út a
+  `--prefstest` és a Rust-tesztek által mérve.
+- Az F6 maradéka (kártyánkénti memória-bontás, erőforrás-profilok, raszter-kezdőlap) és a teljes szerkeszthető
+  kezdőlap (a felhasználói HTML tárolása/kiszolgálása) továbbra is az ütemterv 3–4 hetes tételei.
+
 ## 2026-11-22 (százegyedik szelet) — a `<antikolt-card>` önálló csomagja + a memória-büdzsé (F6)
 
 A két hátralévő nagy útiterv-tételből az a része készült el, ami egy szeletben mérhető: a kártya-komponens

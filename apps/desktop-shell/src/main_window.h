@@ -90,6 +90,9 @@ public:
     /// The engine link, exposed for the same reason.
     EngineClient* engine() const { return engine_; }
 
+    /// The core link, exposed so the preferences self test can drive `user_prefs_set`.
+    CoreClient* core() const { return core_; }
+
     /// Show the session ledger panel (`docs/HU/10-MUNKAMENET.md` §5) and fill it from the core.
     ///
     /// The rows are the core's answer, not the shell's bookkeeping: `session_list` for the ledger and
@@ -98,6 +101,10 @@ public:
     /// Refresh the cached user preferences from the core (live-card cap, hibernation timings and the memory
     /// budget, F6). The budget is a profile setting that changes rarely, so it is cached, not re-read per query.
     void refreshUserPrefs();
+    /// Show the user-preferences dock (ADR-072/074) and fill it from the cached core values.
+    void showSettings();
+    /// Send the dock's values to the core (`user_prefs_set`); the core validates, the shell re-reads.
+    void saveUserPrefs();
     /// What the panel is showing, one line per row — the witness a self test reads.
     QString sessionPanelSummary() const;
     /// How many rows the panel holds (0 before the first refresh).
@@ -222,6 +229,8 @@ private:
     /// Wire one engine's signals into the window. The home engine and every container engine get the
     /// same handlers, so a container's surface behaves exactly like the home one.
     void wireEngine(EngineClient* engine);
+    /// Fill the preferences dock's four spinboxes from a core `prefs` object (showSettings / refreshUserPrefs).
+    void fillSettingsDock(const QJsonObject& prefs);
     /// Put the icon in the tray (ADR-043). Does nothing when the platform has no tray or the tray is off.
     void setupTray();
     /// Hide the window, leaving the tray icon as the way back — the close button's real work.
@@ -353,11 +362,21 @@ private:
     /// The panel's rule editors (ADR-039): the TTL in hours and the app-lock wipe.
     QSpinBox* sessions_ttl_ = nullptr;
     QCheckBox* sessions_lock_wipe_ = nullptr;
+    /// The preferences dock (ADR-072/074) and its four editors. A dock, like the session panel — not a dialog.
+    QDockWidget* settings_dock_ = nullptr;
+    QSpinBox* prefs_live_cards_ = nullptr;
+    QSpinBox* prefs_idle_minutes_ = nullptr;
+    QSpinBox* prefs_cold_hours_ = nullptr;
+    QSpinBox* prefs_budget_mb_ = nullptr;
     /// The container default the core reported (`keep`/`sweep`/`wipe`), sent back unchanged on save.
     QString session_policy_ = QStringLiteral("sweep");
     /// The profile's memory budget in bytes (`memory_budget_mb` × MiB), cached from the core; the factory 512 MiB
     /// until the first `refreshUserPrefs` answers. `system.memory` reports it as `budgetBytes` (F6).
     qint64 memory_budget_bytes_ = 512LL * 1024 * 1024;
+    /// The idle-hibernation window in ms, cached from `user_prefs.idle_hibernate_ms` (ADR-072). The factory
+    /// 10 minutes until the first `refreshUserPrefs` answers; `ANTIKOLT_HIBERNATE_MS` still overrides for the
+    /// self test.
+    qint64 idle_hibernate_ms_ = 600000;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------
