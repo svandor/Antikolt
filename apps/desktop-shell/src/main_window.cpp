@@ -2701,6 +2701,46 @@ void MainWindow::captureGrid() {
                      });
 }
 
+void MainWindow::enterRasterMode() {
+    if (raster_mode_ || !engine_->isRunning() || home_surface_ == 0) {
+        return;
+    }
+    // Rasterise first, and only stop the engine when the raster is on disk: a failed capture must not leave the
+    // user staring at a blank window.
+    engine_->capture(home_surface_, QStringLiteral("png"), 80,
+                     [this](const QJsonObject& shot, const QString& error) {
+                         const QString written = shot.value(QStringLiteral("path")).toString();
+                         const QString target = engine_profile_ + QStringLiteral("/home-raster.png");
+                         if (!error.isEmpty() || written.isEmpty()) {
+                             return;
+                         }
+                         QFile::remove(target);
+                         if (!QFile::copy(written, target)) {
+                             return;
+                         }
+                         engine_->shutdown();
+                         raster_mode_ = true;
+                         // The grid surface died with the engine process: clear it, so the restart creates a
+                         // fresh surface instead of navigating a stale id into the new process.
+                         if (card_->hasSurface()) {
+                             card_->detach();
+                         }
+                         setStatus(QStringLiteral("raszter-kezdőlap (a motor leállítva)"));
+                     });
+}
+
+void MainWindow::wakeFromRaster() {
+    if (!raster_mode_) {
+        return;
+    }
+    raster_mode_ = false;
+    if (!engine_->isRunning()) {
+        engine_->start(engineExecutable(), engine_profile_, false, engine_profile_ + QStringLiteral("/previews"));
+        engine_->handshake();
+    }
+    // The `engineReady` welcome reloads the grid (ensureSurface), so nothing else is needed here.
+}
+
 void MainWindow::buildToolBar() {
     auto* toolbar = addToolBar(QStringLiteral("Fő"));
     toolbar->setMovable(false);

@@ -2370,6 +2370,86 @@ int runRasterCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the full raster-home cycle (F6): enter the raster home (rasterise + stop the engine), then wake from it
+/// (restart the engine + reload the grid). The stop/restart and the raster are each proven on their own; this
+/// ties them into one mode switch.
+int runRasterHomeCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool grid_loaded = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:")) && !grid_loaded) {
+                                 grid_loaded = true;
+                                 loop.quit();
+                             }
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    window.enterRasterMode();
+    const QString raster = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                           QStringLiteral("/engine/home-raster.png");
+    bool stopped = false;
+    bool raster_on_disk = false;
+    {
+        QEventLoop wait;
+        QTimer timer;
+        QObject::connect(&timer, &QTimer::timeout, &wait, [&] {
+            if (!window.engine()->isRunning() && QFile::exists(raster)) {
+                stopped = true;
+                raster_on_disk = true;
+                timer.stop();
+                wait.quit();
+            }
+        });
+        timer.start(200);
+        QTimer::singleShot(30000, &wait, [&] { timer.stop(); wait.quit(); });
+        wait.exec();
+    }
+    const bool in_raster_mode = window.rasterMode();
+
+    window.wakeFromRaster();
+    bool grid_returned = false;
+    {
+        QEventLoop wait;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &wait,
+                         [&](qint64, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:"))) {
+                                 grid_returned = true;
+                                 wait.quit();
+                             }
+                         });
+        QTimer::singleShot(30000, &wait, &QEventLoop::quit);
+        wait.exec();
+    }
+    const bool restarted = window.engine()->isRunning();
+    const bool out_of_raster = !window.rasterMode();
+
+    out << "rasterhome_grid_loaded=" << (grid_loaded ? "true" : "false") << '\n';
+    out << "rasterhome_stopped=" << (stopped ? "true" : "false") << '\n';
+    out << "rasterhome_raster_on_disk=" << (raster_on_disk ? "true" : "false") << '\n';
+    out << "rasterhome_mode=" << (in_raster_mode ? "true" : "false") << '\n';
+    out << "rasterhome_restarted=" << (restarted ? "true" : "false") << '\n';
+    out << "rasterhome_grid_returned=" << (grid_returned ? "true" : "false") << '\n';
+    out << "rasterhome_woke=" << (out_of_raster ? "true" : "false") << '\n';
+    const bool ok = grid_loaded && stopped && raster_on_disk && in_raster_mode && restarted && grid_returned &&
+                    out_of_raster;
+    out << "raster_home=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// The tuning report (F6): one read of the whole memory-governor state — the active profile and its params, the
 /// live surface's working set against the budget, and the per-card working sets summed. It is the diagnostics the
 /// "hangolás" item promises: everything a person needs to judge whether the profile fits, in one place.
@@ -8464,6 +8544,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("rastertest"),
         QStringLiteral("Prove the grid rasterises to a valid PNG in the profile, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption rasterhometest(
+        QStringLiteral("rasterhometest"),
+        QStringLiteral("Prove the raster home cycle (enter: stop+raster, wake: restart+grid), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption memoryreport(
         QStringLiteral("memoryreport"),
         QStringLiteral("Print the memory-governor tuning report (F6), then exit."),
@@ -8525,6 +8609,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(resethometest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
+    parser.addOption(rasterhometest);
     parser.addOption(memoryreport);
     parser.addOption(logtest);
     parser.addOption(searchtest);
@@ -8697,6 +8782,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(rastertest)) {
         return runRasterCheck(parser.value(rastertest));
+    }
+
+    if (parser.isSet(rasterhometest)) {
+        return runRasterHomeCheck(parser.value(rasterhometest));
     }
 
     if (parser.isSet(memoryreport)) {

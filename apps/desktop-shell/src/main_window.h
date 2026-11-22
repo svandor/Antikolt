@@ -116,6 +116,13 @@ public:
     /// Rasterise the grid: capture the home surface to `<profile>/home-raster.png` (the image the raster home
     /// shows while the engine is stopped, F6).
     void captureGrid();
+    /// Enter the raster home (F6): rasterise the grid, stop the engine, and remember the mode. `wakeFromRaster`
+    /// brings the engine back.
+    void enterRasterMode();
+    /// Wake from the raster home: restart the engine; its welcome reloads the grid.
+    void wakeFromRaster();
+    /// Whether the raster home is active (the engine stopped, the grid shown as a raster). Exposed for the test.
+    bool rasterMode() const { return raster_mode_; }
     /// What the panel is showing, one line per row — the witness a self test reads.
     QString sessionPanelSummary() const;
     /// How many rows the panel holds (0 before the first refresh).
@@ -397,6 +404,8 @@ private:
     /// "keep it warm" (T1, the factory); `0` means "as soon as no card is live" (T2, `Ultra`). Cached from the
     /// derived profile — the raster home (engine stopped) builds on this.
     qint64 engine_shutdown_ms_ = -1;
+    /// Whether the raster home is active: the engine is stopped and the grid is shown from `home-raster.png`.
+    bool raster_mode_ = false;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------

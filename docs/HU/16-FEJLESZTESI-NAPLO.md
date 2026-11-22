@@ -3,6 +3,34 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizennegyedik szelet) — a raszter-kezdőlap mód (F6)
+
+A raszter-kezdőlap most egyetlen módváltásként működik: a shell raszterizálja a rácsot, **leállítja a motort**, és
+emlékszik a módra; az ébresztés visszaindítja a motort, és a rács újratöltődik. A motor leállítása a nagy
+memória-ígéret (tétlen 120–180 MB felé), a raszter pedig az, amit a felhasználó addig lát.
+
+### Mi változott
+
+- **`enterRasterMode()`:** a rácsot `capture`-rel a profil `home-raster.png`-jébe teszi, majd leállítja a motort; a
+  régi felület-id-t is törli (`card_->detach()`), különben az újraindítás a halott felületet navigálná.
+- **`wakeFromRaster()`:** újraindítja a motort; az `engineReady` üdvözlés újratölti a rácsot.
+- **`--rasterhometest` (új):** a teljes ciklus — rács betölt → mód be (leállítás + raszter) → ébresztés
+  (újraindítás + rács visszatér).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (50 önteszt + check-repo)
+--rasterhometest            → rasterhome_stopped=true · rasterhome_mode=true · rasterhome_restarted=true ·
+                              rasterhome_grid_returned=true · raster_home=ok
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A raszter-kezdőlap **automatikus** aktiválása a profil T2-je szerint (a tétlen motor leállítása) és a
+  **kattintás-leképezés** (a raszter kattintása → a kártya megnyitása); a 3. tétel szerkesztője és sandboxolása.
+
 ## 2026-11-22 (száztizenharmadik szelet) — a rács raszterizálása (F6)
 
 A raszter-kezdőlap következő darabja: a shell a kezdőlap-felületet egyetlen képfájlba tudja leképezni
