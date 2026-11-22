@@ -113,6 +113,9 @@ public:
     /// Remove the user-authored `home.html` from the core data directory and reload the built-in grid (item 3,
     /// editable home: a user who set a broken page needs a way back).
     void resetCustomHome();
+    /// Rasterise the grid: capture the home surface to `<profile>/home-raster.png` (the image the raster home
+    /// shows while the engine is stopped, F6).
+    void captureGrid();
     /// What the panel is showing, one line per row — the witness a self test reads.
     QString sessionPanelSummary() const;
     /// How many rows the panel holds (0 before the first refresh).

@@ -2676,6 +2676,31 @@ void MainWindow::resetCustomHome() {
     loadHome();
 }
 
+void MainWindow::captureGrid() {
+    if (!engine_->isRunning() || home_surface_ == 0) {
+        setStatus(QStringLiteral("nincs mit raszterizálni"));
+        return;
+    }
+    // `capture` writes into `screenshots/`; the raster home wants one stable file under the profile.
+    engine_->capture(home_surface_, QStringLiteral("png"), 80,
+                     [this](const QJsonObject& shot, const QString& error) {
+                         const QString written = shot.value(QStringLiteral("path")).toString();
+                         if (!error.isEmpty() || written.isEmpty()) {
+                             setStatus(QStringLiteral("a rács raszterizálása nem sikerült: %1")
+                                           .arg(error.isEmpty() ? QStringLiteral("nincs path a válaszban")
+                                                                : error));
+                             return;
+                         }
+                         const QString target = engine_profile_ + QStringLiteral("/home-raster.png");
+                         QFile::remove(target);
+                         if (!QFile::copy(written, target)) {
+                             setStatus(QStringLiteral("a raszter nem került a profilba: %1").arg(target));
+                             return;
+                         }
+                         setStatus(QStringLiteral("raszter kész: %1").arg(target));
+                     });
+}
+
 void MainWindow::buildToolBar() {
     auto* toolbar = addToolBar(QStringLiteral("Fő"));
     toolbar->setMovable(false);

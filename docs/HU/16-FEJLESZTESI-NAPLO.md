@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizenharmadik szelet) — a rács raszterizálása (F6)
+
+A raszter-kezdőlap következő darabja: a shell a kezdőlap-felületet egyetlen képfájlba tudja leképezni
+(`<profil>/home-raster.png`). Ez az a raszter, amit a shell akkor mutat majd, amikor a motor leállt — a
+leállítás/újraindítás (112.) már működik, a raszter mostantól készen van.
+
+### Mi változott
+
+- **`captureGrid()`:** a kezdőlap-felületet `capture`-rel PNG-be teszi, és a `screenshots/`-ból a profil
+  `home-raster.png`-jébe másolja (egy stabil név, amit a raszter-mód olvas).
+- **`--rastertest` (új):** a rács betölt → `captureGrid()` → a `home-raster.png` létezik, érvényes PNG.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (49 önteszt + check-repo)
+--rastertest                → raster_grid_loaded=true · raster_bytes=242038 · raster_png=true · raster=ok
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A **raszter-kezdőlap** utolsó darabja: a raszter **megjelenítése** a motor leállítva, a tétlen motor leállítása a
+  profil T2-je szerint, és a kattintás leképezése a kártyára (hideg újraindítás); a 3. tétel szerkesztője és
+  sandboxolása.
+
 ## 2026-11-22 (száztizenkettedik szelet) — a motor újraindíthatóvá tétele (F6, raszter-előfeltétel)
 
 A raszter-kezdőlap (a motor leállítva) előfeltétele, hogy a motor **le tudjon állni és vissza tudjon indulni**.

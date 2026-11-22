@@ -2308,6 +2308,68 @@ int runEngineRestartCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the grid can be rasterised (F6, raster home): `captureGrid` writes a valid PNG into the profile, the image
+/// the shell will show while the engine is stopped.
+int runRasterCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool grid_loaded = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:")) && !grid_loaded) {
+                                 grid_loaded = true;
+                                 loop.quit();
+                             }
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    window.captureGrid();
+    const QString raster = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                           QStringLiteral("/engine/home-raster.png");
+    qint64 bytes = 0;
+    {
+        QEventLoop wait;
+        QTimer timer;
+        QObject::connect(&timer, &QTimer::timeout, &wait, [&] {
+            if (QFile::exists(raster)) {
+                bytes = QFile(raster).size();
+                timer.stop();
+                wait.quit();
+            }
+        });
+        timer.start(500);
+        QTimer::singleShot(30000, &wait, [&] { timer.stop(); wait.quit(); });
+        wait.exec();
+    }
+
+    bool png = false;
+    if (bytes > 0) {
+        QFile file(raster);
+        if (file.open(QIODevice::ReadOnly)) {
+            png = file.read(8) == QByteArray::fromHex("89504e470d0a1a0a");
+        }
+    }
+
+    out << "raster_grid_loaded=" << (grid_loaded ? "true" : "false") << '\n';
+    out << "raster_bytes=" << bytes << '\n';
+    out << "raster_png=" << (png ? "true" : "false") << '\n';
+    const bool ok = grid_loaded && bytes > 0 && png;
+    out << "raster=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// The tuning report (F6): one read of the whole memory-governor state — the active profile and its params, the
 /// live surface's working set against the budget, and the per-card working sets summed. It is the diagnostics the
 /// "hangolás" item promises: everything a person needs to judge whether the profile fits, in one place.
@@ -8398,6 +8460,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption rastertest(
+        QStringLiteral("rastertest"),
+        QStringLiteral("Prove the grid rasterises to a valid PNG in the profile, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption memoryreport(
         QStringLiteral("memoryreport"),
         QStringLiteral("Print the memory-governor tuning report (F6), then exit."),
@@ -8458,6 +8524,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(customhometest);
     parser.addOption(resethometest);
     parser.addOption(enginerestarttest);
+    parser.addOption(rastertest);
     parser.addOption(memoryreport);
     parser.addOption(logtest);
     parser.addOption(searchtest);
@@ -8626,6 +8693,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(enginerestarttest)) {
         return runEngineRestartCheck(parser.value(enginerestarttest));
+    }
+
+    if (parser.isSet(rastertest)) {
+        return runRasterCheck(parser.value(rastertest));
     }
 
     if (parser.isSet(memoryreport)) {
