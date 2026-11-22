@@ -1422,10 +1422,14 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                 const qint64 used = measured.value(QStringLiteral("engine_working_set_bytes"))
                                         .toString()
                                         .toLongLong();
+                // The budget bands (F6, 03-MEMORIA.md §4): a live surface above the profile's budget is the
+                // signal for the media-quality limit — the page shows a "memory-saving" hint, overridable there.
+                const bool over_budget = memory_budget_bytes_ > 0 && used > memory_budget_bytes_;
                 replyToPage(request,
                             QJsonObject{{QStringLiteral("usedBytes"), static_cast<double>(used)},
                                         {QStringLiteral("budgetBytes"),
-                                         static_cast<double>(memory_budget_bytes_)}});
+                                         static_cast<double>(memory_budget_bytes_)},
+                                        {QStringLiteral("overBudget"), over_budget}});
             });
             return;
         }

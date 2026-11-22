@@ -302,6 +302,13 @@ class HomePage {
     this.emptyEl = document.getElementById("empty");
     this.memEl = document.getElementById("mem");
     this.engineEl = document.getElementById("engine");
+    // The "memory-saving" hint (F6): once dismissed, it stays quiet until the next page load. A click on the
+    // memory figure is the override the media-quality limit promises (03-MEMORIA.md §4).
+    this.memoryHintDismissed = false;
+    this.memEl.addEventListener("click", () => {
+      this.memoryHintDismissed = true;
+      this.memEl.classList.remove("mem-over");
+    });
     this.searchEl = document.getElementById("search");
     this.pinnedSection = document.getElementById("pinned-section");
     this.pinnedRow = document.getElementById("pinned");
@@ -1703,6 +1710,12 @@ class HomePage {
         // The budget bar (F6): a used/budget fill behind the number, so "over budget" is visible, not just a number.
         const fraction = budget > 0 ? Math.max(0, Math.min(1, used / budget)) : 0;
         this.memEl.style.setProperty("--mem-fill", `${Math.round(fraction * 100)}%`);
+        // The media-quality signal (F6): over budget means a "memory-saving" hint, dismissible by a click.
+        const over = Boolean(memory.overBudget);
+        this.memEl.classList.toggle("mem-over", over && !this.memoryHintDismissed);
+        this.memEl.title = over
+          ? "memória-takarékos: a lap túllépi a büdzsét (kattintás: elrejtés)"
+          : "";
       } else {
         this.memEl.textContent = "motor: hideg";
         this.memEl.style.setProperty("--mem-fill", "0%");

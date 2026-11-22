@@ -1979,6 +1979,8 @@ int runPrefsCheck(const QString& enginePath) {
     window.startEngine();
 
     qint64 page_budget = 0;
+    qint64 home_surface = 0;
+    bool over_budget = false;
     QString set_error;
     {
         QEventLoop loop;
@@ -1987,6 +1989,7 @@ int runPrefsCheck(const QString& enginePath) {
                              if (!url.startsWith(QStringLiteral("file:"))) {
                                  return;
                              }
+                             home_surface = id;
                              // The grid only loads after the core answers its card list, so the core is ready
                              // here (measured by --gridtest). The "ultra" profile presets a 256 MiB budget — the
                              // 512 and 600000 sent here are what the preset must override (F6, §3).
@@ -2031,6 +2034,9 @@ int runPrefsCheck(const QString& enginePath) {
                                                                      mem.value(QStringLiteral(
                                                                                   "budgetBytes"))
                                                                          .toDouble());
+                                                                 over_budget = mem.value(QStringLiteral(
+                                                                                             "overBudget"))
+                                                                                   .toBool();
                                                              }
                                                              loop.quit();
                                                          });
@@ -2043,9 +2049,60 @@ int runPrefsCheck(const QString& enginePath) {
         loop.exec();
     }
 
+    // Phase 2: a manual ("kezi") 64 MiB budget is below the live surface's working set, so the page must report
+    // `overBudget` — the signal the media-quality limit shows (F6). `kezi` leaves the 64 as the user set it.
+    bool over_budget_manual = false;
+    if (home_surface != 0 && set_error.isEmpty()) {
+        QEventLoop band;
+        QJsonObject prefs;
+        prefs.insert(QStringLiteral("max_live_cards"), 5);
+        prefs.insert(QStringLiteral("idle_hibernate_ms"), static_cast<qint64>(600000));
+        prefs.insert(QStringLiteral("cold_card_ms"), static_cast<qint64>(86400000));
+        prefs.insert(QStringLiteral("memory_budget_mb"), 64);
+        prefs.insert(QStringLiteral("resource_profile"), QStringLiteral("kezi"));
+        window.core()->userPrefsSet(prefs, [&](const QJsonObject&, const QString& error) {
+            if (!error.isEmpty()) {
+                band.quit();
+                return;
+            }
+            window.refreshUserPrefs();
+            QTimer::singleShot(500, &band, [&] {
+                window.engine()->evaluate(
+                    home_surface,
+                    QStringLiteral("window.antikoltNative.request('system.memory', {})"
+                                   ".then(function(r){window.__pref2=r;},"
+                                   "function(e){window.__pref2={error:String(e.message)};});"
+                                   " 'asked'"),
+                    [&](const QJsonObject&, const QString&) {
+                        QTimer::singleShot(900, &band, [&] {
+                            window.engine()->evaluate(
+                                home_surface,
+                                QStringLiteral("JSON.stringify(window.__pref2||null)"),
+                                [&](const QJsonObject& value, const QString& failure) {
+                                    if (failure.isEmpty()) {
+                                        const QJsonObject mem =
+                                            QJsonDocument::fromJson(
+                                                value.value(QStringLiteral("value")).toString().toUtf8())
+                                                .object();
+                                        over_budget_manual =
+                                            mem.value(QStringLiteral("overBudget")).toBool();
+                                    }
+                                    band.quit();
+                                });
+                        });
+                    });
+            });
+        });
+        QTimer::singleShot(45000, &band, &QEventLoop::quit);
+        band.exec();
+    }
+
     out << "pref_set_error=" << (set_error.isEmpty() ? QString() : set_error) << '\n';
     out << "pref_budget_bytes=" << page_budget << '\n';
-    const bool ok = set_error.isEmpty() && page_budget == 256LL * 1024 * 1024;
+    out << "pref_over_budget_under=" << (over_budget ? "true" : "false") << '\n';
+    out << "pref_over_budget_manual=" << (over_budget_manual ? "true" : "false") << '\n';
+    const bool ok = set_error.isEmpty() && page_budget == 256LL * 1024 * 1024 && !over_budget &&
+                    over_budget_manual;
     out << "prefs=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

@@ -54,7 +54,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Munkamenetek | `--sessionpanel`, `--scrollbook`, `--wipetest`, `--cleanuptest` | látszik, mi van életben, mennyi RAM/lemez; `keep`/`sweep`/`wipe` végrehajtás; a „Politika" oszlop legördülővel **kártyánként (origin-szinten)** felülírja a konténer-alapértelmezést (`session_panel=ok`) |
 | Bejelentkezési popup, profil-gomb, fogd-és-vidd | `--partitiontest`, `--profiletest`, `--workspacetest` | popup (ADR-073): gesztus → valódi ablak a kártya partíciójában, 60 s, a hibernálás felfüggesztve (a gesztus-út `not-measurable`); profil-gomb: natív `QFileDialog` a `profile_export`/`import` fölött (a dialógus `not-measurable`, az út `--profiletest`-tel mérve); fogd-és-vidd: kártya → munkaterület-fül a `<select>` mellett (ADR-058) |
 | Előnézet | `--preview*` | a háttér-worker szabályai (ADR-041) és az ütemező mérve |
-| Memória | `--metricstest`, `--memorytest` | az engine working set-je mérve (`engine_working_set_bytes`), a büdzsé a profil `memory_budget_mb`-je (`budgetBytes`); a rács used/budget sávot rajzol; a kártya `memory_bytes`-e a fagyasztáskori working set (kártyánkénti bontás, séma 0008, `--memorytest` → `memory_bytes=117633024`) |
+| Memória | `--metricstest`, `--memorytest`, `--prefstest` | az engine working set-je mérve (`engine_working_set_bytes`), a büdzsé a profil `memory_budget_mb`-je (`budgetBytes`); a rács used/budget sávot rajzol; a kártya `memory_bytes`-e a fagyasztáskori working set (séma 0008); a `system.memory` `overBudget` jele a médiaminőség-korlát alapja (a rács „memória-takarékos" jelzést mutat, kattintással felülbírálható) |
 | Tálca, napló, téma | `--traytest`, `--logtest`, `--themetest` | a napló nem ír feleslegesen, a témák a helyes színt adják |
 
 ## Ami nyitva van (tudatosan, nem elfelejtve)
@@ -66,10 +66,10 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
    `window.open` nem gesztus): a `popup_requested`/`popup_closed` útja `not-measurable`.
 3. **A teljes szerkeszthető kezdőlap** — a `<antikolt-card>` csomag kész (ADR-075); a felhasználói HTML tárolása,
    kiszolgálása és egy szerkesztő-felület marad hátra.
-4. **Az F6 maradéka** — a büdzsé, a beállítás-felülete, a kártyánkénti memória-bontás és a profil-preset kész
-   (ADR-074, 102–104. szelet); a profil **többi dimenziója** (motor-élettartam, előnézet-frissítés, GPU), a
-   **médiaminőség-korlát** (720p a narancs sávban), a **raszter-kezdőlap** (motor leállítva) és a **hangolási
-   riport** marad hátra (az ütemterv 3–4 hetes tétele).
+4. **Az F6 maradéka** — a büdzsé, a beállítás-felülete, a kártyánkénti memória-bontás, a profil-preset és a
+   médiaminőség-korlát **jele** kész (ADR-074, 102–105. szelet); a profil **többi dimenziója** (motor-élettartam,
+   előnézet-frissítés, GPU), a **raszter-kezdőlap** (motor leállítva) és a **hangolási riport** marad hátra (az
+   ütemterv 3–4 hetes tétele).
 
 ## Amihez emberi lépés kell (nem kód)
 

@@ -3,6 +3,36 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százötödik szelet) — a médiaminőség-korlát jele (F6)
+
+A médiaminőség-korlát az a része, amit a böngészőből őszintén meg lehet csinálni: a **jelzés**, nem a videó
+tényleges 720p-re szorítása (a felbontás kívülről nem kényszeríthető). A büdzsé túllépése most eljut a lapig, a
+felület egy „memória-takarékos" jelzést mutat, és a kattintás felülbírálja.
+
+### Mi változott
+
+- **`system.memory` → `overBudget`:** a shell a válaszhoz hozzáadja, hogy az élő felület working set-je túllépi-e a
+  profil büdzséjét (`used > memory_budget_bytes_`); ez a sáv-jele, amire a médiaminőség-korlát épül (03-MEMORIA.md
+  §4).
+- **A rács jelzi és felülbírálja:** a `#mem` mező `mem-over` osztályt kap, ha a lap a büdzsé fölé ér (szöveg-szín +
+  akcentus keret); egy kattintás elrejti a következő lapbetöltésig (`memoryHintDismissed`).
+- **`--prefstest` két fázisban:** (1) az „ultra" profil 256 MiB-ja alatt `overBudget=false`; (2) egy kézi 64 MiB-os
+  büdzsé fölött `overBudget=true` — a jel mindkét irányban a lapig ér.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (42 önteszt + check-repo)
+--prefstest                 → pref_over_budget_under=false · pref_over_budget_manual=true · prefs=ok
+cargo test                  → 154 zöld: 78 + 52 + 8 + 1 + 15
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A tényleges **videófelbontás-korlát** (720p) nem kényszeríthető kívülről — a jelzés az, ami megvalósult; a
+  profil **többi dimenziója** (motor-élettartam T1/T2, előnézet-frissítés, GPU), a **raszter-kezdőlap** és a
+  **hangolási riport** marad.
+
 ## 2026-11-22 (száznegyedik szelet) — az erőforrás-profil mint preset (F6)
 
 Az F6 „erőforrás-profil" tételének az a része készült el, ami a már bekötött beállításokra épül: a profil egy

@@ -315,6 +315,12 @@ kbd {
     transparent var(--mem-fill, 0%)
   );
 }
+/* The "memory-saving" hint (F6): the live surface exceeds the budget, so the figure turns to the text colour and
+   the border to the accent. A click dismisses it (app.js). */
+.mem.mem-over {
+  color: var(--text);
+  border-color: var(--accent);
+}
 
 /* ---- layout ----------------------------------------------------------------------------- */
 
