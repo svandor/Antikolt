@@ -318,6 +318,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         home_surface_ = 0;
         live_card_pinned_ = false;
         setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
+        // A card went back to disk: the engine is now idle, so the raster home's clock starts (T2). Skipped while
+        // already in the raster home (enterRasterMode detaches too, and must not re-arm itself).
+        if (!raster_mode_) {
+            armEngineIdleTimer();
+        }
     });
     connect(engine_, &EngineClient::bridgeCall, this, &MainWindow::handleBridgeCall);
 
@@ -2739,6 +2744,20 @@ void MainWindow::wakeFromRaster() {
         engine_->handshake();
     }
     // The `engineReady` welcome reloads the grid (ensureSurface), so nothing else is needed here.
+}
+
+void MainWindow::armEngineIdleTimer() {
+    if (engine_idle_ == nullptr) {
+        engine_idle_ = new QTimer(this);
+        engine_idle_->setSingleShot(true);
+        connect(engine_idle_, &QTimer::timeout, this, &MainWindow::enterRasterMode);
+    }
+    // `-1` is "keep it warm" (T1): no timer. Otherwise the raster home activates after the profile's threshold.
+    if (engine_shutdown_ms_ < 0) {
+        engine_idle_->stop();
+        return;
+    }
+    engine_idle_->start(static_cast<int>(engine_shutdown_ms_));
 }
 
 void MainWindow::buildToolBar() {

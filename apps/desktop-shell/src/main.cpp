@@ -2450,6 +2450,94 @@ int runRasterHomeCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the raster home auto-activates (F6, T2): with the ultra profile (0 ms shutdown), arming the idle clock
+/// — the same path a card going back to disk takes — must stop the engine and enter the raster home.
+int runRasterAutoCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    bool grid_loaded = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64, const QString& url, int) {
+                             if (url.startsWith(QStringLiteral("file:")) && !grid_loaded) {
+                                 grid_loaded = true;
+                                 loop.quit();
+                             }
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    QJsonObject prefs;
+    prefs.insert(QStringLiteral("max_live_cards"), 5);
+    prefs.insert(QStringLiteral("idle_hibernate_ms"), static_cast<qint64>(600000));
+    prefs.insert(QStringLiteral("cold_card_ms"), static_cast<qint64>(86400000));
+    prefs.insert(QStringLiteral("memory_budget_mb"), 512);
+    prefs.insert(QStringLiteral("resource_profile"), QStringLiteral("ultra"));
+    bool set_ok = false;
+    {
+        QEventLoop loop;
+        window.core()->userPrefsSet(prefs, [&](const QJsonObject&, const QString& error) {
+            set_ok = error.isEmpty();
+            window.refreshUserPrefs();
+            // Let the cache land, then arm the idle clock directly (a card going to disk would do the same).
+            QTimer::singleShot(300, &loop, [&] {
+                window.armEngineIdleTimer();
+                loop.quit();
+            });
+        });
+        QTimer::singleShot(15000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    bool auto_stopped = false;
+    {
+        QEventLoop wait;
+        QTimer timer;
+        QObject::connect(&timer, &QTimer::timeout, &wait, [&] {
+            if (!window.engine()->isRunning() && window.rasterMode()) {
+                auto_stopped = true;
+                timer.stop();
+                wait.quit();
+            }
+        });
+        timer.start(200);
+        QTimer::singleShot(15000, &wait, [&] { timer.stop(); wait.quit(); });
+        wait.exec();
+    }
+
+    // Reset the profile to the factory preset so the next self test starts warm: the ultra profile would turn the
+    // preview worker off and auto-stop the engine for every later test (cross-run pollution).
+    {
+        QEventLoop loop;
+        QJsonObject reset;
+        reset.insert(QStringLiteral("max_live_cards"), 5);
+        reset.insert(QStringLiteral("idle_hibernate_ms"), static_cast<qint64>(600000));
+        reset.insert(QStringLiteral("cold_card_ms"), static_cast<qint64>(86400000));
+        reset.insert(QStringLiteral("memory_budget_mb"), 512);
+        reset.insert(QStringLiteral("resource_profile"), QStringLiteral("balanced"));
+        window.core()->userPrefsSet(reset, [&](const QJsonObject&, const QString&) { loop.quit(); });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "rasterauto_grid_loaded=" << (grid_loaded ? "true" : "false") << '\n';
+    out << "rasterauto_set=" << (set_ok ? "true" : "false") << '\n';
+    out << "rasterauto_stopped=" << (auto_stopped ? "true" : "false") << '\n';
+    const bool ok = grid_loaded && set_ok && auto_stopped;
+    out << "raster_auto=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// The tuning report (F6): one read of the whole memory-governor state — the active profile and its params, the
 /// live surface's working set against the budget, and the per-card working sets summed. It is the diagnostics the
 /// "hangolás" item promises: everything a person needs to judge whether the profile fits, in one place.
@@ -8548,6 +8636,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("rasterhometest"),
         QStringLiteral("Prove the raster home cycle (enter: stop+raster, wake: restart+grid), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption rasterautotest(
+        QStringLiteral("rasterautotest"),
+        QStringLiteral("Prove the raster home auto-activates on the T2 idle clock, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption memoryreport(
         QStringLiteral("memoryreport"),
         QStringLiteral("Print the memory-governor tuning report (F6), then exit."),
@@ -8610,6 +8702,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
+    parser.addOption(rasterautotest);
     parser.addOption(memoryreport);
     parser.addOption(logtest);
     parser.addOption(searchtest);
@@ -8786,6 +8879,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(rasterhometest)) {
         return runRasterHomeCheck(parser.value(rasterhometest));
+    }
+
+    if (parser.isSet(rasterautotest)) {
+        return runRasterAutoCheck(parser.value(rasterautotest));
     }
 
     if (parser.isSet(memoryreport)) {

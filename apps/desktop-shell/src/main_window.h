@@ -123,6 +123,9 @@ public:
     void wakeFromRaster();
     /// Whether the raster home is active (the engine stopped, the grid shown as a raster). Exposed for the test.
     bool rasterMode() const { return raster_mode_; }
+    /// Arm the engine-idle clock (T2): when a card goes back to disk and the profile has a shutdown threshold,
+    /// the raster home activates after that threshold. Exposed so the self test can drive it directly.
+    void armEngineIdleTimer();
     /// What the panel is showing, one line per row — the witness a self test reads.
     QString sessionPanelSummary() const;
     /// How many rows the panel holds (0 before the first refresh).
@@ -406,6 +409,8 @@ private:
     qint64 engine_shutdown_ms_ = -1;
     /// Whether the raster home is active: the engine is stopped and the grid is shown from `home-raster.png`.
     bool raster_mode_ = false;
+    /// The single-shot engine-idle timer that auto-activates the raster home (T2); null until first armed.
+    QTimer* engine_idle_ = nullptr;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------

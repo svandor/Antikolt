@@ -3,6 +3,36 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizenötödik szelet) — a raszter-kezdőlap automatikus aktiválása (F6)
+
+A raszter-kezdőlap most már **magától** kapcsol be: amikor egy kártya lemezre kerül és a profil T2-je szerint a
+motor tétlen, egy idle-óra a küszöb után `enterRasterMode`-ot hív (raszter + leállítás). Ez a „tétlen 120–180 MB"
+ígéret utolsó mechanikus darabja.
+
+### Mi változott
+
+- **`armEngineIdleTimer()`:** a profil `engine_warm_idle_shutdown_ms`-ét használó egyszeri QTimer; a `-1` (meleg,
+  T1) nem indít órát.
+- **A kártya lemezre kerülésekor indul:** a `surfaceDetached` meghívja (`raster_mode` alatt nem, hogy a
+  leállítás magát ne élesítse újra).
+- **`--rasterautotest` (új):** „ultra" (0 ms) profil + az óra felhúzása → a motor leáll, a raszter-mód bekapcsol;
+  a teszt végén visszaáll a gyári „balanced" (különben az „ultra" a következő futás előnézet-munkását leállítaná —
+  ezt a `previewworkertest` bukása jelezte, javítva).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (51 önteszt + check-repo)
+--rasterautotest            → rasterauto_stopped=true · raster_auto=ok
+--previewworkertest         → preview_worker=ok (a profil-visszaállítás után)
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A **kattintás-leképezés** (a raszter kattintása → a kártya megnyitása) — az utolsó UX-darab; a 3. tétel
+  szerkesztője és sandboxolása.
+
 ## 2026-11-22 (száztizennegyedik szelet) — a raszter-kezdőlap mód (F6)
 
 A raszter-kezdőlap most egyetlen módváltásként működik: a shell raszterizálja a rácsot, **leállítja a motort**, és
