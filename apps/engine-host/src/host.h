@@ -106,6 +106,11 @@ struct HostState {
     int bounds_width = 0;
     int bounds_height = 0;
     bool bounds_pending = false;
+    /// A `navigate` that arrived while the browser was still being created (CEF creates it
+    /// asynchronously): the URL is remembered and applied the moment the browser exists, instead of the
+    /// command being rejected with `surface_not_found` — the shell sends `navigate` immediately after
+    /// `create_surface`, so without this the first navigation of a surface is a coin flip.
+    std::string pending_navigation;
     /// The shell installed the JS bridge on this surface. Off by default: a page may only reach the
     /// shell when the shell decided it should.
     std::atomic<bool> bridge_enabled{false};

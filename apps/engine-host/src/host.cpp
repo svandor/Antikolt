@@ -1806,6 +1806,13 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     state_->browser = browser;
     state_->browser_created = true;
+    // A `navigate` queued while the browser was still being created is applied now, on the surface the
+    // shell meant it for.
+    if (!state_->pending_navigation.empty()) {
+        const std::string url = state_->pending_navigation;
+        state_->pending_navigation.clear();
+        browser->GetMainFrame()->LoadURL(url);
+    }
     if (g_server_mode) {
         CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
         payload->SetInt("surface", static_cast<int>(state_->surface_id));
@@ -2116,6 +2123,16 @@ int RunEngineHost(const HostConfig& config) {
 void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& command,
                           const HostConfig& config) {
     if (command.op == "navigate") {
+        // The browser is created asynchronously: the surface is in the map, but `browser` is null until
+        // `OnAfterCreated`. The shell sends `navigate` right after the `create_surface` reply, so it can
+        // arrive in the same pump batch — queuing the URL and applying it on creation beats rejecting a
+        // valid navigation (the shell ignores the reply, so a rejection silently parks the page on
+        // `about:blank`).
+        if (!state.browser_created.load()) {
+            state.pending_navigation = command.url;
+            link.Reply(command.id);
+            return;
+        }
         if (!state.browser) {
             link.ReplyError(command.id, "surface_not_found", "no live surface");
             return;
