@@ -387,6 +387,10 @@ private:
     /// Whether the current profile refreshes previews in the background (ADR-020 `preview_refresh`). The factory
     /// `Balanced` profile does; `Saver`/`Ultra` do not. Cached from the derived profile in `refreshUserPrefs`.
     bool preview_refresh_ = true;
+    /// When the engine host may shut down after being idle (ADR-020 `engine_warm_idle_shutdown_ms`). `-1` means
+    /// "keep it warm" (T1, the factory); `0` means "as soon as no card is live" (T2, `Ultra`). Cached from the
+    /// derived profile — the raster home (engine stopped) builds on this.
+    qint64 engine_shutdown_ms_ = -1;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------

@@ -1980,6 +1980,7 @@ int runPrefsCheck(const QString& enginePath) {
 
     qint64 page_budget = 0;
     qint64 derived_idle = 0;
+    qint64 derived_engine_shutdown = -999;
     qint64 home_surface = 0;
     bool over_budget = false;
     QString set_error;
@@ -2007,6 +2008,8 @@ int runPrefsCheck(const QString& enginePath) {
                                      if (error.isEmpty()) {
                                          derived_idle = static_cast<qint64>(
                                              reply.value(QStringLiteral("prefs")).toObject().value(QStringLiteral("idle_hibernate_ms")).toDouble());
+                                          const QJsonValue shutdown = reply.value(QStringLiteral("profile")).toObject().value(QStringLiteral("engine_warm_idle_shutdown_ms"));
+                                          derived_engine_shutdown = shutdown.isNull() ? -1 : static_cast<qint64>(shutdown.toDouble());
                                      }
                                      window.refreshUserPrefs();
                                      // One beat for the shell's own re-read, then ask the page.
@@ -2105,10 +2108,12 @@ int runPrefsCheck(const QString& enginePath) {
     out << "pref_set_error=" << (set_error.isEmpty() ? QString() : set_error) << '\n';
     out << "pref_budget_bytes=" << page_budget << '\n';
     out << "pref_derived_idle=" << derived_idle << '\n';
+    out << "pref_derived_engine_shutdown=" << derived_engine_shutdown << '\n';
     out << "pref_over_budget_under=" << (over_budget ? "true" : "false") << '\n';
     out << "pref_over_budget_manual=" << (over_budget_manual ? "true" : "false") << '\n';
     const bool ok = set_error.isEmpty() && page_budget == 512LL * 1024 * 1024 &&
-                    derived_idle == 120000 && !over_budget && over_budget_manual;
+                    derived_idle == 120000 && derived_engine_shutdown == 0 && !over_budget &&
+                    over_budget_manual;
     out << "prefs=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();
@@ -2286,6 +2291,8 @@ int runMemoryReport(const QString& enginePath) {
         << '\n';
     out << "memory_hard_bytes=" << static_cast<qint64>(profile.value(QStringLiteral("memory_hard_bytes")).toDouble())
         << '\n';
+    out << "memory_engine_shutdown_ms="
+        << static_cast<qint64>(profile.value(QStringLiteral("engine_warm_idle_shutdown_ms")).toDouble()) << '\n';
     out << "memory_budget_bytes=" << budget_bytes << '\n';
     out << "memory_working_set_bytes=" << working_set << '\n';
     out << "memory_over_budget=" << (over_budget ? "true" : "false") << '\n';

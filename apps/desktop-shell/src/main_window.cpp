@@ -2502,13 +2502,17 @@ void MainWindow::refreshUserPrefs() {
                 idle_->setInterval(static_cast<int>(idle_hibernate_ms_));
             }
         }
-        // The derived profile params (ADR-020): the background preview worker follows `preview_refresh`. A `Manual`
-        // profile has no params (the reply carries null), so the factory behaviour stays on.
+        // The derived profile params (ADR-020): the background preview worker follows `preview_refresh`, and the
+        // engine lifetime (T1/T2) is cached for the raster home. A `Manual` profile has no params (null), so the
+        // factory behaviour stays on.
         const QJsonObject profile = reply.value(QStringLiteral("profile")).toObject();
         if (!profile.isEmpty()) {
             preview_refresh_ = profile.value(QStringLiteral("preview_refresh")).toBool(true);
+            const QJsonValue shutdown = profile.value(QStringLiteral("engine_warm_idle_shutdown_ms"));
+            engine_shutdown_ms_ = shutdown.isNull() ? -1 : static_cast<qint64>(shutdown.toDouble());
         } else {
             preview_refresh_ = true;
+            engine_shutdown_ms_ = -1;
         }
         // An open dock follows the core's answer, not a stale copy of it.
         if (settings_dock_ != nullptr && settings_dock_->isVisible()) {

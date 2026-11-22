@@ -3,6 +3,35 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizedik szelet) — a motor-élettartam dimenzió bekötése (F6)
+
+A raszter-kezdőlap (a motor leállítva) előfeltétele a motor-élettartam (T1/T2) dimenzió: a shell most már cache-eli
+a profil `engine_warm_idle_shutdown_ms`-ét, és a hangolási riport meg a `--prefstest` igazolja, hogy a „ultra" profil
+0 ms-os (azonnali) leállítást kér. A tényleges leállítás/újraindítás a következő nagy lépés.
+
+### Mi változott
+
+- **`engine_shutdown_ms_` a shellben:** `refreshUserPrefs()` a levezetett profilból cache-eli az
+  `engine_warm_idle_shutdown_ms`-t; a `None` (meleg, T1) `-1`, az `Some(0)` (azonnali, T2) `0`.
+- **A riport mutatja:** `--memoryreport` → `memory_engine_shutdown_ms`.
+- **`--prefstest` igazolja:** az „ultra" profil `pref_derived_engine_shutdown=0` (a küldött `manual`/`balanced`
+  értéktől függetlenül, a levezetésből).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (46 önteszt + check-repo)
+--prefstest                 → pref_derived_engine_shutdown=0 · pref_derived_idle=120000 · prefs=ok
+--memoryreport              → memory_engine_shutdown_ms=0 · memory_report=ok
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A **raszter-kezdőlap** maga (a motor tényleges leállítása tétlen állapotban + raszter-megjelenítés + hideg
+  újraindítás) — a nagy, 3–4 hetes tétel; a `warn`/`hard` sávok és a videófelbontás tényleges vezérlő-működése;
+  a 3. tétel szerkesztője.
+
 ## 2026-11-22 (százkilencedik szelet) — a hangolási riport (F6)
 
 Az F6 „hangolási riport" tétele egyetlen diagnosztikává áll össze: a `--memoryreport` a teljes memória-vezérlő
