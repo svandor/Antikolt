@@ -45,7 +45,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Tároló (négy store + felhasználói beállítások) | Rust-tesztek, `--addcardtest` | mind a négy store **SQLite-sorok** (`user_version=5`, WAL): kártyák, konténerek, munkaterületek, munkamenetek, `user_prefs` egyetlen sortal (`CHECK (id = 1)`); a négy `*.json` származtatott export; `db_status=ok schema=5 … verified=yes` mind a négyet soronként méri; a kapcsoló előtti profil store-onként egyszer átvételre kerül (ADR-070, napló 97) |
 | Felhasználói beállítások | Rust-tesztek (`sqlite_store::tests`, `service.rs`) | `UserPrefs` default (`max_live_cards=5`, `idle_hibernate_ms=600_000` — 10 perc, `cold_card_ms=86_400_000` — 24 óra), validáció (tartomány + `cold_card_ms <= idle_hibernate_ms` elutasítva), IPC `user_prefs`/`user_prefs_set`, `profile_export`/`profile_import` bekötése (ADR-072, napló 98) |
 | Keresés | `--searchtest`, `--tagtest` | ékezet-független cím/webcím/jegyzet/címke, és az **oldalszöveg** is (`search_page_text=ok`) |
-| Konténerek | `--containertest` | színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, használt konténer törlése **áthelyezéssel** |
+| Konténerek | `--containertest` | színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, használt konténer törlése **áthelyezéssel**, proxy/engedély-szerkesztő a rácson (`container_policy=ok`), partíció-takarítás törléskor (`container_partition_cleanup=ok`) |
 | Munkaterületek | `--workspacetest` | fül-sor a magban tárolt munkaterület-táblából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó |
 | Címkék | `--tagtest` | címke a kártyán, mag-normalizálás (trim/dedup/12×32), kereshető |
 | Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), átnevezés a cím-szerkesztő `Enter`-jével (`wrote_by=gesture`), webcím-átírás, tároló-ellenőrzés (`db_status=ok schema=4 … verified=yes`), törlés; a teszt kitakarít maga után |
@@ -60,18 +60,13 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 1. **A kártya szerkesztése** — létrehozás (`＋`, ADR-061), törlés, **átnevezés** (ADR-062) és **webcím-átírás**
    (ADR-063) működik a felületen, mind mérve (`wrote_by=gesture`, `edit_card_url=ok`). Nyitott: a törlés
    megerősítése, és hogy a webcím-váltás után a rögzített oldalszöveg a régi tartalom marad.
-2. **A konténerenkénti engedély/proxy (F3) — a motor fele kész, a felület fele nyitott.** A partíciónkénti
-   `CefRequestContext`, a konténer-proxy és az engedély-politika kész és mérve (`--partitiontest`, ADR-071, napló 98:
-   külön profilkönyvtár, `fixed`/`direct` proxy a kontextuson, ismeretlen engedély megtagadva). A **rácson nincs
-   szerkesztő** a proxyhoz/engedélyekhez: a házirend adatbázis-sor, a hídon (`containers.upsert`) írható; a
-   partíció-profilkönyvtárak takarítása is nyitott.
-3. **OAuth/SSO popup** — a mechanizmus kész (I1-kivétel, 60 s), a bejelentkezési folyamat nincs összekötve.
-4. **A köteg felületi gombja** — a mag, a híd (`profile.export/import`) és a lap-út (`antikoltProfileWrite/Read`)
+2. **OAuth/SSO popup** — a mechanizmus kész (I1-kivétel, 60 s), a bejelentkezési folyamat nincs összekötve.
+3. **A köteg felületi gombja** — a mag, a híd (`profile.export/import`) és a lap-út (`antikoltProfileWrite/Read`)
    kész és mérve (ADR-059/060); a **natív fájlválasztó** hiányzik, mert a harness nem tud dialógust kattintani —
    ez a lépés önmagában `not-measurable`.
-5. **A profil-köteg titkosítása** — a köteg munkamenet-sorokat is tartalmaz; ez valódi döntés, nem kényelmi
+4. **A profil-köteg titkosítása** — a köteg munkamenet-sorokat is tartalmaz; ez valódi döntés, nem kényelmi
    kérdés.
-6. **Fogd-és-vidd a munkaterületekhez** — a `<select>` mellett, nem helyette (ADR-058).
+5. **Fogd-és-vidd a munkaterületekhez** — a `<select>` mellett, nem helyette (ADR-058).
 
 ## Amihez emberi lépés kell (nem kód)
 

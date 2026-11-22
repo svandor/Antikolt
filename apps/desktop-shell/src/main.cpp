@@ -16,6 +16,7 @@
 #include <thread>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -5842,6 +5843,83 @@ int runContainerCheck(const QString& enginePath) {
             ++failures;
         }
 
+        // The proxy/permission editor (ADR-071): the rename editor now carries the policy. Set a fixed proxy and one
+        // permission, submit through the form, and read the core record back — the page must not wipe the fields a
+        // name-only save never touched, and the bridge must carry them.
+        {
+            QEventLoop policy_loop;
+            QString policy_answer;
+            client->evaluate(
+                home_surface,
+                QStringLiteral(
+                    "(() => { const pick = document.querySelector('.legend-pick[data-container=\"%1\"]');"
+                    " if (!pick) { return 'no-chip'; }"
+                    " pick.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));"
+                    " const mode = document.querySelector('.legend-proxy-mode');"
+                    " if (!mode) { return 'no-mode'; } mode.value = 'fixed';"
+                    " mode.dispatchEvent(new Event('change'));"
+                    " const host = document.querySelector('input[name=\"proxyHost\"]');"
+                    " const port = document.querySelector('input[name=\"proxyPort\"]');"
+                    " const bypass = document.querySelector('input[name=\"proxyBypass\"]');"
+                    " if (!host || !port || !bypass) { return 'no-fixed'; }"
+                    " host.value = '127.0.0.1'; port.value = '1080'; bypass.value = '*.local';"
+                    " const perm = document.querySelector('input[name=\"perm:geolocation\"]');"
+                    " if (!perm) { return 'no-perm'; } perm.checked = true;"
+                    " const form = document.querySelector('.legend-editor');"
+                    " if (!form) { return 'no-form'; } form.requestSubmit(); return 'submitted'; })()")
+                    .arg(probe_id),
+                [&](const QJsonObject& reply, const QString& error) {
+                    policy_answer = error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
+                    policy_loop.quit();
+                });
+            QTimer::singleShot(8000, &policy_loop, &QEventLoop::quit);
+            policy_loop.exec();
+            settle(800);
+
+            bool policy_ok = false;
+            {
+                CoreClient reader;
+                const QString core_dir =
+                    QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                    QStringLiteral("/core");
+                if (reader.start(MainWindow::coreExecutable(), core_dir)) {
+                    QEventLoop loop;
+                    reader.containersList([&](const QJsonObject& listed, const QString& error) {
+                        if (error.isEmpty()) {
+                            for (const QJsonValue& value :
+                                 listed.value(QStringLiteral("containers")).toArray()) {
+                                const QJsonObject row = value.toObject();
+                                if (row.value(QStringLiteral("id")).toString() != probe_id) {
+                                    continue;
+                                }
+                                const QJsonObject perms =
+                                    row.value(QStringLiteral("permissions")).toObject();
+                                policy_ok =
+                                    row.value(QStringLiteral("proxy_mode")).toString() ==
+                                        QStringLiteral("fixed") &&
+                                    row.value(QStringLiteral("proxy_host")).toString() ==
+                                        QStringLiteral("127.0.0.1") &&
+                                    row.value(QStringLiteral("proxy_port")).toInt() == 1080 &&
+                                    row.value(QStringLiteral("proxy_bypass")).toString() ==
+                                        QStringLiteral("*.local") &&
+                                    perms.value(QStringLiteral("geolocation")).toString() ==
+                                        QStringLiteral("allow");
+                            }
+                        }
+                        loop.quit();
+                    });
+                    QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+                    loop.exec();
+                    reader.shutdown();
+                }
+            }
+            out << "container_policy=" << (policy_ok ? "ok" : "FAILED") << " answer=" << policy_answer
+                << '\n';
+            if (!policy_ok) {
+                ++failures;
+            }
+        }
+
         // A container that still holds cards is refused, and instead of a dead end the legend offers the move
         // (ADR-054). This is the whole point: the user asked to delete, the product says where the cards can go,
         // and one click completes both. The card is put back afterwards.
@@ -5943,6 +6021,78 @@ int runContainerCheck(const QString& enginePath) {
             switch_card(from_container);
         }
 
+        // The partition cleanup (ADR-071): a card's on-disk partition is named from its URL, and deleting the card
+        // must remove it. The directory is created here by hand (what the engine would create on the first open), so
+        // this check measures the *cleanup*, not the engine's own context creation (`--partitiontest` covers that).
+        {
+            const QString cleanup_url = QStringLiteral("https://cleanup-probe.invalid/");
+            const QString cleanup_id = QStringLiteral("cleanup-probe");
+            const QString hash =
+                QString::fromLatin1(QCryptographicHash::hash(cleanup_url.toUtf8(),
+                                                             QCryptographicHash::Sha1)
+                                        .toHex()
+                                        .left(12));
+            const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                                    QStringLiteral("/engine");
+            const QString partition_dir = profile + QStringLiteral("/persist_card_") + hash;
+
+            bool seeded = false;
+            {
+                CoreClient oracle;
+                const QString core_dir =
+                    QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                    QStringLiteral("/core");
+                if (oracle.start(MainWindow::coreExecutable(), core_dir)) {
+                    QJsonObject card;
+                    card.insert(QStringLiteral("id"), cleanup_id);
+                    card.insert(QStringLiteral("title"), QStringLiteral("Cleanup probe"));
+                    card.insert(QStringLiteral("url"), cleanup_url);
+                    card.insert(QStringLiteral("container"), QString());
+                    card.insert(QStringLiteral("status"), QStringLiteral("unknown"));
+                    card.insert(QStringLiteral("pinned"), false);
+                    card.insert(QStringLiteral("notes"), QString());
+                    card.insert(QStringLiteral("preview_ref"), QString());
+                    card.insert(QStringLiteral("last_opened_at_ms"), 0);
+                    QEventLoop loop;
+                    oracle.cardUpsert(card, [&](const QJsonObject&, const QString& error) {
+                        seeded = error.isEmpty();
+                        loop.quit();
+                    });
+                    QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+                    loop.exec();
+                    oracle.shutdown();
+                }
+            }
+
+            QDir().mkpath(partition_dir);
+            const bool existed_before = QDir(partition_dir).exists();
+
+            // Delete through the page — the same path a user takes — then the partition must be gone.
+            QEventLoop del_loop;
+            QString del_answer;
+            client->evaluate(
+                home_surface,
+                QStringLiteral("(() => { if (typeof window.antikoltDeleteCard !== 'function')"
+                               " { return 'no-hook'; } window.antikoltDeleteCard('%1');"
+                               " return 'called'; })()")
+                    .arg(cleanup_id),
+                [&](const QJsonObject& reply, const QString& error) {
+                    del_answer = error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
+                    del_loop.quit();
+                });
+            QTimer::singleShot(8000, &del_loop, &QEventLoop::quit);
+            del_loop.exec();
+            settle(900);
+
+            const bool gone_after = !QDir(partition_dir).exists();
+            const bool cleaned = seeded && existed_before && gone_after;
+            out << "container_partition_cleanup=" << (cleaned ? "ok" : "FAILED") << " seeded="
+                << (seeded ? "yes" : "no") << " existed=" << (existed_before ? "yes" : "no")
+                << " gone=" << (gone_after ? "yes" : "no") << " answer=" << del_answer << '\n';
+            if (!cleaned) {
+                ++failures;
+            }
+        }
 
     window.close();
     out << "container_switch=" << (failures == 0 ? "ok" : "FAILED") << '\n';

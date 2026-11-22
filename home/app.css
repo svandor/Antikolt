@@ -655,9 +655,13 @@ antikolt-card {
 .legend-editor {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  max-width: 100%;
 }
-.legend-input {
+.legend-input,
+.legend-proxy-mode,
+.legend-fixed input {
   font: inherit;
   font-size: 11px;
   color: var(--text);
@@ -666,6 +670,35 @@ antikolt-card {
   border-radius: 999px;
   padding: 2px 10px;
   min-width: 9em;
+}
+.legend-fixed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.legend-fixed input {
+  min-width: 5em;
+}
+.legend-permissions {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.legend-permissions summary {
+  cursor: pointer;
+}
+.legend-permissions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9em, 1fr));
+  gap: 2px 10px;
+  margin-top: 4px;
+}
+.legend-permission {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text);
 }
 .legend-editor-hint {
   font-size: 10px;

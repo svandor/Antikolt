@@ -24,6 +24,32 @@ const PAGE_CONTAINERS = [
   { id: "c-dev", name: "Fejlesztés", color: "#8E44AD" },
 ];
 
+// The proxy modes a container can be set to (ADR-071). `system` is Chromium's own setting, `direct` means no proxy,
+// `fixed` means the host:port pair the user typed. The page sends the mode string the core validates.
+const PROXY_MODES = ["system", "direct", "fixed"];
+
+// The permission surface a container may opt into (ADR-071). The key is the Chromium permission id the core and the
+// engine agree on; the label is what a person sees. Anything the container does not list as `allow` is denied — this
+// host has no prompt surface, so the honest default is denial, and the editor only has an "allow" switch.
+const PERMISSION_OPTIONS = [
+  ["geolocation", "Hely"],
+  ["notifications", "Értesítések"],
+  ["clipboard", "Vágólap"],
+  ["midi", "MIDI"],
+  ["camera", "Kamera"],
+  ["microphone", "Mikrofon"],
+  ["pointer_lock", "Egérzár"],
+  ["keyboard_lock", "Billentyűzár"],
+  ["idle_detection", "Tétlenség"],
+  ["local_fonts", "Helyi betűk"],
+  ["storage_access", "Tárhely"],
+  ["file_system_access", "Fájlrendszer"],
+  ["multiple_downloads", "Többszörös letöltés"],
+  ["protocol_handler", "Protokoll-kezelő"],
+  ["sensors", "Érzékelők"],
+  ["media", "Média (kamera + mikrofon)"],
+];
+
 // The table the page draws from. It starts as the shipped default and is replaced by the core's table at
 // start-up (ADR-052): a rename or a new container lives in the core, and the page only draws what it is told.
 let pageContainers = PAGE_CONTAINERS;
@@ -1641,23 +1667,101 @@ class HomePage {
     }
     // The editor is one element for both jobs (add and rename): two inputs would be two places to keep in sync.
     if (this.containerEdit) {
+      const edit = this.containerEdit;
+      // A rename sends the *whole* record back (ADR-071): the editor must prefill the policy the container already
+      // carries, or a name-only save would wipe the proxy and the permissions it never touched.
+      const existing =
+        edit.mode === "rename"
+          ? (this.containers || pageContainers).find((entry) => entry.id === edit.id) || {}
+          : {};
       const form = document.createElement("form");
       form.className = "legend-editor";
       form.noValidate = true;
       const input = document.createElement("input");
       input.type = "text";
       input.className = "legend-input";
-      input.dataset.containerEdit = this.containerEdit.mode;
-      input.value = this.containerEdit.name ?? "";
-      input.placeholder = this.containerEdit.mode === "add" ? "Új konténer neve" : "Konténer neve";
+      input.dataset.containerEdit = edit.mode;
+      input.value = edit.name ?? existing.name ?? "";
+      input.name = "name";
+      input.placeholder = edit.mode === "add" ? "Új konténer neve" : "Konténer neve";
       input.setAttribute("aria-label", input.placeholder);
+
+      // Proxy (ADR-071): the mode, and — only for `fixed` — the host, port and bypass list.
+      const proxyLabel = document.createElement("span");
+      proxyLabel.className = "legend-field";
+      proxyLabel.textContent = "Proxy: ";
+      const proxySelect = document.createElement("select");
+      proxySelect.name = "proxyMode";
+      proxySelect.className = "legend-proxy-mode";
+      proxySelect.setAttribute("aria-label", "Proxy-mód");
+      for (const [value, label] of [
+        ["system", "rendszer"],
+        ["direct", "közvetlen (nincs proxy)"],
+        ["fixed", "fix proxy"],
+      ]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        proxySelect.append(option);
+      }
+      proxySelect.value = existing.proxy_mode || "system";
+
+      const fixed = document.createElement("span");
+      fixed.className = "legend-fixed";
+      fixed.hidden = proxySelect.value !== "fixed";
+      const host = document.createElement("input");
+      host.type = "text";
+      host.name = "proxyHost";
+      host.placeholder = "host";
+      host.value = existing.proxy_host || "";
+      host.setAttribute("aria-label", "Proxy-host");
+      const port = document.createElement("input");
+      port.type = "number";
+      port.name = "proxyPort";
+      port.placeholder = "port";
+      port.min = "1";
+      port.max = "65535";
+      port.value = existing.proxy_port || "";
+      port.setAttribute("aria-label", "Proxy-port");
+      const bypass = document.createElement("input");
+      bypass.type = "text";
+      bypass.name = "proxyBypass";
+      bypass.placeholder = "bypass (;)";
+      bypass.value = existing.proxy_bypass || "";
+      bypass.setAttribute("aria-label", "Proxy-bypass");
+      fixed.append(host, port, bypass);
+      proxySelect.addEventListener("change", () => {
+        fixed.hidden = proxySelect.value !== "fixed";
+      });
+
+      // Permissions: the only choice is "allow" — an unlisted permission is denied (ADR-071). A collapsible list keeps
+      // the single-element editor compact instead of a wall of switches.
+      const permissions = document.createElement("details");
+      permissions.className = "legend-permissions";
+      const summary = document.createElement("summary");
+      summary.textContent = "Engedélyek";
+      permissions.append(summary);
+      const grid = document.createElement("span");
+      grid.className = "legend-permissions-grid";
+      for (const [key, label] of PERMISSION_OPTIONS) {
+        const row = document.createElement("label");
+        row.className = "legend-permission";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.name = "perm:" + key;
+        checkbox.checked = existing.permissions?.[key] === "allow";
+        row.append(checkbox, document.createTextNode(" " + label));
+        grid.append(row);
+      }
+      permissions.append(grid);
+
       const confirm = document.createElement("span");
       confirm.className = "legend-editor-hint";
       confirm.textContent = "Enter: mentés · Esc: mégse";
-      form.append(input, confirm);
+      form.append(input, proxyLabel, proxySelect, fixed, permissions, confirm);
       form.addEventListener("submit", (event) => {
         event.preventDefault();
-        this.commitContainerEdit(input.value);
+        this.commitContainerEdit(form);
       });
       input.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
@@ -1725,9 +1829,11 @@ class HomePage {
   }
 
   /// Write the container table change through the shell (ADR-052), then draw what the core answered.
-  async commitContainerEdit(rawName) {
-    const name = String(rawName ?? "").trim();
+  /// The form carries the name, the proxy (mode + fixed fields) and the permission switches; the record is rebuilt
+  /// from those, so a save never leaks a field the user left behind.
+  async commitContainerEdit(form) {
     const edit = this.containerEdit;
+    const name = String(form?.elements?.name?.value ?? "").trim();
     if (!edit || !name) {
       this.containerEdit = null;
       this.renderContainerLegend();
@@ -1739,18 +1845,31 @@ class HomePage {
       this.renderContainerLegend();
       return;
     }
-    // A rename sends the *whole* record back (ADR-071): the container now carries its proxy and permission policy, and
-    // a form that only knows the name would wipe them. The page already holds the table, so the merge is local — no
-    // extra round trip, and a failed save cannot half-write the policy.
+    // A rename sends the *whole* record back (ADR-071): the container carries its proxy and permission policy, and a
+    // form that only knew the name would wipe them. The page already holds the table, so the merge is local — no extra
+    // round trip, and a failed save cannot half-write the policy.
     const existing =
       edit.mode === "rename"
-        ? (this.containers || []).find((entry) => entry.id === edit.id) || {}
+        ? (this.containers || pageContainers).find((entry) => entry.id === edit.id) || {}
         : {};
+    const proxyMode = String(form?.elements?.proxyMode?.value ?? "system");
+    const permissions = {};
+    for (const [key] of PERMISSION_OPTIONS) {
+      const checkbox = form?.elements?.["perm:" + key];
+      if (checkbox?.checked) {
+        permissions[key] = "allow";
+      }
+    }
     const record = {
       ...existing,
       id: edit.mode === "rename" ? edit.id : this.newContainerId(name),
       name,
       color: existing.color || "",
+      proxy_mode: proxyMode,
+      proxy_host: proxyMode === "fixed" ? String(form?.elements?.proxyHost?.value ?? "").trim() : "",
+      proxy_port: proxyMode === "fixed" ? Number(form?.elements?.proxyPort?.value ?? 0) : 0,
+      proxy_bypass: proxyMode === "fixed" ? String(form?.elements?.proxyBypass?.value ?? "").trim() : "",
+      permissions,
     };
     try {
       const saved = await this.bridge.containers.upsert(record);

@@ -836,17 +836,7 @@ EngineClient* MainWindow::engineFor(const QString& container) {
     }
     // A container id is minted by the core and is safe, but the profile path must never let one container
     // read another's directory through a separator, so anything but the safe set is folded to `_`.
-    QString directory = container;
-    for (QChar& character : directory) {
-        const bool safe = (character >= QLatin1Char('a') && character <= QLatin1Char('z')) ||
-                          (character >= QLatin1Char('A') && character <= QLatin1Char('Z')) ||
-                          (character >= QLatin1Char('0') && character <= QLatin1Char('9')) ||
-                          character == QLatin1Char('-') || character == QLatin1Char('_') ||
-                          character == QLatin1Char('.');
-        if (!safe) {
-            character = QLatin1Char('_');
-        }
-    }
+    const QString directory = containerDirName(container);
     auto* client = new EngineClient(this);
     wireEngine(client);
     const QString profile = engine_profile_ + QStringLiteral("/containers/") + directory;
@@ -862,6 +852,55 @@ EngineClient* MainWindow::engineFor(const QString& container) {
     container_engines_.insert(container, client);
     setStatus(QStringLiteral("konténer-motor indítva: %1").arg(container));
     return client;
+}
+
+QString MainWindow::containerDirName(const QString& container) {
+    QString directory = container;
+    for (QChar& character : directory) {
+        const bool safe = (character >= QLatin1Char('a') && character <= QLatin1Char('z')) ||
+                          (character >= QLatin1Char('A') && character <= QLatin1Char('Z')) ||
+                          (character >= QLatin1Char('0') && character <= QLatin1Char('9')) ||
+                          character == QLatin1Char('-') || character == QLatin1Char('_') ||
+                          character == QLatin1Char('.');
+        if (!safe) {
+            character = QLatin1Char('_');
+        }
+    }
+    return directory;
+}
+
+void MainWindow::cleanupContainerProfile(const QString& container) {
+    if (engine_profile_.isEmpty() || container.isEmpty()) {
+        return;
+    }
+    // Stop the container's engine first: Windows cannot remove a directory a live process holds open. The engine
+    // object is deleted afterwards; the destructor iterates `container_engines_`, so it must be out of the map by
+    // then.
+    EngineClient* client = container_engines_.take(container);
+    if (client != nullptr) {
+        if (live_engine_ == client) {
+            closeLiveCard();
+        }
+        client->shutdown();
+        client->deleteLater();
+    }
+    const QString directory = engine_profile_ + QStringLiteral("/containers/") + containerDirName(container);
+    QDir(directory).removeRecursively();
+}
+
+void MainWindow::cleanupCardPartition(const QString& url, const QString& container) {
+    if (engine_profile_.isEmpty() || url.isEmpty()) {
+        return;
+    }
+    // The partition key is `persist:card_<12 hex chars>` (the URL's SHA-1, ADR-009); the engine stores it as the
+    // directory `persist_card_<hash>` under the engine's own profile. A container-less card lives in the home
+    // engine, a card in a container in that container's engine.
+    const QString hash =
+        QString::fromLatin1(QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex().left(12));
+    const QString root = container.isEmpty()
+                             ? engine_profile_
+                             : engine_profile_ + QStringLiteral("/containers/") + containerDirName(container);
+    QDir(root + QStringLiteral("/persist_card_") + hash).removeRecursively();
 }
 
 void MainWindow::startEngine() {
@@ -1149,12 +1188,37 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                 replyToPage(request, {}, QStringLiteral("nincs azonosító vagy a mag nem fut"));
                 return;
             }
-            core_->cardDelete(card_id, [this, request](const QJsonObject& reply, const QString& error) {
-                if (!error.isEmpty()) {
-                    replyToPage(request, {}, error);
+            // The on-disk partition is named from the card's URL (ADR-009), so the record is read *before* the delete
+            // and the directory removed *after* it (ADR-071 cleanup). A missing record is not an error: the delete may
+            // still go through, and the cleanup is best-effort.
+            core_->cardsList([this, request, card_id](const QJsonObject& listed, const QString& list_error) {
+                QString url;
+                QString container;
+                if (list_error.isEmpty()) {
+                    const QJsonArray cards = listed.value(QStringLiteral("cards")).toArray();
+                    for (const QJsonValue& value : cards) {
+                        const QJsonObject card = value.toObject();
+                        if (card.value(QStringLiteral("id")).toString() == card_id) {
+                            url = card.value(QStringLiteral("url")).toString();
+                            container = card.value(QStringLiteral("container")).toString();
+                            break;
+                        }
+                    }
+                }
+                if (core_ == nullptr || !core_->isRunning()) {
+                    replyToPage(request, {}, QStringLiteral("a mag nem fut"));
                     return;
                 }
-                replyToPage(request, reply);
+                core_->cardDelete(card_id,
+                                  [this, request, url, container](const QJsonObject& reply,
+                                                                  const QString& error) {
+                                      if (!error.isEmpty()) {
+                                          replyToPage(request, {}, error);
+                                          return;
+                                      }
+                                      cleanupCardPartition(url, container);
+                                      replyToPage(request, reply);
+                                  });
             });
             return;
         }
@@ -1204,11 +1268,15 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                 return;
             }
             core_->containerDelete(container_id, move_to,
-                                   [this, request](const QJsonObject& reply, const QString& error) {
+                                   [this, request, container_id](const QJsonObject& reply,
+                                                                const QString& error) {
                                        if (!error.isEmpty()) {
                                            replyToPage(request, {}, error);
                                            return;
                                        }
+                                       // The container's engine profile (`<profile>/containers/<id>`) goes with it,
+                                       // otherwise a deleted container leaves its cookies and cache behind (ADR-071).
+                                       cleanupContainerProfile(container_id);
                                        replyToPage(request, reply);
                                    });
             return;

@@ -99,11 +99,17 @@ beállításával halasztva (az `OnLoadEnd` injektálja a hidat). A `data:`-kár
 azonnal betölt (`load_status=200`, `wipe=ok`). A konténerenkénti motorfolyamat (HANDOFF-F3 2. opció) külön commitban
 készült el, és a kapu zöldje mellett ő a kártya-konténerek izolációjának a hordozója.
 
+### Ami a szeletben még elkészült (a fenti „nyitott" pontok lezárva)
+
+- **A felületi szerkesztő elkészült**: a konténer-szerkesztő (`home/app.js` legend) a név mellett a proxy-módot
+  (`system`/`direct`/`fixed` + host/port/bypass) és az engedély-kapcsolókat is viszi; a `containers.upsert` a teljes
+  rekordot küldi, így a házirend nem vész el. Mérve: `container_policy=ok` (`fixed` + `127.0.0.1:1080` +
+  `geolocation=allow` a magban).
+- **A partíció-takarítás elkészült**: a kártya törlése eltávolítja a `persist_card_<hash>` könyvtárat, a konténer
+  törlése a `<profil>/containers/<id>` profilt (a motort előbb leállítva). Mérve: `container_partition_cleanup=ok`.
+
 ### Ami nyitva maradt (kimondva)
 
-- **Nincs felületi szerkesztő** a proxyhoz és az engedélyekhez: a házirend adatbázis-sor és a hídon át írható
-  (`containers.upsert`), de a rácson nincs mezője — a következő szelet.
-- A partíció-profilkönyvtárak megmaradnak a kártya törlése után is; a takarítás (méret, törlés) nyitott.
 - Az OAuth/SSO popup továbbra is a következő nagy szelet; a hardveres GPU-út a VECTOR-on nyitott.
 
 ## 2026-11-21 (kilencvenhetedik szelet) — mind a négy store SQLite-first (ADR-070)

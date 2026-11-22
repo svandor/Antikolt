@@ -200,6 +200,15 @@ private:
     /// each with its own `--user-data-dir` under the profile. Returns nullptr only when the engine
     /// executable is missing.
     EngineClient* engineFor(const QString& container);
+    /// The profile directory name a container owns: its id with every character outside the safe set folded
+    /// to `_` (the same rule the engine applies to partition keys, so the two never disagree).
+    static QString containerDirName(const QString& container);
+    /// Remove the on-disk profile a deleted container left behind (`<profile>/containers/<name>`), stopping
+    /// its engine process first so Windows can release the directory.
+    void cleanupContainerProfile(const QString& container);
+    /// Remove the on-disk partition a deleted card left behind (`persist_card_<hash>`), from the card's own
+    /// engine profile — the home engine for a container-less card, the container engine otherwise.
+    void cleanupCardPartition(const QString& url, const QString& container);
     /// Wire one engine's signals into the window. The home engine and every container engine get the
     /// same handlers, so a container's surface behaves exactly like the home one.
     void wireEngine(EngineClient* engine);
