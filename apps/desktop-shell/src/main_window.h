@@ -126,6 +126,12 @@ public:
     /// Arm the engine-idle clock (T2): when a card goes back to disk and the profile has a shutdown threshold,
     /// the raster home activates after that threshold. Exposed so the self test can drive it directly.
     void armEngineIdleTimer();
+    /// Capture each visible card's rectangle from the grid (for the raster click mapping), then call `done`.
+    void captureCardPositions(std::function<void()> done = {});
+    /// Map a point in raster CSS pixels to a card id ("" when nothing is under it).
+    QString cardAtRasterPoint(qreal x, qreal y) const;
+    /// How many card rectangles the last position capture recorded. Exposed for the test.
+    int rasterCardCount() const { return raster_cards_.size(); }
     /// What the panel is showing, one line per row — the witness a self test reads.
     QString sessionPanelSummary() const;
     /// How many rows the panel holds (0 before the first refresh).
@@ -411,6 +417,15 @@ private:
     bool raster_mode_ = false;
     /// The single-shot engine-idle timer that auto-activates the raster home (T2); null until first armed.
     QTimer* engine_idle_ = nullptr;
+    /// A card's rectangle in the raster (CSS pixels), captured before the grid is rasterised (click mapping).
+    struct RasterCard {
+        QString id;
+        qreal x = 0;
+        qreal y = 0;
+        qreal w = 0;
+        qreal h = 0;
+    };
+    QList<RasterCard> raster_cards_;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------

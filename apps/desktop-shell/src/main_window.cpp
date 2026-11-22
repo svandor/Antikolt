@@ -2710,28 +2710,30 @@ void MainWindow::enterRasterMode() {
     if (raster_mode_ || !engine_->isRunning() || home_surface_ == 0) {
         return;
     }
-    // Rasterise first, and only stop the engine when the raster is on disk: a failed capture must not leave the
-    // user staring at a blank window.
-    engine_->capture(home_surface_, QStringLiteral("png"), 80,
-                     [this](const QJsonObject& shot, const QString& error) {
-                         const QString written = shot.value(QStringLiteral("path")).toString();
-                         const QString target = engine_profile_ + QStringLiteral("/home-raster.png");
-                         if (!error.isEmpty() || written.isEmpty()) {
-                             return;
-                         }
-                         QFile::remove(target);
-                         if (!QFile::copy(written, target)) {
-                             return;
-                         }
-                         engine_->shutdown();
-                         raster_mode_ = true;
-                         // The grid surface died with the engine process: clear it, so the restart creates a
-                         // fresh surface instead of navigating a stale id into the new process.
-                         if (card_->hasSurface()) {
-                             card_->detach();
-                         }
-                         setStatus(QStringLiteral("raszter-kezdőlap (a motor leállítva)"));
-                     });
+    // Capture the card rectangles first (so a later click on the raster can open the right card), then rasterise
+    // and stop the engine only when the raster is on disk: a failed capture must not leave a blank window.
+    captureCardPositions([this] {
+        engine_->capture(home_surface_, QStringLiteral("png"), 80,
+                         [this](const QJsonObject& shot, const QString& error) {
+                             const QString written = shot.value(QStringLiteral("path")).toString();
+                             const QString target = engine_profile_ + QStringLiteral("/home-raster.png");
+                             if (!error.isEmpty() || written.isEmpty()) {
+                                 return;
+                             }
+                             QFile::remove(target);
+                             if (!QFile::copy(written, target)) {
+                                 return;
+                             }
+                             engine_->shutdown();
+                             raster_mode_ = true;
+                             // The grid surface died with the engine process: clear it, so the restart creates a
+                             // fresh surface instead of navigating a stale id into the new process.
+                             if (card_->hasSurface()) {
+                                 card_->detach();
+                             }
+                             setStatus(QStringLiteral("raszter-kezdőlap (a motor leállítva)"));
+                         });
+    });
 }
 
 void MainWindow::wakeFromRaster() {
@@ -2758,6 +2760,54 @@ void MainWindow::armEngineIdleTimer() {
         return;
     }
     engine_idle_->start(static_cast<int>(engine_shutdown_ms_));
+}
+
+void MainWindow::captureCardPositions(std::function<void()> done) {
+    raster_cards_.clear();
+    if (home_surface_ == 0 || !engine_->isRunning()) {
+        if (done) {
+            done();
+        }
+        return;
+    }
+    // Each visible `<antikolt-card>` reports its id and rectangle (CSS pixels, viewport-relative). The virtualised
+    // grid renders only what is on screen, which is exactly what the raster shows.
+    engine_->evaluate(
+        home_surface_,
+        QStringLiteral(
+            "JSON.stringify([...document.querySelectorAll('antikolt-card')].map(function(el){"
+            "var r=el.getBoundingClientRect();"
+            "return {id:(el.card&&el.card.id)||'',x:r.left,y:r.top,w:r.width,h:r.height};}))"),
+        [this, done](const QJsonObject& reply, const QString& error) {
+            if (error.isEmpty()) {
+                const QJsonArray cards =
+                    QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8()).array();
+                for (const QJsonValue& value : cards) {
+                    const QJsonObject rect = value.toObject();
+                    RasterCard card;
+                    card.id = rect.value(QStringLiteral("id")).toString();
+                    card.x = rect.value(QStringLiteral("x")).toDouble();
+                    card.y = rect.value(QStringLiteral("y")).toDouble();
+                    card.w = rect.value(QStringLiteral("w")).toDouble();
+                    card.h = rect.value(QStringLiteral("h")).toDouble();
+                    if (!card.id.isEmpty()) {
+                        raster_cards_.append(card);
+                    }
+                }
+            }
+            if (done) {
+                done();
+            }
+        });
+}
+
+QString MainWindow::cardAtRasterPoint(qreal x, qreal y) const {
+    for (const RasterCard& card : raster_cards_) {
+        if (x >= card.x && x < card.x + card.w && y >= card.y && y < card.y + card.h) {
+            return card.id;
+        }
+    }
+    return QString();
 }
 
 void MainWindow::buildToolBar() {

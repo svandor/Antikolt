@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizenhatodik szelet) — a raszter kattintás-leképezése (F6)
+
+A raszter-kezdőlap utolsó darabja: a rács a raszterizálás előtt kiadja a látható kártyák téglalapjait, a shell
+elmenti, és egy pont→kártya leképezést ad — így a raszterre kattintva meg lehet nyitni a megfelelő kártyát.
+
+### Mi változott
+
+- **`captureCardPositions()`:** a rács minden látható `<antikolt-card>` elemének id-jét és `getBoundingClientRect`-
+  jét lekérdezi, és eltárolja (`raster_cards_`); a `enterRasterMode` a raszter előtt hívja.
+- **`cardAtRasterPoint(x, y)`:** a pontot a téglalapokhoz méri (pont a téglalapban), üres, ha sehol.
+- **`--rasterclicktest` (új):** a rács betölt → a pozíciók leképezése → a látható kártyák száma > 0, a távoli pont
+  üresre képez.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (52 önteszt + check-repo)
+--rasterclicktest           → rasterclick_cards=9 · rasterclick_far=empty · raster_click=ok
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott (F6)
+
+- A leképezés **bekötése a raszter widget kattintásához** (a QLabel kattintása → `cardAtRasterPoint` → ébresztés +
+  kártyanyitás) — a logika kész, a widget-horog a termék UI-ja; a 3. tétel szerkesztője és sandboxolása.
+
 ## 2026-11-22 (száztizenötödik szelet) — a raszter-kezdőlap automatikus aktiválása (F6)
 
 A raszter-kezdőlap most már **magától** kapcsol be: amikor egy kártya lemezre kerül és a profil T2-je szerint a
