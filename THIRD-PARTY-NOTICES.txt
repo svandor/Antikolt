@@ -1,0 +1,82 @@
+Antikolt — Third-Party Notices
+==============================
+
+Antikolt is distributed under the Mozilla Public License, v. 2.0 (see `LICENSE`). It builds on the
+third-party components below, each used under its own licence. This file is the detailed notice; the
+short version is in `NOTICE`.
+
+Summary
+-------
+
+| Component                          | Version                                      | Licence                     |
+|------------------------------------|----------------------------------------------|-----------------------------|
+| Chromium Embedded Framework (CEF)  | 158.0.3 (Chromium 158.0.8127.18)             | BSD-3-Clause                |
+| Chromium Project                   | 158.0.8127.18                                | BSD-3-Clause and others     |
+| Qt 6                               | 6.8.3                                        | LGPL-3.0 (dynamically linked) |
+| SQLite                             | bundled via `rusqlite` (0.37, `libsqlite3-sys`) | Public domain               |
+| Rust crates (direct)               | serde, serde_json, thiserror, rusqlite       | MIT / Apache-2.0            |
+| Rust crates (transitive)           | full list in `Cargo.lock`                    | MIT / Apache-2.0 / permissive |
+
+Chromium Embedded Framework (CEF) — BSD-3-Clause
+------------------------------------------------
+
+Copyright (c) The Chromium Embedded Framework Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted
+provided that the following conditions are met:
+
+  1. Redistributions of source code must retain the above copyright notice, this list of conditions
+     and the following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright notice, this list of
+     conditions and the following disclaimer in the documentation and/or other materials provided
+     with the distribution.
+  3. Neither the name of Google Inc. nor the name Chromium Embedded Framework nor the names of its
+     contributors may be used to endorse or promote products derived from this software without
+     specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Chromium Project
+----------------
+
+The CEF binary embeds Chromium, which is distributed under the BSD-3-Clause licence above and
+further third-party notices that ship inside the Chromium distribution. This project is not
+affiliated with, endorsed by, or sponsored by Google or the Chromium Project.
+
+Qt 6 — LGPL-3.0
+---------------
+
+Qt is © The Qt Company Ltd and other contributors, licensed under the GNU Lesser General Public
+License, version 3 (LGPL-3.0). Antikolt links Qt *dynamically*, so the user may replace the Qt
+libraries with their own build; the full LGPL-3.0 text is available at
+https://www.gnu.org/licenses/lgpl-3.0.html and is reproduced in the Qt installation's `LICENSES`
+directory. See `docs/HU/13-LICENC.md` for how the relinkability obligation is honoured.
+
+SQLite — Public domain
+----------------------
+
+SQLite is in the public domain: the authors have dedicated the code to the public domain, and any
+jurisdiction that does not recognise a public-domain dedication grants a royalty-free, irrevocable
+licence to use, copy, modify and distribute the software for any purpose. See
+https://www.sqlite.org/copyright.html.
+
+Rust crates
+-----------
+
+The Rust dependencies (`serde`, `serde_json`, `thiserror`, `rusqlite` and their transitive
+dependencies, all listed in `Cargo.lock`) are distributed under the MIT and/or Apache-2.0 licences,
+or other permissive licences. The exact licence of each crate is recorded in its own distribution;
+`cargo` carries them in the local registry cache used to build the project.
+
+Trademarks
+----------
+
+"Antikolt" is this project's name. The component names above belong to their respective owners and
+are used only to identify the software; no endorsement is implied.

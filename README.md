@@ -11,7 +11,7 @@
 > **What CI does, and what it does not.** The badge is real: `.github/workflows/ci.yml` runs on GitHub-hosted
 > machines and checks what they can check — `cargo fmt`, `clippy -D warnings`, the Rust test suite on Linux and
 > Windows, `node --check` on the home page, SPDX headers, committed build output/secrets, and every relative
-> documentation link. It does **not** build the Qt/CEF binaries or run the 37 native self tests: those need Qt 6.8
+> documentation link. It does **not** build the Qt/CEF binaries or run the 68 native self tests: those need Qt 6.8
 > and CEF (~1 GB) and a real GPU, so they run on the maintainer's machine through `scripts/verify.ps1`, and the
 > measured result is written into [`docs/HU/21-ALLAPOT.md`](docs/HU/21-ALLAPOT.md) rather than claimed by a badge.
 
@@ -20,7 +20,7 @@
 > Rust core owns the data: cards, containers (isolated cookie partitions), workspaces, the session ledger and the
 > portable profile bundle. Leaving a card **hibernates** it to disk (MHTML snapshot + scroll/anchor/form state) and
 > destroys the engine view; returning restores it offline in seconds. Measured on the current build: `verify.ps1`
-> runs **37 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **78 + 21 + 2 +
+> runs **68 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **78 + 53 + 9 +
 > 1 + 15 Rust tests**), and `dist.ps1 -Release` produces a 446 MB portable build. Start with
 > [`docs/EN/README.md`](docs/EN/README.md); the authoritative plan and the decision log are Hungarian
 > ([`docs/HU/`](docs/HU/)). Licence: [`LICENSE`](LICENSE) (MPL-2.0) · authors: [`AUTHORS`](AUTHORS) ·
@@ -51,7 +51,7 @@
 | `perf/measure-engine.ps1` | memóriamérő: a motor folyamatfájának privát memóriája, markdown + JSON riport |
 | `home/` | a kezdőlap: `<antikolt-card>`, virtualizált rács, négy téma, keresés, billentyűzet — böngészőben önállóan is megnyitható |
 | **Aláírás** | **Store + SignPath** — a Store az MSIX-et írja alá (ingyenes), a SignPath a saját hordozható kiadást ([ADR-040](docs/HU/05-DONTESEK.md), [részletek](docs/HU/20-ALASAS.md)) |
-| Shell ↔ motor | **kész és mérve**: IPC, fagyasztás/hibernálás, előnézet, memória-mérés, oldal-téma, nagyítás, görgetés — `scripts/verify.ps1` 27 öntesztje |
+| Shell ↔ motor | **kész és mérve**: IPC, fagyasztás/hibernálás, előnézet, memória-mérés, oldal-téma, nagyítás, görgetés — `scripts/verify.ps1` 68 öntesztje |
 
 ## Kipróbálás (Windows, ma)
 
@@ -90,7 +90,7 @@ pwsh -File scripts/build.ps1
 pwsh -File scripts/build.ps1 -CheckOnly      # csak az eszközlánc
 
 # Rust mag
-cargo test --all          # 77 teszt
+cargo test --all          # 156 teszt
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 

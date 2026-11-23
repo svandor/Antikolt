@@ -88,6 +88,30 @@ if (Test-Path (Join-Path $repoRoot '.git')) {
 }
 Report 'no build output or secrets tracked' ($trackedBad.Count -eq 0) ($trackedBad -join ', ')
 
+Write-Host '=== Release files ===' -ForegroundColor Cyan
+# M8: the release documents must exist and carry their essential content, so a missing or emptied file cannot
+# ship silently. Each entry pins one phrase that the file cannot be complete without.
+$release = @(
+    @{ Name = 'LICENSE'; Pattern = 'Mozilla Public License' },
+    @{ Name = 'NOTICE'; Pattern = 'MPL' },
+    @{ Name = 'AUTHORS'; Pattern = 'Varga' },
+    @{ Name = 'CONTRIBUTING.md'; Pattern = 'Signed-off-by' },
+    @{ Name = 'THIRD-PARTY-NOTICES.txt'; Pattern = 'BSD-3-Clause' }
+)
+$releaseMissing = @()
+foreach ($entry in $release) {
+    $path = Join-Path $repoRoot $entry.Name
+    if (-not (Test-Path $path)) {
+        $releaseMissing += "$($entry.Name) (missing)"
+    } else {
+        $text = Get-Content -Raw -Encoding utf8 $path
+        if ($text -notmatch $entry.Pattern) {
+            $releaseMissing += "$($entry.Name) (no '$($entry.Pattern)')"
+        }
+    }
+}
+Report 'release files present and complete' ($releaseMissing.Count -eq 0) ($releaseMissing -join ', ')
+
 Write-Host '=== Home page ===' -ForegroundColor Cyan
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($node) {

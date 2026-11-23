@@ -13,12 +13,12 @@ strict on a few points.
 | Rust (stable, 1.80+) | the core (`crates/`) |
 | MSVC Build Tools (Windows) or a C toolchain (Linux) | linking Rust binaries |
 | Node 22+ | only to syntax-check the home page |
-| CMake + Qt 6 + CEF | **not yet required**: the shell has not landed (`docs/HU/16-FEJLESZTESI-NAPLO.md`) |
+| CMake + Qt 6 + CEF | the native shell and engine host (`scripts/build.ps1`) |
 
 ```sh
 git clone https://github.com/antikolt/antikolt
 cd antikolt
-cargo test --all          # 77 tests as of the second increment
+cargo test --all          # 156 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 node --check home/app.js

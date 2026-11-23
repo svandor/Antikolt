@@ -3,6 +3,35 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvennegyedik szelet) — kiadási fájlok (THIRD-PARTY-NOTICES + ellenőrzés, M8)
+
+Az M8 „Licenc/NOTICE/AUTHORS/THIRD-PARTY/CONTRIBUTING" tétele: a hiányzó harmadikfél-jegyzék elkészült, a
+meglévő fájlok frissítve, és a kapu mostantól őrzi őket.
+
+### Mi változott
+
+- **`THIRD-PARTY-NOTICES.txt` (új):** a harmadik felek részletes jegyzéke — CEF (BSD-3-Clause, teljes
+  szöveggel), Chromium, Qt 6 (LGPL-3.0, dinamikusan linkelve), SQLite (public domain), Rust-crate-ek
+  (MIT/Apache-2.0, a `Cargo.lock`-ban).
+- **`NOTICE`:** a harmadikfél-sor mostantól a `THIRD-PARTY-NOTICES.txt`-re mutat (nem „majd ha a shell kész").
+- **`CONTRIBUTING.md`:** a friss számok (156 teszt) és az elavult „a shell még nem érkezett meg" megjegyzés
+  eltávolítva.
+- **`README.md` + `docs/EN/README.md`:** a friss mérőszámok (68 önteszt, 156 Rust-teszt, ADR-081, séma 10).
+- **`scripts/check-repo.ps1`:** új „Release files" ellenőrzés — a LICENSE/NOTICE/AUTHORS/CONTRIBUTING/
+  THIRD-PARTY-NOTICES fájlok léteznek és a lényegi tartalmukat hordozzák.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (71 ellenőrzés; a check-repo belsejében az új „release files" is zöld)
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A **teljes HU→EN dokumentáció-fordítás** (az angol `docs/EN/README.md` a sűrített összefoglaló, a részletes
+  terv magyar); a jelszó-import; a PiP (döntés); a képernyőolvasó (NVDA); az aláírás/Store és az M8 Linux-csomag.
+
 ## 2026-11-23 (száznegyvenharmadik szelet) — könyvjelző-import Netscape-HTML-ből (M7)
 
 Az M7 „jelszó- és könyvjelző-import" első fele: a **könyvjelző-import** kész. A Netscape-HTML az egyetlen

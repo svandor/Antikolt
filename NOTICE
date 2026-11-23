@@ -28,7 +28,7 @@ THIRD-PARTY COMPONENTS
 ----------------------
 
 Antikolt builds on third-party work. The components below are used under their own licences; the
-full texts ship with the binary in `THIRD-PARTY-NOTICES.txt` once the shell is buildable.
+detailed notices (including the BSD-3-Clause text) are in `THIRD-PARTY-NOTICES.txt`.
 
   * Chromium Embedded Framework (CEF) — BSD-3-Clause
   * Chromium Project and its bundled third-party components — BSD-3-Clause and others
