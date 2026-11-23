@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonharminckettedik szelet) — a renderer összeomlásának detektálása (F7)
+
+Az F7 negyedik darabja: a **crash-recovery első fele** — a renderer összeomlásának detektálása. A motor
+`CefRenderProcessHandler` útján már eddig is naplózta az eseményt; mostantól egy `renderer_terminated` eseménnyel
+**értesíti is a shellt**, amely a halott felület helyett egy érthető státuszt mutat.
+
+### Mi változott
+
+- **`apps/engine-host` (host.cpp):** az `OnRenderProcessTerminated` most egy `renderer_terminated` eseményt is küld
+  (`surface` + `status` + `code`).
+- **`apps/desktop-shell` (engine_client, main_window):** `rendererTerminated` jel; a shell státuszba írja az
+  összeomlást, így a halott kártya nem marad némán üresen.
+- **`--crashtest` (új):** a rácsot `chrome://crash`-re navigálja, és ellenőrzi, hogy a `renderer_terminated`
+  esemény megérkezik.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL SELF TESTS PASSED (63 ellenőrzés mind „ok", köztük a crashtest és a check-repo)
+--crashtest       → crash_terminated=true · crash_status=2 (STATUS_ACCESS_VIOLATION) · crash=ok
+cargo test        → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+A `chrome://crash` a CEF 158-ban is a determinisztikus összeomlás-trigger (a renderer null-pointer-dereference-szel
+lép ki) — ez teszi a detektálást mérhetővé. Az automatikus újratöltés a következő lépés.
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (a crash **automatikus** helyreállítása, PDF, PiP, akadálymentesség, HU/EN); az F6
+  `video_max_height` kutatási tétele; az OAuth összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonharmincegyedik szelet) — a fájl letöltése (F7)
 
 Az F7 harmadik darabja: a **letöltés**. A motor a CEF `StartDownload`/`CefDownloadHandler` útján tölti le a fájlt,

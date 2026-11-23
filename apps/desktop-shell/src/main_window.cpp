@@ -820,6 +820,14 @@ void MainWindow::wireEngine(EngineClient* engine) {
     });
     // Find-in-page results (F7 "Ctrl+F") come from whichever engine owns the live surface.
     connect(engine, &EngineClient::findResult, this, &MainWindow::onFindResult);
+    // A crashed renderer (F7 "crash recovery"): the page is gone, so say so instead of leaving a dead surface.
+    connect(engine, &EngineClient::rendererTerminated, this,
+            [this](qint64 surface, int status, int code) {
+                setStatus(QStringLiteral("az oldal összeomlott (#%1): a renderer kilépett (%2, kód %3)")
+                              .arg(surface)
+                              .arg(status)
+                              .arg(code));
+            });
     connect(engine, &EngineClient::engineReady, this, [this, engine](const QJsonObject& info) {
         setStatus(QStringLiteral("motor: %1 %2 · képességek: %3")
                       .arg(info.value(QStringLiteral("name")).toString(),

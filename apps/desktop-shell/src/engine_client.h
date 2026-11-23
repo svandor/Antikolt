@@ -157,6 +157,9 @@ signals:
     void findResult(qint64 surface, int count, int active);
     /// A download finished (F7 "letöltés"): `path` is the full file path, `success` whether it completed.
     void downloadFinished(qint64 surface, const QString& path, bool success);
+    /// The renderer process crashed (F7 "crash recovery"): `status` is CEF's termination status, `code` the
+    /// platform error. The page is gone; the shell must not leave a dead surface up.
+    void rendererTerminated(qint64 surface, int status, int code);
     /// The home page asked for something through the bridge (`open_card`, `freeze_card`, …).
     ///
     /// `request` is 0 for a one-way call (the page does not wait) and the engine's request number for a

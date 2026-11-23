@@ -469,6 +469,9 @@ void EngineClient::handleEvent(const QJsonObject& event) {
     } else if (type == QStringLiteral("download_finished")) {
         emit downloadFinished(surface, event.value(QStringLiteral("path")).toString(),
                               event.value(QStringLiteral("success")).toBool());
+    } else if (type == QStringLiteral("renderer_terminated")) {
+        emit rendererTerminated(surface, event.value(QStringLiteral("status")).toInt(),
+                                event.value(QStringLiteral("code")).toInt());
     }
 }
 

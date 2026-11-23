@@ -121,6 +121,7 @@ $engineChecks = @(
     @{ Name = 'printtest'; Args = @('--printtest') },
     @{ Name = 'findtest'; Args = @('--findtest') },
     @{ Name = 'downloadtest'; Args = @('--downloadtest') },
+    @{ Name = 'crashtest'; Args = @('--crashtest') },
     @{ Name = 'enginerestarttest'; Args = @('--enginerestarttest') },
     @{ Name = 'rastertest'; Args = @('--rastertest') },
     @{ Name = 'rasterhometest'; Args = @('--rasterhometest') },

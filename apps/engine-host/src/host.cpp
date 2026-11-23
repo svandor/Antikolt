@@ -2020,6 +2020,12 @@ void EngineClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
     router_->OnRenderProcessTerminated(browser);
     Log("[engine-host] renderer terminated status=%d code=%d reason=%s\n",
         static_cast<int>(status), error_code, error_string.ToString().c_str());
+    // Tell the shell (F7 "crash recovery"): the page is gone, and the shell must not leave a dead surface up.
+    CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+    payload->SetInt("surface", static_cast<int>(state_->surface_id));
+    payload->SetInt("status", static_cast<int>(status));
+    payload->SetInt("code", error_code);
+    StdioLink::Instance().Event("renderer_terminated", payload);
 }
 
 void EngineClient::OnFindResult(CefRefPtr<CefBrowser> browser,

@@ -2888,6 +2888,53 @@ int runDownloadCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+int runCrashCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 home_surface = 0;
+    bool terminated = false;
+    int term_status = -1;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::rendererTerminated, &loop,
+                         [&](qint64 surface, int status, int code) {
+                             (void)surface;
+                             (void)code;
+                             terminated = true;
+                             term_status = status;
+                             loop.quit();
+                         });
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             home_surface = id;
+                             // One beat, then crash the renderer on purpose.
+                             QTimer::singleShot(500, &loop, [&, id] {
+                                 window.engine()->navigate(id, QStringLiteral("chrome://crash"));
+                             });
+                         });
+        QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "crash_home_surface=" << home_surface << '\n';
+    out << "crash_terminated=" << (terminated ? "true" : "false") << '\n';
+    out << "crash_status=" << term_status << '\n';
+    const bool ok = home_surface != 0 && terminated;
+    out << "crash=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -9622,6 +9669,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("downloadtest"),
         QStringLiteral("Prove a file download lands on disk (F7), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption crashtest(
+        QStringLiteral("crashtest"),
+        QStringLiteral("Prove a renderer crash is detected (F7), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9711,6 +9762,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(printtest);
     parser.addOption(findtest);
     parser.addOption(downloadtest);
+    parser.addOption(crashtest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9925,6 +9977,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(downloadtest)) {
         return runDownloadCheck(parser.value(downloadtest));
+    }
+
+    if (parser.isSet(crashtest)) {
+        return runCrashCheck(parser.value(crashtest));
     }
 
     if (parser.isSet(enginerestarttest)) {
