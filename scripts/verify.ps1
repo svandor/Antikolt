@@ -233,6 +233,13 @@ if (-not $shell) {
     & $shell --previewclean
     Add-Result 'previewclean' ($LASTEXITCODE -eq 0)
 }
+Write-Host '=== previewhashtest ===' -ForegroundColor Cyan
+if (-not $shell) {
+    Add-Result 'previewhashtest' $false 'missing antikolt-shell.exe'
+} else {
+    & $shell --previewhashtest
+    Add-Result 'previewhashtest' ($LASTEXITCODE -eq 0)
+}
 Write-Host '=== rulestest ===' -ForegroundColor Cyan
 if (-not $shell -or -not $core) {
     Add-Result 'rulestest' $false 'missing antikolt-shell.exe or antikolt-core-service.exe'

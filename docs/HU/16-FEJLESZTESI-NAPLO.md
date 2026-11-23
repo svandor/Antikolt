@@ -3,6 +3,41 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonharminchetedik szelet) — a preview-név a tartalom hash-e (F2, `sha256` blobtár)
+
+A nyitott `sha256` blobtár-tétel, ami eddig a Rust `sha2` crate hiányára hivatkozva „blokkolt"-ként állt. A
+kutatás kimondta: a név a **shellben** keletkezik (a capture ott történik, a bájtok ott vannak), így a `sha2`
+crate-re nincs is szükség — a Qt `QCryptographicHash::Sha256` ugyanazt adja, hálózat nélkül.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/previews.h`:** `previewContentName(bytes, ext)` — a név a bájtok sha256-jának hex
+  alakja + kiterjesztés (ADR-077).
+- **`apps/desktop-shell/src/main_window.cpp`:** a `producePreview` és a háttér-munkás a capture után **hash-eli a
+  kész képet**, és a profilba a tartalom-néven menti; azonos bájtok már nem másolódnak új fájlba (dedup), csak a
+  rekord tanulja meg ugyanazt a nevet. A frissesség-ellenőrzés a tárolt `preview_ref`-re néz.
+- **`--previewhashtest` (új):** tisztán-függvény teszt, publikus sha256-tesztvektorokra tűzve (az üres és a
+  „hello" bemenet ismert hash-eire).
+- **`--previewgentest` / `--previewworkertest`:** a várt `preview_ref` helyett most azt mérik, hogy a tárolt név
+  a **fájl tartalmának** hash-e (`preview_content_addressed=ok` / `worker_content_addressed=ok`), és a megszakított
+  munkás „nincs kép" állítását a rekord üres `preview_ref`-je igazolja.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (67 ellenőrzés mind „ok", köztük a previewhashtest és a check-repo)
+--previewhashtest  → hash_empty_pinned=ok · hash_hello_pinned=ok · hash_deterministic=ok ·
+                     hash_distinct=ok · preview_hash=ok
+--previewgentest   → preview_ref=<sha256>.png · preview_content_addressed=true · preview_generation=ok
+--previewworkertest→ worker_ref=<sha256>.png · worker_content_addressed=true · preview_worker=ok
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (PiP, a teljes képernyőolvasó-illesztés, HU/EN); az OAuth összekötése; az emberi kiadási tételek
+  (SignPath, Store); a `--previewqueue` „elavult előnézet" ágának éles használatú mérése.
+
 ## 2026-11-23 (százhuszonharminchatodik szelet) — a videó-magasság-sapka mint megjelenítési sapka (F6)
 
 Az F6 utolsó nyitott vezérlő-művelete: a profil `video_max_height`-je eddig csak **jelentve** volt

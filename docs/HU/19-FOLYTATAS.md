@@ -32,7 +32,7 @@ git status                  →  tiszta munkafa, minden pusholva (origin/main)
 |---|---|---|---|
 | F6 `video_max_height` | **kész** (ADR-076, 136. szelet) | a profil `video_max_height`-je **megjelenítési sapkaként** alkalmazva (`set_video_cap` op, nevesített stíluselem); a dekódolási felbontás-csökkentés `not-measurable` (a CEF nem ad laponkénti korlátot) | `--videocaptest`: Fast 2160px → Saver 720px (renderelt magasság 720) → Manual eltávolítva |
 | OAuth összekötés | `main_window.cpp` (popup, 02-ARCH §8.5) | a mechanizmus kész, a bejelentkezési gesztus-út a harnessben nem kattintható | `not-measurable` gesztus; a kész mechanizmus már mért |
-| `sha256` blobtár | `previews.h` / motor | `cargo vendor` egy **hálózatos** gépen (`sha2`), tartalom-szerinti név a fájlnév helyett | új önteszt a tartalom-szerinti címzésre |
+| `sha256` blobtár | **kész** (ADR-077, 137. szelet) | a preview-név a tartalom hash-e (`previewContentName`, Qt `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből | `--previewhashtest` (publikus vektorok), `--previewgentest`/`--previewworkertest` (`preview_content_addressed=ok`) |
 | PiP | motor (CEF 158) | a CEF 158 PiP-je **views-alapú** (`CefBrowserViewDelegate`), a shell ablakos (nem views) API-t használ — valószínűleg architektúra-váltás kell, előbb döntés | — |
 | HU/EN felület | teljes shell + rács | nagy i18n-szelet (a magyar a hiteles nyelv) | önteszt + doksi |
 | Teljes képernyőolvasó-illesztés | külső | képernyőolvasóval (NVDA) manuális | emberi lépés |
@@ -177,15 +177,18 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > előnézetek munkása is kész (ADR-041/ADR-042, `--previewworkertest`, lásd §9). A rács a képet **meg is
 > jeleníti**: a `home/app.js` a rekord `preview_ref`-jéből `<img src="antikolt://blob/…">`-t csinál (a
 > `--gridtest` a `naturalWidth > 0`-val méri), tehát a kör bezárult: munkás → `preview_ref` → csempe.
-> **Ami hátra van:** a `sha256`-alapú blob-tár (blokkolt: nincs `sha2` crate), és hogy a queue a *régi*
-> képeket is cserélje (a `nextPreviewCard` már sorolja az elavultat, ezt éles használatban kell mérni).
+> **Ami hátra van:** a `sha256`-alapú blob-tár **kész** (ADR-077, 137. szelet) — a név a tartalom hash-e,
+> Qt `QCryptographicHash::Sha256`-tal a shellben (a `sha2` crate-függőség megszűnt); ami továbbra is nyitott,
+> hogy a queue a *régi* képeket is cserélje (a `nextPreviewCard` már sorolja az elavultat, ezt éles
+> használatban kell mérni).
 
 **Miért:** F2 (rács-előnézet) — a `capture` primitív kész, a feldolgozó nincs.
 
 **Hogyan:** `antikolt://blob/<név>` scheme handler a motorban
 (`CefRegisterSchemeHandlerFactory`, a profil `previews/` mappájából, név-sanitizálással), majd egy
 ütemező: egy kártya egyszerre, 8 s limit, napi 100 frissítés (`02-ARCHITEKTURA.md` §5). A
-tartalom-szerinti blob-tár (`sha256`) **blokkolt**: nincs `sha2` crate; addig a fájlnév a kártya id-je.
+tartalom-szerinti blob-tár (`sha256`) **kész** (ADR-077): `previewContentName` a shellben, Qt
+`QCryptographicHash::Sha256`-tal — a `sha2` crate-függőség megszűnt, a fájlnév már a tartalom hash-e.
 
 **Állapot:** az ütemező **kész** (52–53. szelet): `nextPreviewCard` dönt, a munkás-felület fényképez
 (ADR-041, ADR-042), a plafon és a keret a `previews.h` őreiben és a motorház két-felületű korlátjában.
@@ -423,8 +426,8 @@ helyi MSIX telepítés (Partner Center + tanúsítvány); a `release.yml` scaffo
 
 **Apróbb, ismert hiányosságok:**
 
-- A `--previewqueue` „elavult előnézet" ága éles használatban még nincs mérve; a `sha256` blobtár blokkolt
-  (`sha2` crate nincs a lemezen).
+- A `--previewqueue` „elavult előnézet" ága éles használatban még nincs mérve; a `sha256` blobtár **kész**
+  (ADR-077 — `previewContentName` a shellben, Qt `QCryptographicHash::Sha256`-tal).
 - Oldalankénti téma-kivétel (§4c) szándékosan nincs; a `04-UTEMTERV` pipáit a kódhoz kell igazítani.
 - A GUI-subsystem átállás (a konzolablak helyett) a harness `Start-Process -Wait` átírásával járna — most
   nem éri meg, dokumentálva van.

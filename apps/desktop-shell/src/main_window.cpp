@@ -1932,15 +1932,15 @@ void MainWindow::producePreview(qint64 surface) {
         }
         // A card keeps its picture until the picture is *old*: a preview is a photograph of a page, and pages
         // change. Age comes from the file's own modification time (previews.h), so there is no second
-        // timestamp to keep in sync; a missing file is always "needs refresh".
-        QString name = record.value(QStringLiteral("preview_ref")).toString();
-        if (name.isEmpty()) {
-            name = card_id + QStringLiteral(".png");
-        }
-        const QString target = engine_profile_ + QStringLiteral("/previews/") + name;
-        if (!antikolt::previewNeedsRefresh(target, QDateTime::currentMSecsSinceEpoch(),
-                                           kPreviewMaxAgeMs)) {
-            return;  // fresh enough; the shell is not a screenshot loop
+        // timestamp to keep in sync; a missing file is always "needs refresh". The name is content-addressed
+        // (ADR-077), so the freshness check looks up the *existing* preview by its stored name.
+        const QString existing_name = record.value(QStringLiteral("preview_ref")).toString();
+        if (!existing_name.isEmpty()) {
+            const QString existing_target = engine_profile_ + QStringLiteral("/previews/") + existing_name;
+            if (!antikolt::previewNeedsRefresh(existing_target, QDateTime::currentMSecsSinceEpoch(),
+                                               kPreviewMaxAgeMs)) {
+                return;  // fresh enough; the shell is not a screenshot loop
+            }
         }
         // The daily budget outlives this run (a file in the profile), because a limit that resets on every
         // launch is not a limit. A refused preview is not an error: the card keeps whatever it had.
@@ -1951,9 +1951,9 @@ void MainWindow::producePreview(qint64 surface) {
             return;
         }
         const auto count_budget = [budget, today] { antikolt::previewConsumeBudget(budget, today); };
-        // The record learns the name; the grid shows the picture the next time it loads, because the push
-        // carries the record and the engine serves the file (ADR-035).
-        const auto remember = [this, record, name](const QString&) {
+        // The record learns the content name; the grid shows the picture the next time it loads, because the
+        // push carries the record and the engine serves the file (ADR-035).
+        const auto remember = [this, record](const QString& name) {
             QJsonObject updated = record;
             updated.insert(QStringLiteral("preview_ref"), name);
             core_->cardUpsert(updated, [this, name](const QJsonObject&, const QString& upsert_error) {
@@ -1971,10 +1971,10 @@ void MainWindow::producePreview(qint64 surface) {
         // after the GPU process has restarted twice), so one retry is cheaper than a lost preview. The
         // engine's own request timeout bounds each attempt; after the last one the preview is skipped and
         // the status line says so — a failed preview is not a failed browser.
-        const auto capture_to = [this, surface, target, remember, count_budget](auto&& self, int attempt) -> void {
+        const auto capture_to = [this, surface, remember, count_budget](auto&& self, int attempt) -> void {
             live_engine_->capture(
                 surface, QStringLiteral("png"), 80,
-                [this, target, remember, count_budget, self, attempt](const QJsonObject& shot,
+                [this, remember, count_budget, self, attempt](const QJsonObject& shot,
                                                         const QString& shot_error) {
                     const QString written = shot.value(QStringLiteral("path")).toString();
                     if (!shot_error.isEmpty() || written.isEmpty()) {
@@ -1989,17 +1989,32 @@ void MainWindow::producePreview(qint64 surface) {
                         }
                         return;
                     }
-                    // `capture` writes into `screenshots/`; the preview belongs in `previews/` under the
-                    // name the card carries, so the engine's scheme handler finds it.
-                    QFile::remove(target);
-                    if (!QFile::copy(written, target)) {
-                        qInfo("[shell] preview: copy failed to %s", qUtf8Printable(target));
-                        setStatus(QStringLiteral("az előnézet nem került a profilba: %1").arg(target));
+                    // The name is the content (ADR-077): hash the captured bytes, then place the file under
+                    // that name. Identical bytes already on disk are a shared file, not a second copy.
+                    QFile shot_file(written);
+                    if (!shot_file.open(QIODevice::ReadOnly)) {
+                        qInfo("[shell] preview: cannot read the capture %s", qUtf8Printable(written));
+                        setStatus(QStringLiteral("az előnézet nem olvasható: %1").arg(written));
                         return;
                     }
+                    const QByteArray bytes = shot_file.readAll();
+                    shot_file.close();
+                    const QString name = antikolt::previewContentName(bytes, QStringLiteral("png"));
+                    const QString target = engine_profile_ + QStringLiteral("/previews/") + name;
+                    if (!QFileInfo::exists(target)) {
+                        // `capture` writes into `screenshots/`; the preview belongs in `previews/` under its
+                        // content name, so the engine's scheme handler finds it.
+                        if (!QFile::copy(written, target)) {
+                            qInfo("[shell] preview: copy failed to %s", qUtf8Printable(target));
+                            setStatus(QStringLiteral("az előnézet nem került a profilba: %1").arg(target));
+                            return;
+                        }
+                        qInfo("[shell] preview: copied to %s", qUtf8Printable(target));
+                    } else {
+                        qInfo("[shell] preview: %s already on disk (shared)", qUtf8Printable(name));
+                    }
                     count_budget();
-                    qInfo("[shell] preview: copied to %s", qUtf8Printable(target));
-                    remember(target);
+                    remember(name);
                 });
         };
         capture_to(capture_to, 1);
@@ -2043,7 +2058,8 @@ bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url, c
     worker_state_ = antikolt::PreviewWorker::Loading;
     worker_card_id_ = cardId;
     worker_page_url_ = url;
-    worker_preview_name_ = cardId + QStringLiteral(".png");
+    // The preview name is the *content*, not the card id (ADR-077): it is computed once the capture lands,
+    // in `onPreviewWorkerLoaded`, where the bytes exist to hash.
     worker_surface_ = 0;
     worker_deadline_->start(workerDeadlineMs());
     qInfo("[shell] preview worker: %s", qUtf8Printable(cardId));
@@ -2115,16 +2131,31 @@ void MainWindow::onPreviewWorkerLoaded() {
                                                              : error));
                 return;
             }
-            const QString target =
-                engine_profile_ + QStringLiteral("/previews/") + worker_preview_name_;
-            // `capture` writes into `screenshots/`; the preview belongs under the name the card carries, in
-            // the directory the engine's `antikolt://blob/` handler serves (ADR-035).
-            QFile::remove(target);
-            if (!QFile::copy(written, target)) {
-                finishPreviewWorker(false, QStringLiteral("a fájl nem került a profilba"));
+            // The name is the content (ADR-077): hash the captured bytes, then place the file under that
+            // name. Identical bytes already on disk are a shared file, not a second copy.
+            QFile shot_file(written);
+            if (!shot_file.open(QIODevice::ReadOnly)) {
+                finishPreviewWorker(false, QStringLiteral("a felvétel nem olvasható"));
                 return;
             }
-            qInfo("[shell] preview worker: kép a profilban (%s)", qUtf8Printable(worker_preview_name_));
+            const QByteArray bytes = shot_file.readAll();
+            shot_file.close();
+            worker_preview_name_ = antikolt::previewContentName(bytes, QStringLiteral("png"));
+            const QString target =
+                engine_profile_ + QStringLiteral("/previews/") + worker_preview_name_;
+            if (!QFileInfo::exists(target)) {
+                // `capture` writes into `screenshots/`; the preview belongs under its content name, in the
+                // directory the engine's `antikolt://blob/` handler serves (ADR-035).
+                if (!QFile::copy(written, target)) {
+                    finishPreviewWorker(false, QStringLiteral("a fájl nem került a profilba"));
+                    return;
+                }
+                qInfo("[shell] preview worker: kép a profilban (%s)",
+                      qUtf8Printable(worker_preview_name_));
+            } else {
+                qInfo("[shell] preview worker: %s már a lemezen (megosztott)",
+                      qUtf8Printable(worker_preview_name_));
+            }
             // Counted only once a picture exists: a budget spent on a failure would be a lie.
             const QString budget = engine_profile_ + QStringLiteral("/previews/budget.json");
             antikolt::previewConsumeBudget(budget, QDate::currentDate().toString(Qt::ISODate));

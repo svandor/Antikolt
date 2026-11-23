@@ -3820,10 +3820,11 @@ int runPreviewGenCheck(const QString& enginePath) {
     const QString profile =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/engine");
     const QString card_id = QStringLiteral("preview-probe");
-    const QString preview_name = card_id + QStringLiteral(".png");
-    const QString target = profile + QStringLiteral("/previews/") + preview_name;
-    QDir().mkpath(profile + QStringLiteral("/previews"));
-    QFile::remove(target);
+    const QString previews_dir = profile + QStringLiteral("/previews");
+    QDir().mkpath(previews_dir);
+    // A previous run under the old card-id naming left `preview-probe.png`; it is no longer "the" preview
+    // (ADR-077 names by content), so remove it — the orphan sweep would, in real use.
+    QFile::remove(previews_dir + QStringLiteral("/preview-probe.png"));
 
     CoreClient oracle;
     if (!oracle.start(MainWindow::coreExecutable(), core_dir)) {
@@ -3864,6 +3865,7 @@ int runPreviewGenCheck(const QString& enginePath) {
 
     bool clicked = false;
     QString preview_state;
+    QString stored_ref;
     int poll_attempts = 0;
     {
         QEventLoop loop;
@@ -3901,48 +3903,68 @@ int runPreviewGenCheck(const QString& enginePath) {
                              if (!url.startsWith(origin)) {
                                  return;
                              }
-                             // The card is loaded: the shell captures it, copies the file and writes the
-                             // name back. Poll for the result instead of trusting a fixed delay — three
-                             // round trips on a busy machine take longer than they do on an idle one, and a
-                             // fixed wait is how a check becomes flaky.
+                             // The card is loaded: the shell captures it, hashes the bytes and writes the
+                             // content name back (ADR-077). Poll the core for that name instead of trusting a
+                             // fixed delay — three round trips on a busy machine take longer than they do on
+                             // an idle one, and a fixed wait is how a check becomes flaky.
                              auto* poll = new QTimer(&loop);
                              QObject::connect(poll, &QTimer::timeout, &loop, [&, id, poll] {
                                  ++poll_attempts;
-                                 // The shell retries a stalled capture once and its own request timeout is
-                                 // 20 s, so the poll waits longer than that before giving up.
-                                 if (!QFileInfo::exists(target) && poll_attempts <= 60) {
-                                     return;
-                                 }
-                                 out << "preview_wait_ticks=" << poll_attempts << '\n';
-                                 poll->stop();
-                                 QTimer::singleShot(700, &loop, [&, id] {
-                                     window.engine()->evaluate(
-                                         id,
-                                         QStringLiteral(
-                                             "window.__shot='pending';"
-                                             "(function(){var i=new Image();"
-                                             "i.onload=function(){window.__shot='loaded:'+"
-                                             "i.naturalWidth+'x'+i.naturalHeight;};"
-                                             "i.onerror=function(){window.__shot='error';};"
-                                             "i.src='antikolt://blob/preview-probe.png';})();"
-                                             " 'asked'"),
-                                         [&, id](const QJsonObject&, const QString&) {
-                                             QTimer::singleShot(1200, &loop, [&, id] {
-                                                 window.engine()->evaluate(
-                                                     id,
-                                                     QStringLiteral("String(window.__shot)"),
-                                                     [&](const QJsonObject& shot,
-                                                         const QString& shot_error) {
-                                                         preview_state =
-                                                             shot_error.isEmpty()
-                                                                 ? shot.value(QStringLiteral("value"))
-                                                                       .toString()
-                                                                 : shot_error;
-                                                         loop.quit();
+                                 window.core()->cardsList(
+                                     [&, id, poll](const QJsonObject& listed, const QString& list_error) {
+                                         if (list_error.isEmpty()) {
+                                             for (const QJsonValue& value :
+                                                  listed.value(QStringLiteral("cards")).toArray()) {
+                                                 const QJsonObject card = value.toObject();
+                                                 if (card.value(QStringLiteral("id")).toString() ==
+                                                     card_id) {
+                                                     stored_ref =
+                                                         card.value(QStringLiteral("preview_ref")).toString();
+                                                 }
+                                             }
+                                         }
+                                         const QString target =
+                                             stored_ref.isEmpty()
+                                                 ? QString()
+                                                 : previews_dir + QLatin1Char('/') + stored_ref;
+                                         // The shell retries a stalled capture once and its own request
+                                         // timeout is 20 s, so the poll waits longer than that before giving up.
+                                         if ((stored_ref.isEmpty() || !QFileInfo::exists(target)) &&
+                                             poll_attempts <= 60) {
+                                             return;
+                                         }
+                                         out << "preview_wait_ticks=" << poll_attempts << '\n';
+                                         poll->stop();
+                                         QTimer::singleShot(700, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id,
+                                                 QStringLiteral(
+                                                     "window.__shot='pending';"
+                                                     "(function(){var i=new Image();"
+                                                     "i.onload=function(){window.__shot='loaded:'+"
+                                                     "i.naturalWidth+'x'+i.naturalHeight;};"
+                                                     "i.onerror=function(){window.__shot='error';};"
+                                                     "i.src='antikolt://blob/%1';})();"
+                                                     " 'asked'")
+                                                     .arg(stored_ref),
+                                                 [&, id](const QJsonObject&, const QString&) {
+                                                     QTimer::singleShot(1200, &loop, [&, id] {
+                                                         window.engine()->evaluate(
+                                                             id,
+                                                             QStringLiteral("String(window.__shot)"),
+                                                             [&](const QJsonObject& shot,
+                                                                 const QString& shot_error) {
+                                                                 preview_state =
+                                                                     shot_error.isEmpty()
+                                                                         ? shot.value(QStringLiteral("value"))
+                                                                               .toString()
+                                                                         : shot_error;
+                                                                 loop.quit();
+                                                             });
                                                      });
-                                             });
+                                                 });
                                          });
-                                 });
+                                     });
                              });
                              poll->start(400);
                          });
@@ -3950,34 +3972,26 @@ int runPreviewGenCheck(const QString& enginePath) {
         loop.exec();
     }
 
-    QString stored_ref;
-    {
-        CoreClient verifier;
-        if (verifier.start(MainWindow::coreExecutable(), core_dir)) {
-            QEventLoop loop;
-            verifier.cardsList([&](const QJsonObject& listed, const QString& error) {
-                if (error.isEmpty()) {
-                    for (const QJsonValue& value :
-                         listed.value(QStringLiteral("cards")).toArray()) {
-                        const QJsonObject card = value.toObject();
-                        if (card.value(QStringLiteral("id")).toString() == card_id) {
-                            stored_ref = card.value(QStringLiteral("preview_ref")).toString();
-                        }
-                    }
-                }
-                loop.quit();
-            });
-            QTimer::singleShot(10000, &loop, &QEventLoop::quit);
-            loop.exec();
-            verifier.shutdown();
+    const QString target =
+        stored_ref.isEmpty() ? QString() : previews_dir + QLatin1Char('/') + stored_ref;
+    const bool file_exists =
+        !stored_ref.isEmpty() && QFileInfo::exists(target) && QFileInfo(target).isFile();
+    // Content-addressed (ADR-077): the stored name must be the sha256 of the file's own bytes, so a second
+    // witness (the record) and the first (the file) agree on the identity of the picture.
+    bool content_addressed = false;
+    if (file_exists) {
+        QFile file(target);
+        if (file.open(QIODevice::ReadOnly)) {
+            content_addressed =
+                antikolt::previewContentName(file.readAll(), QStringLiteral("png")) == stored_ref;
+            file.close();
         }
     }
-
-    const bool file_exists = QFileInfo::exists(target);
     out << "preview_file=" << (file_exists ? "ok" : "FAILED") << '\n';
     out << "preview_ref=" << stored_ref << '\n';
+    out << "preview_content_addressed=" << (content_addressed ? "true" : "false") << '\n';
     out << "preview_page=" << preview_state << '\n';
-    const bool ok = clicked && file_exists && stored_ref == preview_name &&
+    const bool ok = clicked && file_exists && content_addressed &&
                     preview_state.startsWith(QStringLiteral("loaded:"));
     out << "preview_generation=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
@@ -4024,12 +4038,11 @@ int runPreviewWorkerCheck(const QString& enginePath) {
     QDir().mkpath(previews);
     const QString worker_card = QStringLiteral("preview-worker-probe");
     const QString abort_card = QStringLiteral("preview-worker-abort");
-    const QString worker_name = worker_card + QStringLiteral(".png");
-    const QString target = previews + QLatin1Char('/') + worker_name;
-    const QString abort_target = previews + QLatin1Char('/') + abort_card + QStringLiteral(".png");
-    // A fresh measurement: another run's file or budget must not be what this check asserts.
-    QFile::remove(target);
-    QFile::remove(abort_target);
+    // A fresh measurement: another run's file or budget must not be what this check asserts. The old
+    // card-id-named files from a previous build are removed; the content names (ADR-077) are unknown until
+    // the capture lands, so nothing else can be removed up front.
+    QFile::remove(previews + QStringLiteral("/preview-worker-probe.png"));
+    QFile::remove(previews + QStringLiteral("/preview-worker-abort.png"));
     QFile::remove(previews + QStringLiteral("/budget.json"));
 
     bool seeded = false;
@@ -4077,6 +4090,28 @@ int runPreviewWorkerCheck(const QString& enginePath) {
     window.show();
     window.move(150, 110);
     window.startEngine();
+
+    // The record is the witness of a preview's *name* (ADR-077): a card whose worker was aborted has an
+    // empty `preview_ref`, a card that was photographed has the content hash. Reading it is the honest way
+    // to ask "was a preview written", because the file name is the content and cannot be predicted.
+    const auto card_ref = [&](const QString& card_id) {
+        QString ref;
+        QEventLoop loop;
+        window.core()->cardsList([&](const QJsonObject& listed, const QString& error) {
+            if (error.isEmpty()) {
+                for (const QJsonValue& value : listed.value(QStringLiteral("cards")).toArray()) {
+                    const QJsonObject card = value.toObject();
+                    if (card.value(QStringLiteral("id")).toString() == card_id) {
+                        ref = card.value(QStringLiteral("preview_ref")).toString();
+                    }
+                }
+            }
+            loop.quit();
+        });
+        QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+        loop.exec();
+        return ref;
+    };
 
     // ---- phase 0: the grid is up, and nothing is in front of it --------------------------------
     bool grid_ready = false;
@@ -4132,7 +4167,7 @@ int runPreviewWorkerCheck(const QString& enginePath) {
         QTimer::singleShot(5000, &loop, &QEventLoop::quit);
         loop.exec();
     }
-    const bool deadline_no_preview = !QFileInfo::exists(abort_target);
+    const bool deadline_no_preview = card_ref(abort_card).isEmpty();
     out << "deadline_fired="
         << (deadline_finished && !deadline_produced ? "ok" : "FAILED") << '\n';
     out << "deadline_state=" << (deadline_idle ? "idle" : "busy") << '\n';
@@ -4209,30 +4244,21 @@ int runPreviewWorkerCheck(const QString& enginePath) {
         loop.exec();
     }
 
-    QString stored_ref;
-    {
-        CoreClient verifier;
-        if (verifier.start(MainWindow::coreExecutable(), core_dir)) {
-            QEventLoop loop;
-            verifier.cardsList([&](const QJsonObject& listed, const QString& error) {
-                if (error.isEmpty()) {
-                    for (const QJsonValue& value :
-                         listed.value(QStringLiteral("cards")).toArray()) {
-                        const QJsonObject card = value.toObject();
-                        if (card.value(QStringLiteral("id")).toString() == worker_card) {
-                            stored_ref = card.value(QStringLiteral("preview_ref")).toString();
-                        }
-                    }
-                }
-                loop.quit();
-            });
-            QTimer::singleShot(10000, &loop, &QEventLoop::quit);
-            loop.exec();
-            verifier.shutdown();
+    const QString stored_ref = card_ref(worker_card);
+    const QString target =
+        stored_ref.isEmpty() ? QString() : previews + QLatin1Char('/') + stored_ref;
+    const bool file_exists =
+        !stored_ref.isEmpty() && QFileInfo::exists(target) && QFileInfo(target).size() > 0;
+    // Content-addressed (ADR-077): the stored name must be the sha256 of the file's own bytes.
+    bool content_addressed = false;
+    if (file_exists) {
+        QFile file(target);
+        if (file.open(QIODevice::ReadOnly)) {
+            content_addressed =
+                antikolt::previewContentName(file.readAll(), QStringLiteral("png")) == stored_ref;
+            file.close();
         }
     }
-
-    const bool file_exists = QFileInfo::exists(target) && QFileInfo(target).size() > 0;
     // A file is not a picture: a hidden surface that never painted would write a blank frame, so the check
     // reads the image back and counts colours. One colour is not a photographed page.
     const QImage image(target);
@@ -4244,6 +4270,7 @@ int runPreviewWorkerCheck(const QString& enginePath) {
     out << "worker_pixels=" << (image.isNull() ? 0 : image.width()) << 'x'
         << (image.isNull() ? 0 : image.height()) << " colours=" << colours << '\n';
     out << "worker_ref=" << stored_ref << '\n';
+    out << "worker_content_addressed=" << (content_addressed ? "true" : "false") << '\n';
     out << "worker_state=" << (worker_idle ? "idle" : "busy") << '\n';
     out << "worker_budget=" << budget_used << '\n';
     out << "worker_surface_gone=" << worker_gone << '\n';
@@ -4284,7 +4311,7 @@ int runPreviewWorkerCheck(const QString& enginePath) {
         QTimer::singleShot(5000, &loop, &QEventLoop::quit);
         loop.exec();
     }
-    const bool abort_preview_absent = !QFileInfo::exists(abort_target);
+    const bool abort_preview_absent = card_ref(abort_card).isEmpty();
     out << "abort_state=" << (abort_idle ? "idle" : "busy") << '\n';
     out << "abort_no_preview=" << (abort_preview_absent ? "ok" : "FAILED") << '\n';
     out << "abort_surface_gone=" << abort_gone << '\n';
@@ -4298,12 +4325,50 @@ int runPreviewWorkerCheck(const QString& enginePath) {
         (deadline_gone == QStringLiteral("not-asked") ||
          deadline_gone == QStringLiteral("no live surface"));
     const bool ok = grid_ready && deadline_passed && started && finished && produced && file_exists &&
-                    colours > 1 && stored_ref == worker_name && worker_idle && budget_used == 1 &&
+                    colours > 1 && content_addressed && worker_idle && budget_used == 1 &&
                     worker_gone == QStringLiteral("no live surface") && abort_started &&
                     abort_idle && abort_preview_absent &&
                     abort_gone == QStringLiteral("no live surface") && card_loaded;
     out << "preview_worker=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
+/// Prove preview names are content-addressed (ADR-077): `previewContentName` derives the name from the bytes'
+/// sha256, so identical content always collides on one name and different content never does. A pure function —
+/// no engine, no core — for the same reason the other `previews.h` checks are self-contained.
+int runPreviewHashCheck() {
+    QTextStream out(stdout);
+
+    const QByteArray empty;
+    const QByteArray hello("hello");
+    const QByteArray world("world");
+
+    const QString empty_name = antikolt::previewContentName(empty, QStringLiteral("png"));
+    const QString hello_name = antikolt::previewContentName(hello, QStringLiteral("png"));
+    const QString hello_again = antikolt::previewContentName(hello, QStringLiteral("png"));
+    const QString world_name = antikolt::previewContentName(world, QStringLiteral("png"));
+
+    // The sha256 of the empty string and of "hello" are published test vectors, so the check is pinned to a
+    // known answer rather than to a self-consistent guess.
+    const bool empty_pinned =
+        empty_name ==
+        QStringLiteral("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.png");
+    const bool hello_pinned =
+        hello_name ==
+        QStringLiteral("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824.png");
+    const bool deterministic = hello_name == hello_again;
+    const bool distinct = hello_name != world_name && empty_name != hello_name;
+
+    out << "hash_empty=" << empty_name << '\n';
+    out << "hash_hello=" << hello_name << '\n';
+    out << "hash_empty_pinned=" << (empty_pinned ? "ok" : "FAILED") << '\n';
+    out << "hash_hello_pinned=" << (hello_pinned ? "ok" : "FAILED") << '\n';
+    out << "hash_deterministic=" << (deterministic ? "ok" : "FAILED") << '\n';
+    out << "hash_distinct=" << (distinct ? "ok" : "FAILED") << '\n';
+    const bool ok = empty_pinned && hello_pinned && deterministic && distinct;
+    out << "preview_hash=" << (ok ? "ok" : "FAILED") << '\n';
     out.flush();
     return ok ? 0 : 1;
 }
@@ -10017,6 +10082,9 @@ int main(int argc, char* argv[]) {
                                           QStringLiteral("Prove the preview refresh policy, then exit."));
     const QCommandLineOption previewclean(QStringLiteral("previewclean"),
                                      QStringLiteral("Prove the preview directory is cleaned, then exit."));
+    const QCommandLineOption previewhashtest(
+        QStringLiteral("previewhashtest"),
+        QStringLiteral("Prove preview names are content-addressed (sha256), then exit."));
     const QCommandLineOption rulestest(
         QStringLiteral("rulestest"),
         QStringLiteral("Prove the session rules can be changed over the wire, then exit."),
@@ -10088,6 +10156,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(scrollzoomtest);
     parser.addOption(rulestest);
     parser.addOption(previewclean);
+    parser.addOption(previewhashtest);
     parser.addOption(previewrefresh);
     parser.addOption(previewbudget);
     parser.addOption(previewqueue);
@@ -10194,6 +10263,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(rulestest)) {
         return runRulesCheck(parser.value(rulestest));
+    }
+
+    if (parser.isSet(previewhashtest)) {
+        return runPreviewHashCheck();
     }
 
     if (parser.isSet(previewclean)) {

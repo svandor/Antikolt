@@ -3,6 +3,31 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-077 — A preview-név a tartalom, nem a kártya-azonosító (2026-11-23)
+
+**Kontextus:** a preview-fájl neve eddig a kártya azonosítója volt (`<id>.png`), és a `sha256`-alapú
+tartalom-szerinti blob-tár nyitott tételként állt, a Rust `sha2` crate hiányára hivatkozva („nincs hálózat a
+`cargo vendor`-hoz"). A valóságban a név a **shellben** keletkezik (a capture ott történik, a bájtok ott
+vannak), így a mag Rust oldala nem is szorul `sha2`-re: a Qt `QCryptographicHash::Sha256` ugyanazt adja,
+hálózat nélkül.
+
+**Döntés:**
+
+1. **A preview neve a tartalom hash-e** (`<sha256-hex>.<ext>`, `previewContentName` a `previews.h`-ban,
+   `QCryptographicHash::Sha256`). A kártya rekordjának `preview_ref`-je így a **kép** azonosságát hordozza,
+   nem a kártyáét.
+2. **A dedup a nevezésből adódik:** két kártya, amelynek az oldala bájtra azonosan fényképeződik, egyetlen
+   fájlt oszt meg — a második capture már nem másol új fájlt, csak a rekord tanulja meg ugyanazt a nevet.
+   A tartalom-változás új hash-t ad, a régi fájl az árva-takarítás (`removeOrphanPreviews`) áldozata lesz.
+3. **A frissesség-ellenőrzés a meglévő névvel fut:** a `previewNeedsRefresh` a tárolt `preview_ref`-re néz
+   (nem a kártya-azonosítóra), így a 7 napos szabály a tartalom-címzés után is érvényes.
+
+**Következmény:** (+) a tartalom-szerinti blob-tár megvan, a `sha2` crate-függőség megszűnt (a hash a
+shellben, Qt-vel); (+) a dedup egy fájlra fogja az azonos képeket; (+) a `--previewhashtest` (publikus
+tesztvektorokra tűzve), a `--previewgentest` és a `--previewworkertest` (`preview_content_addressed=ok` /
+`worker_content_addressed=ok`) méri; (−) a kártya-azonosító alapú nevek megszűntek — a régi profilban
+keletkezett `<id>.png` fájlok az árva-takarításban tűnnek el.
+
 ## ADR-076 — A `video_max_height` megjelenítési sapka, nem dekódolási sapka (2026-11-23)
 
 **Kontextus:** az ADR-020 erőforrás-profiljai `video_max_height` mezőt hordoznak (Fast 2160, Balanced 1080,
@@ -1245,6 +1270,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-074 | Memória-büdzsé (F6): `memory_budget_mb` a `user_prefs`-ben (`user_version=7`, default 512, 64..=4096, `serde(default)`); a shell `refreshUserPrefs`-szel cache-eli, a `system.memory` `budgetBytes`-ként adja; a rács used/budget sávot rajzol; `--metricstest` `page_budget_bytes > 0` | Elfogadva |
 | ADR-075 | `<antikolt-card>` önálló csomag: `home/antikolt-card.js` IIFE, a rács és a felhasználói lap ugyanezt tölti; a konténer/munkaterület `<select>` a `setOptions`-ból, a fókusz-állapot `getPendingFocusId()`-dal | Elfogadva |
 | ADR-076 | A `video_max_height` megjelenítési sapka: a motor `set_video_cap` opja nevesített stíluselemmel (`video{max-height:Npx}`), a profil hajtja, a `manual` eltávolítja; a dekódolási felbontás `not-measurable` (a CEF-nek nincs laponkénti korlátja), a hatókör top-level `video` | Elfogadva |
+| ADR-077 | A preview-név a tartalom hash-e (`previewContentName`, `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből; a frissesség-ellenőrzés a tárolt `preview_ref`-re néz | Elfogadva |
 
 ---
 

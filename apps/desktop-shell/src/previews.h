@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
@@ -25,6 +26,17 @@
 #include <array>
 
 namespace antikolt {
+
+/// The name a preview gets from its *content* (`<sha256-hex>.<extension>`, ADR-077).
+///
+/// A preview is a photograph of a page, so two cards whose pages photograph identically share one file on
+/// disk — the name is the content, not the card id. This is why the preview directory is a content-addressed
+/// blob store: the same bytes always get the same name, different bytes never collide by construction, and the
+/// card record's `preview_ref` is a stable identity of the picture rather than of the card.
+inline QString previewContentName(const QByteArray& bytes, const QString& extension) {
+    const QByteArray digest = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+    return QString::fromLatin1(digest.toHex()) + QLatin1Char('.') + extension;
+}
 
 /// The extensions a preview may have; the same list the engine's scheme handler serves (ADR-035).
 inline const std::array<const char*, 4>& previewExtensions() {
