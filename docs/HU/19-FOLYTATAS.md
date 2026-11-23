@@ -1,30 +1,45 @@
-# 19 — Folytatási munkarend (a 135. szelet után)
+# 19 — Folytatási munkarend (a 144. szelet után)
 
 > Ez a dokumentum **nem terv**, hanem munkarend: az aktuális állapotból indul, és minden tételhez
 > megadja, melyik fájlban, mi a teendő, és mi bizonyítja. A terv a `00`–`15`, a döntések a `05`, a
 > kronológia a `16`; ez a lap a következő munkamenet első olvasmánya.
 
-## ÁTADÁS — 2026-11-23 (a 135. szelet után, új munkamenethez)
+## ÁTADÁS — 2026-11-23 (a 144. szelet után, új munkamenethez)
 
-> Ez a fejezet az új munkamenet **első olvasmánya**. A `06b6e54` commitnál állunk; innen indul minden.
+> Ez a fejezet az új munkamenet **első olvasmánya**. A `d131c4f` commitnál állunk; innen indul minden.
 
 ### Állapot (mért, nem szándék)
 
 ```
-git rev-parse --short HEAD  →  06b6e54  (feat(slice-135): name the controls and verify accessibility)
-scripts/verify.ps1          →  ALL CHECKS PASSED — 65 ellenőrzés mind „ok"
+git rev-parse --short HEAD  →  d131c4f  (docs(slice-144): release files (THIRD-PARTY-NOTICES) + gate check (M8))
+scripts/verify.ps1          →  ALL CHECKS PASSED — 71 ellenőrzés mind „ok"
 cargo test                  →  156 zöld: 78 + 53 + 9 + 1 + 15
 git status                  →  tiszta munkafa, minden pusholva (origin/main)
 ```
 
-### Ebben a munkamenetben készült el (123–135. szelet, mind zöld + pusholt)
+### Ebben a munkamenetben készült el (136–144. szelet, mind zöld + pusholt)
 
-- **F6 memória-governor befejezve:** `--memorypressuretest` (jel), `--memorypressuree2etest` (e2e), a rács
-  mutatja a nyomást (híd-javítás a 126.-ban), `--memoryhibernatetest` (hard = hibernálás), `--memorywarnpausetest`
-  (warn = a preview 5 percre szünetel).
-- **F7 asztali alapok:** `--printtest` (mentés PDF-be), `--findtest` (Ctrl+F + keresősáv), `--downloadtest`
-  (letöltés), `--crashtest` (renderer-összeomlás detektálása **és** automatikus újratöltés), `--pdftest`
-  (PDF a PDFium-nézőben), `--accessibilitytest` (nevesített vezérlők + Ctrl+F regisztrálva).
+- **F6 videósapka:** `video_max_height` megjelenítési sapkaként (`set_video_cap`, ADR-076, `--videocaptest`).
+- **F2 preview:** a preview-név a tartalom sha256-e (`previewContentName`, ADR-077, `--previewhashtest`).
+- **HU/EN felület teljes:** chrome + rács + kártya + statikus címkék + státuszüzenetek (ADR-078/079,
+  `--languagetest` + `--gridlangtest`, 138–141. szelet).
+- **M6 automatikus profilváltás:** `Auto` mód (ADR-080, `--autoprofiltest`, 142. szelet).
+- **M7 könyvjelző-import:** Netscape-HTML → kártyák (ADR-081, `--bookmarkimporttest`, 143. szelet).
+- **M8 kiadási fájlok:** `THIRD-PARTY-NOTICES.txt` + a kapu „Release files" ellenőrzése (144. szelet).
+
+### Sorrend és egyeztetés a karbantartóval (ez blokkolja a kódot)
+
+A jól szcopolható kódmunka **kész**. A maradék néhány nagy tétel, többhöz **előbb döntés kell**:
+
+1. **Jelszó-boltozat + jelszó-import (M7)** — a termékben **nincs** jelszótároló, így az import nem mehet
+   anélkül. **Egyeztetni:** mit tárol (csak jelszavak / + TOTP / + passkey), milyen titkosítással (Windows DPAPI
+   vagy mesterjelszó), honnan importál (Chrome/Firefox CSV, vagy előbb csak a vault).
+2. **PiP (M7)** — a CEF 158 PiP-je views-alapú, a shell ablakos API-t használ. **Egyeztetni:** architektúra-váltás,
+   vagy a PiP elengedése `not-measurable`-ként.
+3. **Verzió/mérföldkő** — az M6 kész, az M7 majdnem. **Egyeztetni:** `v0.8` → `v0.9` bump, és mi zárja az M7-et.
+
+A döntések után, sorrendben: vault + import → PiP (ha jóváhagyva) → teljes HU→EN fordítás (M8) → Linux-csomag
+(M8) → kiadás (emberi: SignPath/Store, NVDA).
 
 ### Ami nyitva van (konkrét következő lépés)
 
