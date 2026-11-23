@@ -12,6 +12,25 @@
   let cardContainers = [];
   let cardWorkspaces = [];
 
+  // The card's own strings (i18n, ADR-079). Hungarian is authoritative; `t()` maps to English when the shell
+  // pushes `data-language=en`. A missing entry falls back to the Hungarian source.
+  const EN = {
+    "bejelentkezve": "signed in",
+    "hamarosan lejár": "expiring soon",
+    "kijelentkezve": "signed out",
+    "ismeretlen állapot": "unknown state",
+    "A kártya címe": "Card title",
+    "A kártya webcíme": "Card URL",
+    "Mentés": "Save",
+    "Mégse": "Cancel",
+    "Biztos?": "Sure?",
+    "címke törlése": "tag removal",
+    "＋címke": "＋tag",
+    "Új címke": "New tag",
+    "címke": "tag",
+  };
+  const t = (hu) => (document.documentElement.dataset.language === "en" && EN[hu] ? EN[hu] : hu);
+
   /** Deterministic hue from a string, used for placeholder tiles and container dots. */
   function hashHue(text) {
     let hash = 0;
@@ -110,7 +129,7 @@
       article.dataset.size = card.size || "m";
       article.tabIndex = -1;
       article.setAttribute("role", "listitem");
-      article.setAttribute("aria-label", `${card.title} — ${card.domain} — ${status.label}`);
+      article.setAttribute("aria-label", `${card.title} — ${card.domain} — ${t(status.label)}`);
       article.dataset.cardId = card.id;
       if (pendingFocusId && card.id === pendingFocusId) {
         // A note save re-renders the list — and the core's push re-renders it *again* — so the focus is re-applied on
@@ -157,7 +176,7 @@
         input.type = "text";
         input.className = "card-title-input";
         input.value = card.title || "";
-        input.setAttribute("aria-label", "A kártya címe");
+        input.setAttribute("aria-label", t("A kártya címe"));
         const finish = (value, save) => {
           const next = String(value ?? "").trim();
           const wanted = save && next && next !== card.title;
@@ -275,7 +294,7 @@
         input.type = "text";
         input.className = "card-domain-input";
         input.value = card.url || "";
-        input.setAttribute("aria-label", "A kártya webcíme");
+        input.setAttribute("aria-label", t("A kártya webcíme"));
         const restore = () => {
           try {
             if (input.parentNode) {
@@ -352,11 +371,11 @@
       const save = document.createElement("button");
       save.type = "button";
       save.className = "note-save";
-      save.textContent = "Mentés";
+      save.textContent = t("Mentés");
       const cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "note-cancel";
-      cancel.textContent = "Mégse";
+      cancel.textContent = t("Mégse");
       // Typing must not reach the grid's keyboard navigation, and selecting text must not open the card.
       for (const eventName of ["click", "keydown", "keyup", "pointerdown"]) {
         textarea.addEventListener(eventName, (event) => event.stopPropagation());
@@ -408,7 +427,7 @@
       const removeButton = document.createElement("button");
       removeButton.type = "button";
       removeButton.className = "badge remove";
-      removeButton.textContent = this.armedDelete?.id === card.id ? "Biztos?" : "×";
+      removeButton.textContent = this.armedDelete?.id === card.id ? t("Biztos?") : "×";
       removeButton.dataset.armed = this.armedDelete?.id === card.id ? "1" : "0";
       removeButton.title =
         this.armedDelete?.id === card.id
@@ -450,7 +469,7 @@
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "tag-remove";
-        remove.setAttribute("aria-label", `${tag} címke törlése`);
+        remove.setAttribute("aria-label", `${tag} ${t("címke törlése")}`);
         remove.textContent = "×";
         remove.addEventListener("click", (event) => {
           event.preventDefault();
@@ -469,7 +488,7 @@
       const addTag = document.createElement("button");
       addTag.type = "button";
       addTag.className = "tag-add";
-      addTag.textContent = "＋címke";
+      addTag.textContent = t("＋címke");
       addTag.title = "Címke hozzáadása";
       addTag.addEventListener("click", (event) => {
         event.preventDefault();
@@ -477,8 +496,8 @@
         const input = document.createElement("input");
         input.type = "text";
         input.className = "tag-input";
-        input.setAttribute("aria-label", "Új címke");
-        input.placeholder = "címke";
+        input.setAttribute("aria-label", t("Új címke"));
+        input.placeholder = t("címke");
         const finish = (value, keep) => {
           const tags = keep
             ? [...(this.card?.tags ?? []), String(value ?? "").trim()].filter(Boolean)

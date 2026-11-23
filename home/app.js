@@ -85,6 +85,33 @@ const EN = {
   "Új kártya (Ctrl N)": "New card (Ctrl N)",
   "CEF (beágyazott kártya)": "CEF (embedded card)",
   "mock bridge (statikus előnézet)": "mock bridge (static preview)",
+  "Ugrás a kártyákhoz": "Skip to cards",
+  "Munkaterületek": "Workspaces",
+  "Téma": "Theme",
+  "Világos": "Light",
+  "Szürke (alap)": "Grey (default)",
+  "Sötét": "Dark",
+  "AMOLED": "AMOLED",
+  "Világos téma": "Light theme",
+  "Szürke téma": "Grey theme",
+  "Sötét téma": "Dark theme",
+  "AMOLED téma": "AMOLED theme",
+  "Memória-állapot (a böngésző méri)": "Memory status (measured by the browser)",
+  "Kitűzve": "Pinned",
+  "Kártyák": "Cards",
+  "Konténerek szűrése": "Filter containers",
+  "mozgás": "move",
+  "megnyitás": "open",
+  "keresés": "search",
+  "keresés törlése": "clear search",
+  "motor": "engine",
+  "motor: hideg": "engine: cold",
+  "magas memória-nyomás: a lap a kemény sáv fölött":
+    "high memory pressure: the page is above the hard band",
+  "figyelmeztető memória-nyomás: a lap a figyelmeztető sáv fölött":
+    "warning memory pressure: the page is above the warn band",
+  "memória-takarékos: a lap túllépi a büdzsét (kattintás: elrejtés)":
+    "memory-saving: the page exceeds the budget (click to hide)",
 };
 const pageLanguage = () => document.documentElement.dataset.language || "hu";
 const t = (hu) => (pageLanguage() === "en" && EN[hu] ? EN[hu] : hu);
@@ -1743,6 +1770,53 @@ class HomePage {
       add.setAttribute("aria-label", t("Új kártya"));
       add.title = t("Új kártya (Ctrl N)");
     }
+    const skip = document.querySelector("a.skip");
+    if (skip) {
+      skip.textContent = t("Ugrás a kártyákhoz");
+    }
+    const workspaces = document.getElementById("workspaces");
+    if (workspaces) {
+      workspaces.setAttribute("aria-label", t("Munkaterületek"));
+    }
+    const themes = document.querySelector(".themes");
+    if (themes) {
+      themes.setAttribute("aria-label", t("Téma"));
+    }
+    const themeLabels = {
+      light: ["Világos", "Világos téma"],
+      grey: ["Szürke (alap)", "Szürke téma"],
+      dark: ["Sötét", "Sötét téma"],
+      amoled: ["AMOLED", "AMOLED téma"],
+    };
+    document.querySelectorAll("[data-theme-set]").forEach((button) => {
+      const pair = themeLabels[button.dataset.themeSet];
+      if (!pair) return;
+      button.title = t(pair[0]);
+      button.setAttribute("aria-label", t(pair[1]));
+    });
+    const mem = this.memEl;
+    if (mem) {
+      mem.title = t("Memória-állapot (a böngésző méri)");
+    }
+    const pinned = document.getElementById("pinned-heading");
+    if (pinned) {
+      pinned.textContent = t("Kitűzve");
+    }
+    const all = document.getElementById("all-heading");
+    if (all) {
+      all.textContent = t("Kártyák");
+    }
+    const legend = document.getElementById("container-legend");
+    if (legend) {
+      legend.setAttribute("aria-label", t("Konténerek szűrése"));
+    }
+    const viewport = document.getElementById("viewport");
+    if (viewport) {
+      viewport.setAttribute("aria-label", t("Kártyák"));
+    }
+    document.querySelectorAll("[data-i18n]").forEach((node) => {
+      node.textContent = t(node.dataset.i18n);
+    });
   }
 
   setLanguage(lang) {
@@ -1790,18 +1864,18 @@ class HomePage {
         this.memEl.classList.toggle("mem-warn", pressure === "warn");
         this.memEl.classList.toggle("mem-hard", pressure === "hard");
         this.memEl.title = pressure === "hard"
-          ? "magas memória-nyomás: a lap a kemény sáv fölött"
+          ? t("magas memória-nyomás: a lap a kemény sáv fölött")
           : pressure === "warn"
-            ? "figyelmeztető memória-nyomás: a lap a figyelmeztető sáv fölött"
+            ? t("figyelmeztető memória-nyomás: a lap a figyelmeztető sáv fölött")
             : over
-              ? "memória-takarékos: a lap túllépi a büdzsét (kattintás: elrejtés)"
+              ? t("memória-takarékos: a lap túllépi a büdzsét (kattintás: elrejtés)")
               : "";
       } else {
-        this.memEl.textContent = "motor: hideg";
+        this.memEl.textContent = t("motor: hideg");
         this.memEl.style.setProperty("--mem-fill", "0%");
       }
       const engine = await this.bridge.system.engine();
-      this.engineEl.textContent = `motor: ${engine}`;
+      this.engineEl.textContent = `${t("motor")}: ${engine}`;
     } catch {
       this.memEl.textContent = "—";
     }

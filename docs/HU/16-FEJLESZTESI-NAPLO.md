@@ -3,6 +3,35 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvenedik szelet) — a kártya inline címkéi és a rács statikus címkéi is válthatók (M7, i18n)
+
+Az ADR-079 a rács fő karakterláncait tette válthatóvá; ez a szelet a maradék rács-oldalt zárja: a kártya
+inline szerkesztőcímkéit és a statikus (HTML-beli) címkéket.
+
+### Mi változott
+
+- **`home/antikolt-card.js`:** saját `t()` + HU→EN `EN` térkép (a kártya külön IIFE, így a maga tábláját
+  viszi): a státusz-badgék (bejelentkezve / hamarosan lejár / kijelentkezve / ismeretlen állapot), a
+  „Mentés", „Mégse", „Biztos?", „＋címke" és a címke/szerkesztő aria-címkék angolja.
+- **`home/app.js`:** a `applyStaticLabels` kiegészítve a statikus chrome-mal — az „Ugrás a kártyákhoz"
+  ugrólink, a „Kitűzve" / „Kártyák" szakaszcímek, a téma-gombok, a memória-címke, a konténer-legenda és a
+  lábléc-billentyűhinták (`data-i18n`); a `refreshSystem` memória-nyomás-tooltipjei és a „motor:" előtag is.
+- **`home/index.html`:** a lábléc-hinták `data-i18n` spanokra bontva, hogy a `applyStaticLabels` címkézze őket.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (69 ellenőrzés mind „ok", a gridlangtest és a check-repo továbbra is zöld)
+--gridlangtest     → grid_lang_before=hu · grid_lang_after=en · grid_language_witness=en
+                     (a váltómechanizmus, amit a kártya- és statikus címkék is használnak)
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A shell **státuszüzenetei** (a `setStatus` hívások) még magyarok; a PiP (architektúra-döntés); a teljes
+  képernyőolvasó-illesztés (NVDA); az OAuth összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonkilencedik szelet) — a rács nyelve is a shellt követi (HU/EN, M7)
 
 Az ADR-078 a shell chrome-át tette válthatóvá; ez a szelet a **rácsot** (`home/app.js`) köti rá ugyanarra a
