@@ -117,6 +117,7 @@ $engineChecks = @(
     @{ Name = 'memorypressuretest'; Args = @('--memorypressuretest') },
     @{ Name = 'memorypressuree2etest'; Args = @('--memorypressuree2etest') },
     @{ Name = 'memoryhibernatetest'; Args = @('--memoryhibernatetest') },
+    @{ Name = 'memorywarnpausetest'; Args = @('--memorywarnpausetest') },
     @{ Name = 'enginerestarttest'; Args = @('--enginerestarttest') },
     @{ Name = 'rastertest'; Args = @('--rastertest') },
     @{ Name = 'rasterhometest'; Args = @('--rasterhometest') },

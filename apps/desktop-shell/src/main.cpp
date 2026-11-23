@@ -2623,6 +2623,82 @@ int runMemoryHibernateCheck(const QString& enginePath) {
     return closed ? 0 : 1;
 }
 
+int runMemoryWarnPauseCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    // Warn (0.5 MiB) fires on the ~100 MiB grid; hard (1 GiB) never does, so the card stays and the observable is
+    // the preview pause. The check clock is 1 s, so the governor has sampled the grid well before the read below.
+    qputenv("ANTIKOLT_MEMORY_WARN_BYTES", "524288");
+    qputenv("ANTIKOLT_MEMORY_HARD_BYTES", "1073741824");
+    qputenv("ANTIKOLT_MEMORY_CHECK_MS", "1000");
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 home_surface = 0;
+    qint64 used = 0;
+    QString pressure;
+    bool preview_paused = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             home_surface = id;
+                             window.refreshUserPrefs();
+                             // Wait two check ticks, then ask the page for the governor's view.
+                             QTimer::singleShot(2500, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral("window.antikoltNative.request('system.memory', {})"
+                                                    ".then(function(r){window.__mwp=r;},"
+                                                    "function(e){window.__mwp={error:String(e.message)};});"
+                                                    " 'asked'"),
+                                     [&, id](const QJsonObject&, const QString&) {
+                                         QTimer::singleShot(900, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id, QStringLiteral("JSON.stringify(window.__mwp||null)"),
+                                                 [&](const QJsonObject& value, const QString& failure) {
+                                                     if (failure.isEmpty()) {
+                                                         const QJsonObject mem =
+                                                             QJsonDocument::fromJson(
+                                                                 value
+                                                                     .value(QStringLiteral("value"))
+                                                                     .toString()
+                                                                     .toUtf8())
+                                                                 .object();
+                                                         used = static_cast<qint64>(
+                                                             mem.value(QStringLiteral("usedBytes")).toDouble());
+                                                         pressure =
+                                                             mem.value(QStringLiteral("pressure")).toString();
+                                                         preview_paused =
+                                                             mem.value(QStringLiteral("previewPaused")).toBool();
+                                                     }
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "home_surface=" << home_surface << '\n';
+    out << "warn_used=" << used << '\n';
+    out << "warn_pressure=" << pressure << '\n';
+    out << "warn_preview_paused=" << (preview_paused ? "true" : "false") << '\n';
+    const bool ok = home_surface != 0 && used > 0 && pressure == QStringLiteral("warn") && preview_paused;
+    out << "memory_warn_pause=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -9341,6 +9417,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("memoryhibernatetest"),
         QStringLiteral("Prove the hard band hibernates the live card (F6), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption memorywarnpausetest(
+        QStringLiteral("memorywarnpausetest"),
+        QStringLiteral("Prove the warn band pauses the preview worker (F6), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9426,6 +9506,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(memorypressuretest);
     parser.addOption(memorypressuree2etest);
     parser.addOption(memoryhibernatetest);
+    parser.addOption(memorywarnpausetest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9624,6 +9705,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(memoryhibernatetest)) {
         return runMemoryHibernateCheck(parser.value(memoryhibernatetest));
+    }
+
+    if (parser.isSet(memorywarnpausetest)) {
+        return runMemoryWarnPauseCheck(parser.value(memorywarnpausetest));
     }
 
     if (parser.isSet(enginerestarttest)) {

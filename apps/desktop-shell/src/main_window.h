@@ -423,6 +423,9 @@ private:
     /// (F6). The factory values match the `Balanced` profile (850 MiB / 1000 MiB).
     qint64 memory_warn_bytes_ = 850LL * 1024 * 1024;
     qint64 memory_hard_bytes_ = 1000LL * 1024 * 1024;
+    /// Until what epoch (ms) the background preview worker is paused after warn/hard pressure (F6, ADR-020 "warn =
+    /// free background resources"). Zero when not paused; `startPreviewWorker` refuses while `now` is below it.
+    qint64 preview_paused_until_ms_ = 0;
     /// The idle-hibernation window in ms, cached from `user_prefs.idle_hibernate_ms` (ADR-072). The factory
     /// 10 minutes until the first `refreshUserPrefs` answers; `ANTIKOLT_HIBERNATE_MS` still overrides for the
     /// self test.

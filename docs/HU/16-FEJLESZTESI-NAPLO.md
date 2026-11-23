@@ -3,6 +3,34 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonnyolcadik szelet) — a figyelmeztető sáv szünetelteti a preview-t (F6)
+
+A 127. szelet a „hard = hibernálás" akciót tette be; most a „warn = háttér-erőforrás felszabadítása" jött. A
+governor már a **rácson is** mintáz (nem csak élő kártyán), és a `warn` sáv elérésekor 5 percre szünetelteti a
+háttér-preview-munkást — a `hard` továbbra is hibernálja az élő kártyát.
+
+### Mi változott
+
+- **`main_window.{h,cpp}`:** a `memory_check_` most a konstruktortól fut, és azt a felületet mintázza, amelyik épp
+  él (rács vagy kártya). A `checkMemoryPressure` a `warn` sávnál `preview_paused_until_ms_`-t állít (5 perc), a
+  `hard` sávnál ugyanezt **és** hibernál (ha kártya él). A `startPreviewWorker` a szünet alatt elutasít; a
+  `system.memory` válasz új `previewPaused` mezőt kap.
+- **`--memorywarnpausetest` (új):** 0,5 MiB-os `warn` + 1 GiB-os `hard` (sosem süt) → a ~110 MiB-os rács a `warn`
+  sávba esik, és a válasz `pressure=warn` + `previewPaused=true`.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1     → ALL SELF TESTS PASSED (59 ellenőrzés mind „ok", köztük a memorywarnpausetest és a check-repo)
+--memorywarnpausetest  → warn_used=113532928 · warn_pressure=warn · warn_preview_paused=true · memory_warn_pause=ok
+cargo test              → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A `video_max_height` médiaminőség-korlátja (az F6 utolsó, „3–4 hetes" tétele); az OAuth összekötése; az emberi
+  kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonhetedik szelet) — a kemény sáv hibernálja az élő kártyát (F6)
 
 A 124–126. szelet a `pressure` jelet építette és a rácson láthatóvá tette; most a **művelet** jött: a

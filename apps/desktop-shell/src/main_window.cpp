@@ -313,16 +313,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             live_card_pinned_ = pending_pinned_;
             pending_pinned_ = false;
             armIdleTimer();
-            memory_check_->start();
         }
     });
     connect(card_, &LiveCard::surfaceDetached, this, [this](qint64 surface) {
         surface_ = 0;
         home_surface_ = 0;
         live_card_pinned_ = false;
-        if (memory_check_ != nullptr) {
-            memory_check_->stop();
-        }
         setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
         // A card went back to disk: the engine is now idle, so the raster home's clock starts (T2). Skipped while
         // already in the raster home (enterRasterMode detaches too, and must not re-arm itself).
@@ -349,6 +345,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     memory_check_ = new QTimer(this);
     memory_check_->setInterval(memory_check_ms > 0 ? memory_check_ms : 15000);
     connect(memory_check_, &QTimer::timeout, this, &MainWindow::checkMemoryPressure);
+    // It samples whichever surface is live (grid or card), so it runs from the start and stops only with the window.
+    memory_check_->start();
     // Activity is what the user does, not what the engine reports: mouse and keyboard, wherever they
     // land inside the shell. The page's own input arrives in the engine's process, so the card also
     // wakes the clock through the bridge (a page that is not touched never sends anything).
@@ -526,11 +524,11 @@ void MainWindow::onIdleTimeout() {
 }
 
 void MainWindow::checkMemoryPressure() {
-    // The "aggressive action" (F6, ADR-020): a live card whose working set is at or above the hard band is treated
-    // like the idle timeout — the same guards (pinned, popup, media) and the same freeze path, only the trigger
-    // differs. The measure is the same `metrics` the page's memory figure uses (ADR-036).
-    if (surface_ == 0 || surface_ == home_surface_ || !card_->hasSurface() || hibernating_ ||
-        live_engine_ == nullptr || !live_engine_->isRunning()) {
+    // The memory governor (F6, ADR-020). It samples the *current* live surface — the grid or a card — and acts on
+    // the profile's bands. Warn frees background resources (the preview worker pauses for a cooldown); hard takes
+    // the aggressive action too (the live card is hibernated, the same guards and freeze path as the idle timeout).
+    if (surface_ == 0 || !card_->hasSurface() || hibernating_ || live_engine_ == nullptr ||
+        !live_engine_->isRunning()) {
         return;
     }
     live_engine_->metrics(surface_, [this](const QJsonObject& measured, const QString& error) {
@@ -540,8 +538,19 @@ void MainWindow::checkMemoryPressure() {
         const qint64 used = static_cast<qint64>(
             measured.value(QStringLiteral("engine_working_set_bytes")).toString().toLongLong());
         if (memory_hard_bytes_ > 0 && used >= memory_hard_bytes_) {
-            setStatus(QStringLiteral("memória-nyomás: a kártya a kemény sáv fölött"));
-            onIdleTimeout();
+            // Hard: pause background previews, then hibernate the card itself when one is live.
+            preview_paused_until_ms_ = QDateTime::currentMSecsSinceEpoch() + 300000;
+            setStatus(QStringLiteral("memória-nyomás: a kemény sáv fölött"));
+            if (surface_ != home_surface_) {
+                onIdleTimeout();
+            }
+            return;
+        }
+        if (memory_warn_bytes_ > 0 && used >= memory_warn_bytes_) {
+            // Warn: free background resources — pause the preview worker for a cooldown, but keep the card alive.
+            preview_paused_until_ms_ = QDateTime::currentMSecsSinceEpoch() + 300000;
+            setStatus(QStringLiteral(
+                "memória-nyomás: a figyelmeztető sáv fölött — a preview szünetel"));
         }
     });
 }
@@ -1496,12 +1505,15 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                 // The profile's warn/hard bands (ADR-020) become a live signal here: the measured working set
                 // is classed against them, so the governor (and the page) can tell "fine" from "under pressure".
                 const QString pressure = memoryPressureName(used, memory_warn_bytes_, memory_hard_bytes_);
+                const bool preview_paused = preview_paused_until_ms_ > 0 &&
+                                            QDateTime::currentMSecsSinceEpoch() < preview_paused_until_ms_;
                 replyToPage(request,
                             QJsonObject{{QStringLiteral("usedBytes"), static_cast<double>(used)},
                                         {QStringLiteral("budgetBytes"),
                                          static_cast<double>(memory_budget_bytes_)},
                                         {QStringLiteral("overBudget"), over_budget},
-                                        {QStringLiteral("pressure"), pressure}});
+                                        {QStringLiteral("pressure"), pressure},
+                                        {QStringLiteral("previewPaused"), preview_paused}});
             });
             return;
         }
@@ -1982,6 +1994,9 @@ bool MainWindow::startPreviewWorker(const QString& cardId, const QString& url, c
     // The worker photographs a card, so it runs in that card's container engine: the preview sees the page
     // exactly as the card would — the container's proxy, cookies and permission policy (ADR-071). A card
     // without a container runs in the home engine.
+    if (QDateTime::currentMSecsSinceEpoch() < preview_paused_until_ms_) {
+        return false;
+    }
     worker_engine_ = engineFor(container);
     if (worker_engine_ == nullptr || !worker_engine_->isRunning() || engine_profile_.isEmpty()) {
         return false;
