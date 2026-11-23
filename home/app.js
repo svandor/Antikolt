@@ -1713,9 +1713,18 @@ class HomePage {
         // The media-quality signal (F6): over budget means a "memory-saving" hint, dismissible by a click.
         const over = Boolean(memory.overBudget);
         this.memEl.classList.toggle("mem-over", over && !this.memoryHintDismissed);
-        this.memEl.title = over
-          ? "memória-takarékos: a lap túllépi a büdzsét (kattintás: elrejtés)"
-          : "";
+        // The pressure class (F6, ADR-020): warn/hard are the profile's governor bands, persistent — they describe
+        // the system, not a hint — so they are not cleared by the dismiss click. `normal` clears both.
+        const pressure = memory.pressure || "normal";
+        this.memEl.classList.toggle("mem-warn", pressure === "warn");
+        this.memEl.classList.toggle("mem-hard", pressure === "hard");
+        this.memEl.title = pressure === "hard"
+          ? "magas memória-nyomás: a lap a kemény sáv fölött"
+          : pressure === "warn"
+            ? "figyelmeztető memória-nyomás: a lap a figyelmeztető sáv fölött"
+            : over
+              ? "memória-takarékos: a lap túllépi a büdzsét (kattintás: elrejtés)"
+              : "";
       } else {
         this.memEl.textContent = "motor: hideg";
         this.memEl.style.setProperty("--mem-fill", "0%");
@@ -1897,8 +1906,10 @@ function withNativeOpen(mock) {
         Promise.resolve(
           nativeBridge() ? "CEF (beágyazott kártya)" : "mock bridge (statikus előnézet)",
         ),
-      // The memory figure is measured by the engine (ADR-036), not estimated here. `budgetBytes` is 0
-      // until profiles carry a budget, and the renderer then shows the used figure alone.
+      // The memory figure is measured by the engine (ADR-036), not estimated here. `overBudget` and `pressure` ride
+      // the same reply (F6, ADR-020): the bridge must pass them through, or the grid's memory hint and pressure
+      // classes would never fire — measured the hard way when `--memorypressuree2etest` saw `pressure=hard` from the
+      // wire but a grid without the `mem-hard` class.
       memory: async () => {
         const native = nativeBridge();
         if (!native?.request) {
@@ -1908,6 +1919,8 @@ function withNativeOpen(mock) {
         return {
           usedBytes: Number(answer?.usedBytes) || 0,
           budgetBytes: Number(answer?.budgetBytes) || 0,
+          overBudget: Boolean(answer?.overBudget),
+          pressure: answer?.pressure || "normal",
         };
       },
     },
@@ -2005,6 +2018,16 @@ window.antikoltGridState = () => ({
   firstId: page.cards[0]?.id ?? "",
   firstUrl: page.cards[0]?.url ?? "",
   titles: page.cards.map((card) => card.title),
+});
+
+// The memory indicator witness (F6): what the grid's memory figure shows and which pressure class it is in, so a
+// self test reads the user-visible state instead of guessing from the number or the shell's bookkeeping.
+window.antikoltMemoryState = () => ({
+  text: page.memEl?.textContent ?? "",
+  over: page.memEl?.classList.contains("mem-over") ?? false,
+  warn: page.memEl?.classList.contains("mem-warn") ?? false,
+  hard: page.memEl?.classList.contains("mem-hard") ?? false,
+  dismissed: page.memoryHintDismissed ?? false,
 });
 
 // The search witness: what the box contains, what the grid shows for it, and what the empty state says. The fold

@@ -2486,6 +2486,7 @@ int runMemoryPressureE2eCheck(const QString& enginePath) {
     qint64 home_surface = 0;
     qint64 used = 0;
     QString pressure;
+    bool page_hard = false;
     {
         QEventLoop loop;
         QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
@@ -2506,20 +2507,30 @@ int runMemoryPressureE2eCheck(const QString& enginePath) {
                                      [&, id](const QJsonObject&, const QString&) {
                                          QTimer::singleShot(900, &loop, [&, id] {
                                              window.engine()->evaluate(
-                                                 id, QStringLiteral("JSON.stringify(window.__mpe||null)"),
+                                                 id,
+                                                 QStringLiteral(
+                                                     "JSON.stringify({mem: window.__mpe||null,"
+                                                     " state: window.antikoltMemoryState ?"
+                                                     " window.antikoltMemoryState() : null})"),
                                                  [&](const QJsonObject& value, const QString& failure) {
                                                      if (failure.isEmpty()) {
-                                                         const QJsonObject mem =
+                                                         const QJsonObject all =
                                                              QJsonDocument::fromJson(
                                                                  value
                                                                      .value(QStringLiteral("value"))
                                                                      .toString()
                                                                      .toUtf8())
                                                                  .object();
+                                                         const QJsonObject mem =
+                                                             all.value(QStringLiteral("mem")).toObject();
+                                                         const QJsonObject state =
+                                                             all.value(QStringLiteral("state")).toObject();
                                                          used = static_cast<qint64>(
                                                              mem.value(QStringLiteral("usedBytes")).toDouble());
                                                          pressure =
                                                              mem.value(QStringLiteral("pressure")).toString();
+                                                         page_hard =
+                                                             state.value(QStringLiteral("hard")).toBool();
                                                      }
                                                      loop.quit();
                                                  });
@@ -2534,7 +2545,8 @@ int runMemoryPressureE2eCheck(const QString& enginePath) {
     out << "home_surface=" << home_surface << '\n';
     out << "pressure_e2e_used=" << used << '\n';
     out << "pressure_e2e=" << pressure << '\n';
-    const bool ok = home_surface != 0 && used > 0 && pressure == QStringLiteral("hard");
+    out << "pressure_e2e_page_hard=" << (page_hard ? "true" : "false") << '\n';
+    const bool ok = home_surface != 0 && used > 0 && pressure == QStringLiteral("hard") && page_hard;
     out << "memory_pressure_e2e=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

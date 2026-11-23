@@ -3,6 +3,40 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonhatodik szelet) — a rács mutatja a memória-nyomást, és a híd megtalálva (F6)
+
+A 125. szelet `pressure` jele a **lapig** most ért el — és közben kiderült, hogy eddig **nem ért el**: a híd
+`system.memory` leképezése csak `{usedBytes, budgetBytes}`-t adott tovább, a `overBudget`-et és a `pressure`-t
+**eldobta**. A rács `refreshSystem`-je olvasta őket, de mindig `undefined`-ot kapott, tehát a „memória-takarékos"
+jelzés (`mem-over`) valójában soha nem sült. Ezt a híd javítása zárta le, és a rács most a `warn`/`hard` osztályt is
+mutatja.
+
+### Mi változott
+
+- **`home/app.js` — a híd:** `system.memory` most továbbadja a `overBudget`-et és a `pressure`-t (a hiba, ami a
+  jelzéseket csendben levágta).
+- **`home/app.js` — a rács:** `refreshSystem` a `pressure` alapján `mem-warn`/`mem-hard` osztályt tesz a
+  memória-számra (a `normal` mindkettőt törli; ezek tartósak, a kattintás csak a `mem-over` tippet rejti), és a
+  tooltip a nyomást mondja. Új tanú: `window.antikoltMemoryState()`.
+- **`home/app.css`:** `mem-warn` (accent) és `mem-hard` (`--danger`) stílus.
+- **`--memorypressuree2etest`** (a 125. szeletből) kibővítve: a válasz `pressure=hard`-ja mellett a rács
+  `mem-hard` osztályát is bizonyítja — a teljes lánc: working set → sáv → `system.memory` → híd → rács.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1      → ALL SELF TESTS PASSED (57 ellenőrzés mind „ok", köztük a memorypressuree2etest és a check-repo)
+--memorypressuree2etest → pressure_e2e_used=106950656 · pressure_e2e=hard · pressure_e2e_page_hard=true ·
+                          memory_pressure_e2e=ok
+node --check home/app.js → ok (a check-repo része)
+cargo test               → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A nyomás **művelethez kötése** (a `warn`/`hard` szint hatása: előnézet-munkás szünet, kártya-hibernálás, a
+  `video_max_height` médiaminőség-korlátja); az OAuth összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonötödik szelet) — a memória-nyomás jel végponttól-végpontig bizonyítva (F6)
 
 A 124. szelet `pressure` jele csak a **képlet** szintjén volt bizonyítva (`--memorypressuretest`, tiszta függvény).

@@ -321,6 +321,16 @@ kbd {
   color: var(--text);
   border-color: var(--accent);
 }
+/* The pressure classes (F6, ADR-020): the profile's warn/hard governor bands, shown on the memory figure. They are
+   persistent (a system state, not a hint), so the dismiss click only clears `mem-over`; `normal` clears both. */
+.mem.mem-warn {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.mem.mem-hard {
+  color: var(--danger);
+  border-color: var(--danger);
+}
 
 /* ---- layout ----------------------------------------------------------------------------- */
 
