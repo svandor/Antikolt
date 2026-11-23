@@ -2548,19 +2548,28 @@ void MainWindow::refreshUserPrefs() {
         // engine lifetime (T1/T2) is cached for the raster home. A `Manual` profile has no params (null), so the
         // factory behaviour stays on.
         const QJsonObject profile = reply.value(QStringLiteral("profile")).toObject();
+        // The warn/hard bands (ADR-020) come from the derived profile. A positive test-only override
+        // (`ANTIKOLT_MEMORY_WARN_BYTES`/`ANTIKOLT_MEMORY_HARD_BYTES`) replaces them, so a self test can force the
+        // measured working set across a boundary — the same pattern as `ANTIKOLT_HIBERNATE_MS`.
+        const qint64 warn_override = qEnvironmentVariableIntValue("ANTIKOLT_MEMORY_WARN_BYTES");
+        const qint64 hard_override = qEnvironmentVariableIntValue("ANTIKOLT_MEMORY_HARD_BYTES");
         if (!profile.isEmpty()) {
             preview_refresh_ = profile.value(QStringLiteral("preview_refresh")).toBool(true);
             const QJsonValue shutdown = profile.value(QStringLiteral("engine_warm_idle_shutdown_ms"));
             engine_shutdown_ms_ = shutdown.isNull() ? -1 : static_cast<qint64>(shutdown.toDouble());
             memory_warn_bytes_ =
-                static_cast<qint64>(profile.value(QStringLiteral("memory_warn_bytes")).toDouble());
+                warn_override > 0
+                    ? warn_override
+                    : static_cast<qint64>(profile.value(QStringLiteral("memory_warn_bytes")).toDouble());
             memory_hard_bytes_ =
-                static_cast<qint64>(profile.value(QStringLiteral("memory_hard_bytes")).toDouble());
+                hard_override > 0
+                    ? hard_override
+                    : static_cast<qint64>(profile.value(QStringLiteral("memory_hard_bytes")).toDouble());
         } else {
             preview_refresh_ = true;
             engine_shutdown_ms_ = -1;
-            memory_warn_bytes_ = 850LL * 1024 * 1024;
-            memory_hard_bytes_ = 1000LL * 1024 * 1024;
+            memory_warn_bytes_ = warn_override > 0 ? warn_override : 850LL * 1024 * 1024;
+            memory_hard_bytes_ = hard_override > 0 ? hard_override : 1000LL * 1024 * 1024;
         }
         // An open dock follows the core's answer, not a stale copy of it.
         if (settings_dock_ != nullptr && settings_dock_->isVisible()) {

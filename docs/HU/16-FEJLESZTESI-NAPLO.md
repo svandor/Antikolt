@@ -3,6 +3,35 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonötödik szelet) — a memória-nyomás jel végponttól-végpontig bizonyítva (F6)
+
+A 124. szelet `pressure` jele csak a **képlet** szintjén volt bizonyítva (`--memorypressuretest`, tiszta függvény).
+Hiányzott a végponttól-végpontig bizonyíték: hogy a **mért** working set a **valódi** sávokhoz mérve, a
+`system.memory` válaszban, helyes osztályt ad. Ez most megvan — a sávok teszt-átírásával, ugyanazzal a mintával,
+mint az `ANTIKOLT_HIBERNATE_MS`.
+
+### Mi változott
+
+- **Teszt-átírás:** `ANTIKOLT_MEMORY_WARN_BYTES`/`ANTIKOLT_MEMORY_HARD_BYTES` (pozitív érték felülírja a profil
+  sávjait `refreshUserPrefs`-ben), így egy önteszt a mért working set-et át tudja vinni a határon.
+- **`--memorypressuree2etest` (új):** 0,5 MiB / 1 MiB sávokkal a ~110 MiB-os élő working set mindkét sávot átlépi,
+  tehát a válasznak `pressure=hard`-nak kell lennie — a mérés eteti a jelet, nem a képlet.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1     → ALL SELF TESTS PASSED (57 ellenőrzés mind „ok", köztük a memorypressuree2etest és a check-repo)
+--memorypressuree2etest → home_surface=1 · pressure_e2e_used=109428736 · pressure_e2e=hard · memory_pressure_e2e=ok
+--memorypressuretest    → pressure_normal=normal · pressure_warn_at=warn · … · memory_pressure_check=ok
+--memoryreport          → memory_pressure=normal · memory_report=ok
+cargo test              → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A nyomás **művelethez kötése** (a `warn`/`hard` szint hatása: előnézet-munkás szünet, kártya-hibernálás, a
+  `video_max_height` médiaminőség-korlátja) és a lap oldali jelzés; az OAuth összekötése; az emberi kiadási tételek.
+
 ## 2026-11-23 (százhuszonnegyedik szelet) — a memória warn/hard sávok élő jelként (F6)
 
 Az F6 „warn/hard sávok tényleges vezérlője" első darabja: a profil `memory_warn_bytes`/`memory_hard_bytes` sávjai

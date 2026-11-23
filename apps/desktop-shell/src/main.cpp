@@ -2469,6 +2469,78 @@ int runMemoryPressureCheck() {
     return ok ? 0 : 1;
 }
 
+int runMemoryPressureE2eCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    // Force the warn/hard bands to 0.5 MiB / 1 MiB: the live working set is ~100 MiB, so it crosses both and the
+    // pressure class must come back `hard`. This is the end-to-end proof that the signal is fed by the real
+    // measurement, not just by the pure function (`--memorypressuretest`) or the formula.
+    qputenv("ANTIKOLT_MEMORY_WARN_BYTES", "524288");
+    qputenv("ANTIKOLT_MEMORY_HARD_BYTES", "1048576");
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 home_surface = 0;
+    qint64 used = 0;
+    QString pressure;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             home_surface = id;
+                             // Re-read the prefs so the (already overridden) bands are cached, then ask the page.
+                             window.refreshUserPrefs();
+                             QTimer::singleShot(500, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral("window.antikoltNative.request('system.memory', {})"
+                                                    ".then(function(r){window.__mpe=r;},"
+                                                    "function(e){window.__mpe={error:String(e.message)};});"
+                                                    " 'asked'"),
+                                     [&, id](const QJsonObject&, const QString&) {
+                                         QTimer::singleShot(900, &loop, [&, id] {
+                                             window.engine()->evaluate(
+                                                 id, QStringLiteral("JSON.stringify(window.__mpe||null)"),
+                                                 [&](const QJsonObject& value, const QString& failure) {
+                                                     if (failure.isEmpty()) {
+                                                         const QJsonObject mem =
+                                                             QJsonDocument::fromJson(
+                                                                 value
+                                                                     .value(QStringLiteral("value"))
+                                                                     .toString()
+                                                                     .toUtf8())
+                                                                 .object();
+                                                         used = static_cast<qint64>(
+                                                             mem.value(QStringLiteral("usedBytes")).toDouble());
+                                                         pressure =
+                                                             mem.value(QStringLiteral("pressure")).toString();
+                                                     }
+                                                     loop.quit();
+                                                 });
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "home_surface=" << home_surface << '\n';
+    out << "pressure_e2e_used=" << used << '\n';
+    out << "pressure_e2e=" << pressure << '\n';
+    const bool ok = home_surface != 0 && used > 0 && pressure == QStringLiteral("hard");
+    out << "memory_pressure_e2e=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -9179,6 +9251,10 @@ int main(int argc, char* argv[]) {
     const QCommandLineOption memorypressuretest(
         QStringLiteral("memorypressuretest"),
         QStringLiteral("Prove the memory pressure class from the profile's warn/hard bands, then exit."));
+    const QCommandLineOption memorypressuree2etest(
+        QStringLiteral("memorypressuree2etest"),
+        QStringLiteral("Prove the pressure signal end to end against a forced band, then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9262,6 +9338,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(sandboxtest);
     parser.addOption(containerpolicytest);
     parser.addOption(memorypressuretest);
+    parser.addOption(memorypressuree2etest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9452,6 +9529,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(memorypressuretest)) {
         return runMemoryPressureCheck();
+    }
+
+    if (parser.isSet(memorypressuree2etest)) {
+        return runMemoryPressureE2eCheck(parser.value(memorypressuree2etest));
     }
 
     if (parser.isSet(enginerestarttest)) {
