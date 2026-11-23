@@ -3,6 +3,25 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-094 — A PiP de-kockáztatása: a Document-PiP az Alloy runtime-ban hiányzik, a flag sem elég (2026-11-23)
+
+**Kontextus:** a PiP-hez (F7) a karbantartó a views-architektúra-váltást választotta. A kérdés: a
+Document-PiP (`documentPictureInPicture`) elérhető-e a jelenlegi Alloy/ablakos runtime-ban a
+`--enable-features=DocumentPictureInPictureAPI` flaggel, vagy tényleg kell a Chrome/views runtime.
+
+**Döntés / eredmény (mérve):**
+
+1. **`--pipchecktest`** az engine-hostban: a `'documentPictureInPicture' in window` kifejezést méri
+   egy data:-URL oldalon (Runtime.evaluate, returnByValue).
+2. **Baseline (flag nélkül): `pip_api=absent`.**
+3. **`--enable-features=DocumentPictureInPictureAPI` flaggel: `pip_api=absent`** — a flag önmagában
+   NEM teszi elérhetővé az API-t az Alloy runtime-ban.
+
+**Következmény:** (+) a views-váltás szükségessége **empirikusan megerősítve** (nem feltételezés);
+(+) a `--pipchecktest` a váltás utáni vissza-mérés eszköze (a Chrome/views runtime-ban `present`-et
+kell adnia); (−) a views-architektúra-váltás (CefBrowserView/CefWindow + `chrome_runtime`) külön, nagy
+szelet marad.
+
 ## ADR-093 — A passkey-folyamat: a virtuális hitelesítő parancs, a teljes `create` fókusz-gesztust kíván (2026-11-23)
 
 **Kontextus:** a passkey F0-spike (`--webauthntest`) bebizonyította, hogy a CDP virtuális hitelesítő

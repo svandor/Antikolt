@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvenhetedik szelet) — a PiP de-kockáztatása: a flag nem elég (M7)
+
+A PiP views-váltásának szükségessége empirikusan megerősítve.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `--pipchecktest` diagnosztikai probe (`'documentPictureInPicture' in window`).
+
+### Bizonyíték (mért)
+
+```
+--pipchecktest (flag nélkül)                              → pip_api=absent
+--pipchecktest (DocumentPictureInPictureAPI flaggel)      → pip_api=absent
+```
+
+### Ami kiderült
+
+- A `--enable-features=DocumentPictureInPictureAPI` **önmagában nem teszi elérhetővé** a
+  Document-PiP API-t az Alloy/ablakos runtime-ban — a **views-architektúra-váltás tényleg szükséges**
+  (CefBrowserView/CefWindow + `chrome_runtime`), külön nagy szelet.
+
+### Ami továbbra is nyitott
+
+- A views-architektúra-váltás (a Document-PiP csak a Chrome/views runtime-ban él); a passkey
+  kulcs-export/import a széfbe.
+
 ## 2026-11-23 (százötvenhatodik szelet) — a passkey-folyamat de-kockáztatása (M7)
 
 A passkey most már parancsba adható, és a teljes folyamat korlátai mérve vannak.

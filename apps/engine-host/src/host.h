@@ -65,6 +65,8 @@ struct HostConfig {
     /// Run the passkey flow: create a credential through `navigator.credentials.create` against the CDP
     /// virtual authenticator (the full F0 flow, ADR-023). Used by `--passkeyflowtest`.
     bool passkey_flow_test = false;
+    /// Run the PiP probe: check whether `documentPictureInPicture` is exposed. Used by `--pipchecktest`.
+    bool pip_test = false;
     /// Native window to embed the surface into; `nullptr` means the host creates a top-level window.
     ///
     /// This is how the one live card lives inside the Qt shell's window while the engine keeps its
@@ -120,6 +122,10 @@ struct HostState {
     std::atomic<bool> passkey_flow_done{false};
     /// Whether `navigator.credentials.create` produced a public-key credential (drives the exit code).
     std::atomic<bool> passkey_flow_ok{false};
+    /// The PiP probe's CDP answer has arrived.
+    std::atomic<bool> pip_done{false};
+    /// Whether `documentPictureInPicture` was exposed (drives the exit code).
+    std::atomic<bool> pip_ok{false};
     int http_status = 0;
     std::string final_url;
     std::string title;
@@ -280,7 +286,7 @@ class EngineClient : public CefClient,
                      public CefMessageRouterBrowserSide::Handler {
 public:
     EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
-                 bool isolated_world_test, bool autofill_test, bool passkey_flow_test,
+                 bool isolated_world_test, bool autofill_test, bool passkey_flow_test, bool pip_test,
                  std::map<std::string, std::string> permissions = {});
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -371,6 +377,7 @@ private:
     bool isolated_world_test_;
     bool autofill_test_;
     bool passkey_flow_test_;
+    bool pip_test_;
     /// The virtual authenticator's id, stored when the passkey flow enables it; the `create` step runs
     /// in `OnLoadEnd`, once the page's execution context exists.
     std::string passkey_authenticator_;
@@ -395,6 +402,8 @@ private:
     /// The second half of the passkey flow, run from `OnLoadEnd`: evaluate `navigator.credentials.create`
     /// against the already-installed virtual authenticator.
     void StartPasskeyCreate(CefRefPtr<CefBrowser> browser);
+    /// The PiP probe: evaluate `'documentPictureInPicture' in window` and report `pip_api=present|absent`.
+    void StartPipProbe(CefRefPtr<CefBrowser> browser);
 
     IMPLEMENT_REFCOUNTING(EngineClient);
     DISALLOW_COPY_AND_ASSIGN(EngineClient);

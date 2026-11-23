@@ -182,6 +182,7 @@ int main(int argc, char* argv[]) {
     bool isolated_world_test = false;
     bool autofill_test = false;
     bool passkey_flow_test = false;
+    bool pip_test = false;
     bool stdio_mode = false;
     bool user_data_explicit = false;
 
@@ -199,6 +200,8 @@ int main(int argc, char* argv[]) {
             autofill_test = true;
         } else if (std::strcmp(arg, "--passkeyflowtest") == 0) {
             passkey_flow_test = true;
+        } else if (std::strcmp(arg, "--pipchecktest") == 0) {
+            pip_test = true;
         } else if (std::strcmp(arg, "--stdio") == 0) {
             stdio_mode = true;
         } else if (std::strcmp(arg, "--version") == 0) {
@@ -241,7 +244,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (selftest || partition_test || webauthn_test || isolated_world_test || autofill_test ||
-        passkey_flow_test) {
+        passkey_flow_test || pip_test) {
         config.hidden = true;
         config.quit_on_first_load = true;
         config.start_url = passkey_flow_test ? "antikolt://blob/passkey-test.html"
@@ -250,6 +253,7 @@ int main(int argc, char* argv[]) {
         config.isolated_world_test = isolated_world_test;
         config.autofill_test = autofill_test;
         config.passkey_flow_test = passkey_flow_test;
+        config.pip_test = pip_test;
         if (!user_data_explicit) {
             // A selftest must be hermetic: its own cache directory, removed afterwards. Otherwise a
             // leftover instance or a previous run fights over Chromium's cache locks and the result
@@ -265,7 +269,8 @@ int main(int argc, char* argv[]) {
                                                           ? "antikolt-autofill-"
                                                           : (passkey_flow_test
                                                                  ? "antikolt-passkey-"
-                                                                 : "antikolt-selftest-"))));
+                                                                 : (pip_test ? "antikolt-pip-"
+                                                                             : "antikolt-selftest-")))));
             config.user_data_path =
                 (std::filesystem::temp_directory_path() /
                  (prefix + std::to_string(static_cast<long long>(stamp))))
@@ -305,7 +310,8 @@ int main(int argc, char* argv[]) {
                      config.user_data_path.c_str(), error.message().c_str());
         return 1;
     }
-    if (selftest || webauthn_test || isolated_world_test || autofill_test || passkey_flow_test) {
+    if (selftest || webauthn_test || isolated_world_test || autofill_test || passkey_flow_test ||
+        pip_test) {
         std::printf("user_data=%s\n", config.user_data_path.c_str());
         std::fflush(stdout);
     }
@@ -316,7 +322,8 @@ int main(int argc, char* argv[]) {
     const int exit_code =
         stdio_mode ? antikolt::RunEngineHostServer(config) : antikolt::RunEngineHost(config);
 
-    if ((selftest || webauthn_test || isolated_world_test || autofill_test || passkey_flow_test) &&
+    if ((selftest || webauthn_test || isolated_world_test || autofill_test || passkey_flow_test ||
+         pip_test) &&
         !user_data_explicit) {
         std::error_code cleanup_error;
         std::filesystem::remove_all(config.user_data_path, cleanup_error);

@@ -228,7 +228,7 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
 
     CefRefPtr<EngineClient> client_handler(new EngineClient(
         state, config.quit_on_first_load, config.webauthn_test, config.isolated_world_test,
-        config.autofill_test, config.passkey_flow_test, config.permissions));
+        config.autofill_test, config.passkey_flow_test, config.pip_test, config.permissions));
     CefBrowserSettings browser_settings;
     // The surface's request context: its own storage (cookies, cache, localStorage) and its container's proxy. Passing
     // nullptr here was the old behaviour — every card shared one global cookie jar and the `partition` key was a
@@ -1615,13 +1615,14 @@ bool EngineApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 
 EngineClient::EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
                            bool isolated_world_test, bool autofill_test, bool passkey_flow_test,
-                           std::map<std::string, std::string> permissions)
+                           bool pip_test, std::map<std::string, std::string> permissions)
     : state_(state),
       quit_on_first_load_(quit_on_first_load),
       webauthn_test_(webauthn_test),
       isolated_world_test_(isolated_world_test),
       autofill_test_(autofill_test),
       passkey_flow_test_(passkey_flow_test),
+      pip_test_(pip_test),
       permission_(new PermissionPolicy(std::move(permissions))) {
     router_ = CefMessageRouterBrowserSide::Create(MessageRouterConfig());
     router_->AddHandler(this, /*first=*/false);
@@ -1958,6 +1959,9 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     }
     if (passkey_flow_test_) {
         StartPasskeyFlowProbe(browser);
+    }
+    if (pip_test_) {
+        StartPipProbe(browser);
     }
 }
 
@@ -2300,6 +2304,31 @@ void EngineClient::StartPasskeyCreate(CefRefPtr<CefBrowser> browser) {
         }));
     if (!create->Start(browser)) {
         fail("Runtime.evaluate submit failed");
+    }
+}
+
+void EngineClient::StartPipProbe(CefRefPtr<CefBrowser> browser) {
+    // Is the Document Picture-in-Picture API exposed in this runtime? `--pipchecktest` is a decision
+    // probe: the maintainer chose the views-architecture switch for PiP, and this checks whether the
+    // API exists with the feature flag enabled (vs. absent in the windowed/Alloy runtime).
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", "'documentPictureInPicture' in window ? 'present' : 'absent'");
+    params->SetBool("returnByValue", true);
+    CefRefPtr<DevToolsCall> eval(new DevToolsCall(
+        "Runtime.evaluate", params,
+        [state = state_](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+            const std::string verdict = reply.String("value");
+            const bool present = reply.ok() && verdict == "present";
+            std::printf("pip_api=%s\n", present ? "present" : "absent");
+            std::fflush(stdout);
+            state->pip_done.store(true);
+            state->pip_ok.store(present);
+        }));
+    if (!eval->Start(browser)) {
+        std::printf("pip_api=unsupported error=Runtime.evaluate submit failed\n");
+        std::fflush(stdout);
+        state_->pip_done.store(true);
+        state_->pip_ok.store(false);
     }
 }
 
@@ -2887,7 +2916,8 @@ int RunEngineHost(const HostConfig& config) {
                 (config.webauthn_test && !state.webauthn_done.load()) ||
                 (config.isolated_world_test && !state.isolated_world_done.load()) ||
                 (config.autofill_test && !state.autofill_done.load()) ||
-                (config.passkey_flow_test && !state.passkey_flow_done.load())) &&
+                (config.passkey_flow_test && !state.passkey_flow_done.load()) ||
+                (config.pip_test && !state.pip_done.load())) &&
                !state.load_failed.load() && !state.quit_requested.load()) {
             PumpWindowsMessages();
             CefDoMessageLoopWork();
@@ -2934,6 +2964,9 @@ int RunEngineHost(const HostConfig& config) {
     }
     if (config.passkey_flow_test && !state.passkey_flow_ok.load()) {
         return 1;  // the spike must not report a green when no credential came back.
+    }
+    if (config.pip_test && !state.pip_ok.load()) {
+        return 1;  // the probe must not report a green when the API is absent.
     }
     return (config.quit_on_first_load && !loaded) ? 1 : 0;
 }
