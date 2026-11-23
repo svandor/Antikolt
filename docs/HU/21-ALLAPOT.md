@@ -59,6 +59,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Tálca, napló, téma | `--traytest`, `--logtest`, `--themetest` | a napló nem ír feleslegesen, a témák a helyes színt adják |
 | Nyomtatás (mentés PDF-be) | `--printtest` | a motor a saját kompozitorával (`PrintToPDF`) írja a PDF-et; a shell `🖨️ PDF` gombja natív fájldialógust nyit (a dialógus `not-measurable`, az utat a `--printtest` méri — F7 nyitány) |
 | Keresés az oldalon (Ctrl+F) | `--findtest` | a motor `Find`/`CefFindHandler` útján keresi a szöveget és a találatszámot `find_result` eseménnyel jelenti; a shell Ctrl+F keresősávot mutat (Enter = következő, Shift+Enter = előző, Esc = bezárás) |
+| Letöltés | `--downloadtest` | a motor `StartDownload`/`CefDownloadHandler` útján tölti le a fájlt, és a kész állapotot (útvonal + siker) `download_finished` eseménnyel jelenti |
 
 ## Ami nyitva van (tudatosan, nem elfelejtve)
 

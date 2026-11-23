@@ -248,6 +248,7 @@ class EngineClient : public CefClient,
                      public CefDisplayHandler,
                      public CefRequestHandler,
                      public CefFindHandler,
+                     public CefDownloadHandler,
                      public CefMessageRouterBrowserSide::Handler {
 public:
     EngineClient(HostState* state, bool quit_on_first_load,
@@ -259,6 +260,7 @@ public:
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return permission_; }
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+    CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
@@ -309,6 +311,11 @@ public:
                       const CefRect& selectionRect,
                       int activeMatchOrdinal,
                       bool finalUpdate) override;
+    /// A download finished (F7 "letöltés"): the full path and whether it completed, sent as a `download_finished`
+    /// event so the shell can report it.
+    void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefDownloadItem> download_item,
+                           CefRefPtr<CefDownloadItemCallback> callback) override;
 
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                   CefRefPtr<CefFrame> frame,

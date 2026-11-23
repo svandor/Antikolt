@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonharmincegyedik szelet) — a fájl letöltése (F7)
+
+Az F7 harmadik darabja: a **letöltés**. A motor a CEF `StartDownload`/`CefDownloadHandler` útján tölti le a fájlt,
+és a kész állapotot (teljes útvonal + sikeresség) egy `download_finished` eseménnyel jelenti; a shell a válaszból
+értesül, hová került a fájl.
+
+### Mi változott
+
+- **`apps/engine-host` (host.h/.cpp):** az `EngineClient` most `CefDownloadHandler`; a `download` op
+  (`StartDownload`); az `OnDownloadUpdated` a kész/leállított állapotnál `download_finished` eseményt küld.
+- **`apps/desktop-shell` (engine_client):** `EngineClient::download(surface, url)` + `downloadFinished` jel.
+- **`--downloadtest` (új):** egy önálló (hálózat nélküli) `data:` tartalmat tölt le, és ellenőrzi, hogy a fájl
+  megérkezett és a tartalma egyezik.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL SELF TESTS PASSED (62 ellenőrzés mind „ok", köztük a downloadtest és a check-repo)
+--downloadtest    → download_success=true · download_path=…\download.txt · download_bytes=23 · download=ok
+cargo test        → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+Közben egy CEF-158 API-eltérést is javítottam: a `CefSettings` ebben a verzióban **nem** ismeri a
+`download_default_directory`-t, ezért a teszt a kész esemény `GetFullPath()`-ját használja a fájl megkereséséhez
+(nem a könyvtár előre tudását).
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (PiP, teljes nyomtatás-dialógus, crash-recovery, akadálymentesség, HU/EN); az F6
+  `video_max_height` kutatási tétele; az OAuth összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszadik-harmincadik szelet) — keresés az oldalon (F7 Ctrl+F)
 
 Az F7 második darabja: a **keresés az oldalon**. A motor a CEF `Find`/`CefFindHandler` útján keresi a szöveget, és a

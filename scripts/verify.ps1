@@ -120,6 +120,7 @@ $engineChecks = @(
     @{ Name = 'memorywarnpausetest'; Args = @('--memorywarnpausetest') },
     @{ Name = 'printtest'; Args = @('--printtest') },
     @{ Name = 'findtest'; Args = @('--findtest') },
+    @{ Name = 'downloadtest'; Args = @('--downloadtest') },
     @{ Name = 'enginerestarttest'; Args = @('--enginerestarttest') },
     @{ Name = 'rastertest'; Args = @('--rastertest') },
     @{ Name = 'rasterhometest'; Args = @('--rasterhometest') },

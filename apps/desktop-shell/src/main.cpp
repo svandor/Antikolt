@@ -2827,6 +2827,67 @@ int runFindCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+int runDownloadCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 home_surface = 0;
+    QString dl_path;
+    bool dl_success = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::downloadFinished, &loop,
+                         [&](qint64, const QString& path, bool success) {
+                             dl_path = path;
+                             dl_success = success;
+                             loop.quit();
+                         });
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             home_surface = id;
+                             // One beat, then start the download of a self-contained payload (no network).
+                             QTimer::singleShot(500, &loop, [&, id] {
+                                 window.engine()->download(
+                                     id, QStringLiteral("data:text/plain,antikolt-download-probe"));
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    qint64 bytes = 0;
+    QString content;
+    if (!dl_path.isEmpty()) {
+        QFile file(dl_path);
+        if (file.open(QIODevice::ReadOnly)) {
+            bytes = file.size();
+            content = QString::fromUtf8(file.readAll());
+            file.close();
+        }
+    }
+    out << "download_home_surface=" << home_surface << '\n';
+    out << "download_success=" << (dl_success ? "true" : "false") << '\n';
+    out << "download_path=" << dl_path << '\n';
+    out << "download_bytes=" << bytes << '\n';
+    const bool ok = home_surface != 0 && dl_success && bytes > 0 &&
+                    content.contains(QStringLiteral("antikolt-download-probe"));
+    out << "download=" << (ok ? "ok" : "FAILED") << '\n';
+    if (!dl_path.isEmpty()) {
+        QFile::remove(dl_path);
+    }
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -9557,6 +9618,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("findtest"),
         QStringLiteral("Prove find-in-page reports matches (F7), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption downloadtest(
+        QStringLiteral("downloadtest"),
+        QStringLiteral("Prove a file download lands on disk (F7), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9645,6 +9710,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(memorywarnpausetest);
     parser.addOption(printtest);
     parser.addOption(findtest);
+    parser.addOption(downloadtest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9855,6 +9921,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(findtest)) {
         return runFindCheck(parser.value(findtest));
+    }
+
+    if (parser.isSet(downloadtest)) {
+        return runDownloadCheck(parser.value(downloadtest));
     }
 
     if (parser.isSet(enginerestarttest)) {

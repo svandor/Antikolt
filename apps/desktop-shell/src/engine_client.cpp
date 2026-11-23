@@ -354,6 +354,13 @@ void EngineClient::stopFind(qint64 surface, ReplyHandler handler) {
     send(QStringLiteral("stop_find"), fields, std::move(handler));
 }
 
+void EngineClient::download(qint64 surface, const QString& url, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("url"), url);
+    send(QStringLiteral("download"), fields, std::move(handler));
+}
+
 void EngineClient::bridgeReply(qint64 request, const QJsonObject& json, const QString& error) {
     QJsonObject fields;
     fields.insert(QStringLiteral("request"), static_cast<double>(request));
@@ -459,6 +466,9 @@ void EngineClient::handleEvent(const QJsonObject& event) {
     } else if (type == QStringLiteral("find_result")) {
         emit findResult(surface, event.value(QStringLiteral("count")).toInt(),
                         event.value(QStringLiteral("active")).toInt());
+    } else if (type == QStringLiteral("download_finished")) {
+        emit downloadFinished(surface, event.value(QStringLiteral("path")).toString(),
+                              event.value(QStringLiteral("success")).toBool());
     }
 }
 

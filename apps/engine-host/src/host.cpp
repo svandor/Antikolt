@@ -2040,6 +2040,23 @@ void EngineClient::OnFindResult(CefRefPtr<CefBrowser> browser,
     StdioLink::Instance().Event("find_result", payload);
 }
 
+void EngineClient::OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
+                                     CefRefPtr<CefDownloadItem> download_item,
+                                     CefRefPtr<CefDownloadItemCallback> callback) {
+    CEF_REQUIRE_UI_THREAD();
+    (void)browser;
+    (void)callback;
+    // Progress updates fire many times; the shell only needs the terminal state.
+    if (!download_item->IsComplete() && !download_item->IsCanceled()) {
+        return;
+    }
+    CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+    payload->SetInt("surface", static_cast<int>(state_->surface_id));
+    payload->SetBool("success", download_item->IsComplete());
+    payload->SetString("path", download_item->GetFullPath().ToString());
+    StdioLink::Instance().Event("download_finished", payload);
+}
+
 bool EngineClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                             CefRefPtr<CefFrame> frame,
                                             CefProcessId source_process,
@@ -2403,6 +2420,19 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
         }
         state.browser->GetHost()->StopFinding(true);
         link.Reply(command.id);
+    } else if (command.op == "download") {
+        // Start a file download (F7 "letöltés"): the URL is fetched and written to the default download directory.
+        // The terminal state arrives as a `download_finished` event.
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.url.empty()) {
+            link.ReplyError(command.id, "invalid_argument", "url is required");
+            return;
+        }
+        state.browser->GetHost()->StartDownload(CefString(command.url));
+        link.Reply(command.id);
     } else if (command.op == "capture") {
         if (!state.browser || !state.browser->GetMainFrame()) {
             link.ReplyError(command.id, "surface_not_found", "no live surface");
@@ -2486,8 +2516,8 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
     } else {
         link.ReplyError(command.id, "not_supported",
                         "this milestone implements hello, ping, create_surface, navigate, eval, "
-                        "capture, snapshot, print_pdf, find, set_bounds, focus, install_bridge, bridge_reply, "
-                        "destroy_surface and shutdown");
+                        "capture, snapshot, print_pdf, find, download, set_bounds, focus, install_bridge, "
+                        "bridge_reply, destroy_surface and shutdown");
     }
 }
 

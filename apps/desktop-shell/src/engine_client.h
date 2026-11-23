@@ -130,6 +130,8 @@ public:
               ReplyHandler handler = {});
     /// Clear the find-in-page highlight (`stop_find`).
     void stopFind(qint64 surface, ReplyHandler handler = {});
+    /// Start a file download (`download`, F7 "letöltés"). The terminal state arrives as `downloadFinished`.
+    void download(qint64 surface, const QString& url, ReplyHandler handler = {});
     void destroySurface(qint64 surface, ReplyHandler handler = {});
     /// Answer a page request (`request > 0`) the engine is holding open.
     ///
@@ -153,6 +155,8 @@ signals:
     void popupClosed(qint64 surface);
     /// A find-in-page result arrived (F7 "Ctrl+F"): `count` total matches, `active` the highlighted one (1-based).
     void findResult(qint64 surface, int count, int active);
+    /// A download finished (F7 "letöltés"): `path` is the full file path, `success` whether it completed.
+    void downloadFinished(qint64 surface, const QString& path, bool success);
     /// The home page asked for something through the bridge (`open_card`, `freeze_card`, …).
     ///
     /// `request` is 0 for a one-way call (the page does not wait) and the engine's request number for a
