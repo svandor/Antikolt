@@ -3,6 +3,30 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvenötödik szelet) — a széf panel: metadata-only lista (M7)
+
+A széf most már a shellben is látható: egy panel feloldja a széfet, és metadata-only listát mutat —
+titok nélkül.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/vault_panel.{h,cpp}` (új):** `VaultPanel` (mesterjelszó-mező + Feloldás +
+  táblázat), `vault_list`-tel (metadata: honlap/típus/címke), sosem `vault_get`-tel.
+- **`apps/desktop-shell/src/main.cpp`:** `runVaultPanelCheck` + `--vaultpaneltest`.
+- **`scripts/verify.ps1`:** `vaultpaneltest` kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--vaultpaneltest → vault_panel=ok (exit 0): locked_empty/rows=1/shows_origin/no_secret mind ok
+scripts/verify.ps1 → ALL CHECKS PASSED (77 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A hozzáadás/szerkesztés/TOTP-megjelenítés a panelben; a teljes `navigator.credentials`
+  passkey-folyamat; a PiP (views-architektúra-váltás).
+
 ## 2026-11-23 (százötvennegyedik szelet) — autofill parancsként: `fill_credential` (M7)
 
 Az autofill most már parancsként is megy: a shell `fill_credential`-t küld, a motor az izolált világban

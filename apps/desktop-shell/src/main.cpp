@@ -65,6 +65,7 @@
 #include "instance_guard.h"
 #include "live_card.h"
 #include "main_window.h"
+#include "vault_panel.h"
 
 namespace {
 
@@ -6466,6 +6467,91 @@ int runFillCredentialCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+int runVaultPanelCheck(const QString& corePath) {
+    QTextStream out(stdout);
+    CoreClient client;
+    const QString data_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                             QStringLiteral("/vaultpanel-selftest");
+    QDir(data_dir).removeRecursively();
+    QDir().mkpath(data_dir);
+    if (!client.start(corePath, data_dir)) {
+        out << "vault_panel_start=FAILED\n";
+        return 1;
+    }
+
+    // Seed the vault: unlock, create one credential, lock again — the panel must unlock it itself.
+    {
+        QEventLoop loop;
+        QObject::connect(&client, &CoreClient::failed, &loop, [&](const QString& message) {
+            out << "vault_panel_error=" << message << '\n';
+            loop.quit();
+        });
+        QObject::connect(&client, &CoreClient::ready, &loop, [&](const QJsonObject&) {
+            client.vaultUnlock(QStringLiteral("correct horse"),
+                               [&](const QJsonObject&, const QString& unlock_error) {
+                                   if (!unlock_error.isEmpty()) {
+                                       loop.quit();
+                                       return;
+                                   }
+                                   QJsonObject credential;
+                                   credential.insert(QStringLiteral("origin"),
+                                                    QStringLiteral("https://pelda.hu"));
+                                   credential.insert(QStringLiteral("kind"),
+                                                    QStringLiteral("password"));
+                                   credential.insert(QStringLiteral("username"),
+                                                    QStringLiteral("alice"));
+                                   credential.insert(QStringLiteral("password"),
+                                                    QStringLiteral("hunter2"));
+                                   client.vaultCreate(
+                                       credential,
+                                       [&](const QJsonObject&, const QString&) {
+                                           client.vaultLock(
+                                               [&](const QJsonObject&, const QString&) {
+                                                   loop.quit();
+                                               });
+                                       });
+                               });
+        });
+        client.handshake();
+        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    VaultPanel panel;
+    panel.setClient(&client);
+    panel.refresh();
+    QCoreApplication::processEvents();
+    const bool locked_empty = panel.rowCount() == 0;
+    out << "vault_panel_locked_empty=" << (locked_empty ? "ok" : "FAILED") << '\n';
+
+    // Unlock through the panel's own field + button, then wait for the asynchronous refresh.
+    panel.setPassword(QStringLiteral("correct horse"));
+    panel.unlock();
+
+    bool listed = false;
+    bool leaks_secret = true;
+    {
+        QEventLoop loop;
+        QTimer::singleShot(2000, &loop, [&] {
+            listed = panel.rowCount() == 1;
+            leaks_secret = panel.showsText(QStringLiteral("hunter2")) ||
+                           panel.showsText(QStringLiteral("alice"));
+            loop.quit();
+        });
+        loop.exec();
+    }
+
+    const bool shows_origin = panel.showsText(QStringLiteral("https://pelda.hu"));
+    out << "vault_panel_rows=" << panel.rowCount() << '\n';
+    out << "vault_panel_shows_origin=" << (shows_origin ? "ok" : "FAILED") << '\n';
+    out << "vault_panel_no_secret=" << (leaks_secret ? "FAILED" : "ok") << '\n';
+    const bool panel_ok = locked_empty && listed && shows_origin && !leaks_secret;
+    out << "vault_panel=" << (panel_ok ? "ok" : "FAILED") << '\n';
+    client.shutdown();
+    out.flush();
+    return panel_ok ? 0 : 1;
+}
+
 int runSelfTest(bool with_engine, const QString& enginePath) {
     QTextStream out(stdout);
     out << "antikolt-shell " << ANTIKOLT_VERSION << '\n';
@@ -10729,6 +10815,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("fillcredentialtest"),
         QStringLiteral("Prove the shell fills a login form from the vault, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption vaultpaneltest(
+        QStringLiteral("vaultpaneltest"),
+        QStringLiteral("Prove the vault panel lists credentials without leaking secrets, then exit."),
+        QStringLiteral("path"));
     parser.addOption(selftest);
     parser.addOption(engine);
     parser.addOption(embedtest);
@@ -10801,6 +10891,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(coretest);
     parser.addOption(vaulttest);
     parser.addOption(fillcredentialtest);
+    parser.addOption(vaultpaneltest);
     parser.process(app);
 
     // Every self test measures one thing, and a self test always *names itself* on the command line; the plain
@@ -10899,6 +10990,9 @@ int main(int argc, char* argv[]) {
     }
     if (parser.isSet(fillcredentialtest)) {
         return runFillCredentialCheck(parser.value(fillcredentialtest));
+    }
+    if (parser.isSet(vaultpaneltest)) {
+        return runVaultPanelCheck(parser.value(vaultpaneltest));
     }
 
     if (parser.isSet(scrollzoomtest)) {

@@ -23,6 +23,8 @@ qt_add_executable(antikolt-shell
   src/engine_client.h
   src/core_client.cpp
   src/core_client.h
+  src/vault_panel.cpp
+  src/vault_panel.h
 )
 
 target_include_directories(antikolt-shell PRIVATE src)

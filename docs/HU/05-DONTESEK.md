@@ -3,6 +3,23 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-092 — A széf panel: metadata-only lista, a shell kérdez a core-tól (2026-11-23)
+
+**Kontextus:** a széf (ADR-083) a core-ban él, a titkok (felhasználónév, jelszó) csak nyitott széfből
+jönnek (ADR-010). A shell-panelnek meg kell jelenítenie a hitelesítőket anélkül, hogy titkot másolna.
+
+**Döntés:**
+
+1. **A panel `vault_list`-tel dolgozik, nem `vault_get`-tel:** a lista `CredentialMeta` (honlap, típus,
+   címke) — a felhasználónév és a jelszó nincs benne, tehát a panel sosem lát titkot.
+2. **A feloldás a panel saját mezőjéből megy:** a `VaultPanel` a `CoreClient::vaultUnlock`-ot hívja a
+   begépelt mesterjelszóval, majd `refresh`-et — a széf-lock state machine a core-ban marad.
+3. **`--vaultpaneltest`** a kapuban: zárt panel üres, feloldás után 1 sor, a honlap látszik, a titok nem.
+
+**Következmény:** (+) a széf-panel mérve (`vault_panel=ok`, exit 0); (+) a titok-szivárgás-mentesség a
+panel szintjén is mérve; (−) a hozzáadás/szerkesztés/TOTP-megjelenítés a panelben, a teljes
+`navigator.credentials` folyamat és a PiP még külön szeletek.
+
 ## ADR-091 — A kitöltés parancsként: `fill_credential` az engine-hostban (2026-11-23)
 
 **Kontextus:** az ADR-089/090 spike-ok bebizonyították, hogy az izolált világban a kitöltés működik, és
