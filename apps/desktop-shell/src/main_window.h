@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QHash>
 #include <QMainWindow>
+#include <QPixmap>
 #include <QSet>
 #include <QString>
 
@@ -439,6 +440,12 @@ private:
     /// The stacked card area: the live card (page 0) or the raster home (page 1, the engine stopped).
     QStackedLayout* card_stack_ = nullptr;
     QLabel* raster_label_ = nullptr;
+    /// The full-resolution raster, kept so it can be re-fit (aspect-preserving) whenever the label resizes.
+    QPixmap raster_full_;
+    /// The size the raster is actually drawn at (after aspect-preserving scaling), for the click mapping.
+    QSize raster_drawn_size_;
+    /// Re-scale `raster_full_` to the label (aspect-preserving, centred) and install it as the pixmap.
+    void updateRasterPixmap();
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------

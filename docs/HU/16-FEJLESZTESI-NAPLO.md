@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százhuszadik szelet) — a raszter oldalarány-megőrző illesztése (F6)
+
+A raszter már nem nyúlik: a `raster_full_`-t a shell az ablakhoz képest **aránytartóan** méretezi
+(`Qt::KeepAspectRatio`) és középre igazítja; a kattintás-leképezés a tényleges rajzolt téglalap (letterbox)
+eltolásával számol, így a kurzor alatti kártya a torzítás nélküli képen is pontosan eltalálható.
+
+### Mi változott
+
+- **`updateRasterPixmap()`:** a teljes felbontású rasztert aránytartóan méretezi a labelhez, és a kirajzolt méretet
+  a `raster_drawn_size_`-ba menti; az `eventFilter` `Resize` eseményre újrailleszti.
+- **A kattintás-horog:** a label-kattintást előbb a letterbox-eltolással a kirajzolt képbe, onnan a CSS-térbe
+  képezi; a levélvályúba (letterbox) eső kattintás nem nyit kártyát, csak ébreszt.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (54 önteszt + check-repo)
+--rasterhometest / --rasterclicktest → zöld
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A raszter éles ablakos vizuális ellenőrzése; a profil többi dimenziójának tényleges vezérlője (videófelbontás,
+  `warn`/`hard`); az emberi kiadási tételek.
+
 ## 2026-11-22 (száztizenkilencedik szelet) — a raszter megjelenítése + a kattintás-horog (F6)
 
 A raszter-kezdőlap utolsó, vizuális darabja: a motor leállításakor a rács raszterképe **látszik** a kártyaterületen,

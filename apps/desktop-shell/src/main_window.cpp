@@ -516,22 +516,35 @@ void MainWindow::onIdleTimeout() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // Keep the raster fitted to its label, aspect-preserving, across resizes.
+    if (watched == raster_label_ && event->type() == QEvent::Resize) {
+        updateRasterPixmap();
+        return QMainWindow::eventFilter(watched, event);
+    }
     // A click on the raster home wakes the engine, and opens the card under the cursor when one is there.
     if (watched == raster_label_ && event->type() == QEvent::MouseButtonPress && raster_mode_) {
         const auto* mouse = static_cast<QMouseEvent*>(event);
-        if (mouse->button() == Qt::LeftButton && raster_label_->width() > 0 && raster_label_->height() > 0 &&
-            raster_css_w_ > 0 && raster_css_h_ > 0) {
-            const qreal x_css = mouse->position().x() / raster_label_->width() * raster_css_w_;
-            const qreal y_css = mouse->position().y() / raster_label_->height() * raster_css_h_;
-            for (const RasterCard& card : raster_cards_) {
-                if (x_css >= card.x && x_css < card.x + card.w && y_css >= card.y && y_css < card.y + card.h) {
-                    pending_url_ = card.url;
-                    pending_title_ = card.title;
-                    pending_card_id_ = card.id;
-                    current_card_id_ = card.id;
-                    pending_pinned_ = false;
-                    pending_container_.clear();
-                    break;
+        if (mouse->button() == Qt::LeftButton && raster_drawn_size_.width() > 0 &&
+            raster_drawn_size_.height() > 0 && raster_css_w_ > 0 && raster_css_h_ > 0) {
+            // The label letterboxes the aspect-preserving pixmap; map the click through the drawn rect back to the
+            // grid's CSS coordinate space.
+            const qreal offset_x = (raster_label_->width() - raster_drawn_size_.width()) / 2.0;
+            const qreal offset_y = (raster_label_->height() - raster_drawn_size_.height()) / 2.0;
+            const qreal x_in = mouse->position().x() - offset_x;
+            const qreal y_in = mouse->position().y() - offset_y;
+            if (x_in >= 0 && y_in >= 0 && x_in < raster_drawn_size_.width() && y_in < raster_drawn_size_.height()) {
+                const qreal x_css = x_in / raster_drawn_size_.width() * raster_css_w_;
+                const qreal y_css = y_in / raster_drawn_size_.height() * raster_css_h_;
+                for (const RasterCard& card : raster_cards_) {
+                    if (x_css >= card.x && x_css < card.x + card.w && y_css >= card.y && y_css < card.y + card.h) {
+                        pending_url_ = card.url;
+                        pending_title_ = card.title;
+                        pending_card_id_ = card.id;
+                        current_card_id_ = card.id;
+                        pending_pinned_ = false;
+                        pending_container_.clear();
+                        break;
+                    }
                 }
             }
         }
@@ -2839,12 +2852,8 @@ void MainWindow::enterRasterMode() {
                              }
                              // Show the raster over the (now empty) card area, so the user sees the grid, not a
                              // blank window.
-                             if (raster_label_ != nullptr) {
-                                 const QPixmap pixmap(target);
-                                 if (!pixmap.isNull()) {
-                                     raster_label_->setPixmap(pixmap);
-                                 }
-                             }
+                             raster_full_ = QPixmap(target);
+                             updateRasterPixmap();
                              if (card_stack_ != nullptr) {
                                  card_stack_->setCurrentWidget(raster_label_);
                              }
@@ -2866,6 +2875,18 @@ void MainWindow::wakeFromRaster() {
         engine_->handshake();
     }
     // The `engineReady` welcome reloads the grid (ensureSurface), so nothing else is needed here.
+}
+
+void MainWindow::updateRasterPixmap() {
+    if (raster_label_ == nullptr || raster_full_.isNull() || raster_label_->width() <= 0 ||
+        raster_label_->height() <= 0) {
+        raster_drawn_size_ = QSize();
+        return;
+    }
+    const QPixmap scaled =
+        raster_full_.scaled(raster_label_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    raster_label_->setPixmap(scaled);
+    raster_drawn_size_ = scaled.size();
 }
 
 void MainWindow::armEngineIdleTimer() {
@@ -3074,7 +3095,7 @@ void MainWindow::buildCardArea() {
     raster_label_ = new QLabel(root);
     raster_label_->setObjectName(QStringLiteral("antikoltRaster"));
     raster_label_->setAlignment(Qt::AlignCenter);
-    raster_label_->setScaledContents(true);
+    raster_label_->setScaledContents(false);
     raster_label_->setCursor(Qt::PointingHandCursor);
     raster_label_->installEventFilter(this);
 
