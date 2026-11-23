@@ -35,6 +35,7 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSet>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QSysInfo>
@@ -3165,6 +3166,57 @@ int runPdfCheck(const QString& enginePath) {
     out << "pdf=" << (ok ? "ok" : "FAILED") << '\n';
     QFile::remove(pdf_path);
     window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
+/// Prove the shell language switch (i18n, ADR-078): the pure `uiText` mapping is pinned to known Hungarian →
+/// English pairs, the setting persists through `QSettings`, and a real `MainWindow` re-labels its chrome when
+/// `setLanguage` is called. No engine, no core — the switch is the shell's own.
+int runLanguageCheck() {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_NO_TRAY", "1");
+
+    // Pure mapping: Hungarian is authoritative, `en` translates, anything else (and unknown strings) passes
+    // the source through unchanged.
+    const bool map_ok = antikolt::uiText(QStringLiteral("Motor indítása"), QStringLiteral("hu")) ==
+                            QStringLiteral("Motor indítása") &&
+                        antikolt::uiText(QStringLiteral("Motor indítása"), QStringLiteral("en")) ==
+                            QStringLiteral("Start engine") &&
+                        antikolt::uiText(QStringLiteral("Beállítások"), QStringLiteral("en")) ==
+                            QStringLiteral("Settings") &&
+                        antikolt::uiText(QStringLiteral("nincs a térképen"), QStringLiteral("en")) ==
+                            QStringLiteral("nincs a térképen");
+
+    // A clean slate, so the window below starts in the authoritative default.
+    {
+        QSettings settings;
+        settings.remove(QStringLiteral("ui/language"));
+    }
+
+    MainWindow window;
+    window.show();
+    const bool default_hu = window.language() == QStringLiteral("hu") &&
+                            window.t(QStringLiteral("Motor indítása")) == QStringLiteral("Motor indítása");
+    window.setLanguage(QStringLiteral("en"));
+    bool switched_en = window.language() == QStringLiteral("en") &&
+                       window.t(QStringLiteral("Motor indítása")) == QStringLiteral("Start engine");
+    bool persisted = false;
+    {
+        QSettings settings;
+        persisted = settings.value(QStringLiteral("ui/language")).toString() == QStringLiteral("en");
+    }
+    window.setLanguage(QStringLiteral("hu"));
+    const bool restored_hu = window.language() == QStringLiteral("hu");
+    window.close();
+
+    out << "language_map=" << (map_ok ? "ok" : "FAILED") << '\n';
+    out << "language_default=" << (default_hu ? "ok" : "FAILED") << '\n';
+    out << "language_switch=" << (switched_en ? "ok" : "FAILED") << '\n';
+    out << "language_persist=" << (persisted ? "ok" : "FAILED") << '\n';
+    out << "language_restore=" << (restored_hu ? "ok" : "FAILED") << '\n';
+    const bool ok = map_ok && default_hu && switched_en && persisted && restored_hu;
+    out << "language=" << (ok ? "ok" : "FAILED") << '\n';
     out.flush();
     return ok ? 0 : 1;
 }
@@ -10040,6 +10092,9 @@ int main(int argc, char* argv[]) {
         QStringLiteral("accessibilitytest"),
         QStringLiteral("Prove the UI controls are keyboard- and screen-reader-accessible (F7), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption languagetest(
+        QStringLiteral("languagetest"),
+        QStringLiteral("Prove the shell language switch (HU/EN) re-labels the chrome (i18n), then exit."));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -10136,6 +10191,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(crashtest);
     parser.addOption(pdftest);
     parser.addOption(accessibilitytest);
+    parser.addOption(languagetest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -10371,6 +10427,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(accessibilitytest)) {
         return runAccessibilityCheck(parser.value(accessibilitytest));
+    }
+
+    if (parser.isSet(languagetest)) {
+        return runLanguageCheck();
     }
 
     if (parser.isSet(enginerestarttest)) {

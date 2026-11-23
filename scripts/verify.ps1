@@ -240,6 +240,13 @@ if (-not $shell) {
     & $shell --previewhashtest
     Add-Result 'previewhashtest' ($LASTEXITCODE -eq 0)
 }
+Write-Host '=== languagetest ===' -ForegroundColor Cyan
+if (-not $shell) {
+    Add-Result 'languagetest' $false 'missing antikolt-shell.exe'
+} else {
+    & $shell --languagetest
+    Add-Result 'languagetest' ($LASTEXITCODE -eq 0)
+}
 Write-Host '=== rulestest ===' -ForegroundColor Cyan
 if (-not $shell -or -not $core) {
     Add-Result 'rulestest' $false 'missing antikolt-shell.exe or antikolt-core-service.exe'

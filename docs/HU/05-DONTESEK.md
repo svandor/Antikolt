@@ -3,6 +3,28 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-078 — A shell nyelve futásidőben váltható (HU/EN), először a chrome (2026-11-23)
+
+**Kontextus:** a felület teljes egészében magyar (a magyar a hiteles nyelv), az angol fordítás a HU/EN nyitott
+tétele volt (M7). A teljes i18n (shell + rács) nagy; ez a szelet az **alapot** rakja le: a nyelvváltó
+beállítást, a fordítási mechanizmust és a shell **chrome**-át (eszköztár, tálca, beállítás-dokk, keresősáv).
+
+**Döntés:**
+
+1. **A nyelv a QSettings-ben él** (`ui/language`: `hu`/`en`, default `hu`), mint a téma és a sötét oldalak — a
+   felületi beállítás, nem a hordozható profil adata.
+2. **A fordítás futásidőben, táblázatból történik** (`i18n.h` `uiText(hu, lang)`): a forrás a magyar, az
+   `en` egy `QHash`-ból adja az angolt, ismeretlen kulcs/nem-`en` nyelv a forrást adja vissza (a hiányzó
+   fordítás soha nem üres címke). Nincs `.ts`/`.qm` build-lépés, mert a chrome-karakterláncok száma kicsi, és
+   a teszt így motor nélkül fut.
+3. **A váltás újraindítás nélküli:** a `MainWindow::setLanguage` beállítja, elmenti és helyben átcímkézi a
+   chrome-ot; a beállítás-dokk `Nyelv:` lenője hívja.
+
+**Következmény:** (+) a chrome HU/EN váltható, a `--languagetest` méri (a tiszta `uiText`-táblát, a
+QSettings-perzisztenciát és a helyben átcímkézést); (−) a **státuszüzenetek és a rács** egyelőre magyarok
+(következő szeletek); (−) a `tr()`-alapú belső hibaüzeneteket (`core_client`/`engine_client`) ez a szelet nem
+érinti.
+
 ## ADR-077 — A preview-név a tartalom, nem a kártya-azonosító (2026-11-23)
 
 **Kontextus:** a preview-fájl neve eddig a kártya azonosítója volt (`<id>.png`), és a `sha256`-alapú
@@ -1271,6 +1293,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-075 | `<antikolt-card>` önálló csomag: `home/antikolt-card.js` IIFE, a rács és a felhasználói lap ugyanezt tölti; a konténer/munkaterület `<select>` a `setOptions`-ból, a fókusz-állapot `getPendingFocusId()`-dal | Elfogadva |
 | ADR-076 | A `video_max_height` megjelenítési sapka: a motor `set_video_cap` opja nevesített stíluselemmel (`video{max-height:Npx}`), a profil hajtja, a `manual` eltávolítja; a dekódolási felbontás `not-measurable` (a CEF-nek nincs laponkénti korlátja), a hatókör top-level `video` | Elfogadva |
 | ADR-077 | A preview-név a tartalom hash-e (`previewContentName`, `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből; a frissesség-ellenőrzés a tárolt `preview_ref`-re néz | Elfogadva |
+| ADR-078 | A shell nyelve futásidőben váltható (`ui/language` QSettings, default `hu`); `i18n.h` `uiText` HU→EN táblázatból; a `setLanguage` helyben átcímkézi a chrome-ot; a státuszüzenetek és a rács a következő szeletek | Elfogadva |
 
 ---
 

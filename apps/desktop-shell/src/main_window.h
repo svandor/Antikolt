@@ -19,6 +19,7 @@
 #include <QStringList>
 
 #include "previews.h"
+#include "i18n.h"
 
 class QLabel;
 class QLineEdit;
@@ -184,6 +185,12 @@ public:
     QString pageDarkMode() const { return page_dark_mode_; }
     /// The page-dark modes the toolbar offers, in menu order.
     static QStringList pageDarkModes();
+    /// The shell's user-facing language: `hu` (authoritative, default) or `en` (i18n, ADR-078).
+    QString language() const { return language_; }
+    /// Switch the shell's language, persist it in the settings, and re-label the chrome in place — no restart.
+    void setLanguage(const QString& language);
+    /// The chrome's translation of a Hungarian source string in the current language (i18n, ADR-078).
+    QString t(const QString& hu) const { return antikolt::uiText(hu, language_); }
     /// The theme button of one theme, so the self test can prove it carries an icon and a tooltip
     /// (docs/HU/08-DIZAJN.md §6: the toolbar's theme switch is icons, the words live in the tooltip).
     QToolButton* themeButton(const QString& theme) const;
@@ -408,6 +415,27 @@ private:
     QString page_media_ = QStringLiteral("auto");
     /// Force dark pages (ADR-044/ADR-045): the user's switch, remembered across runs, re-applied on every load.
     QString page_dark_mode_ = QStringLiteral("off");
+    /// The shell's user-facing language (i18n, ADR-078): `hu` is authoritative and default; `en` re-labels the
+    /// chrome. Status messages and the grid are a follow-up slice and stay Hungarian for now.
+    QString language_ = QStringLiteral("hu");
+    /// The chrome widgets whose labels follow the language, kept so `setLanguage` can re-label in place.
+    QAction* action_start_engine_ = nullptr;
+    QAction* action_home_ = nullptr;
+    QAction* action_freeze_ = nullptr;
+    QAction* action_sessions_ = nullptr;
+    QAction* action_settings_ = nullptr;
+    QAction* action_site_theme_ = nullptr;
+    QToolButton* profile_button_ = nullptr;
+    QToolButton* print_button_ = nullptr;
+    QLabel* settings_live_label_ = nullptr;
+    QLabel* settings_idle_label_ = nullptr;
+    QLabel* settings_cold_label_ = nullptr;
+    QLabel* settings_budget_label_ = nullptr;
+    QLabel* settings_profile_label_ = nullptr;
+    QLabel* settings_language_label_ = nullptr;
+    QComboBox* prefs_language_ = nullptr;
+    QAction* tray_open_ = nullptr;
+    QAction* tray_quit_ = nullptr;
     /// The toolbar's dark-pages button, so its icon and tooltip always show the mode in force.
     QToolButton* page_dark_button_ = nullptr;
     /// The four theme buttons, by theme name (icon-only, the words are in the tooltip).

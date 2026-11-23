@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonnyolcadik szelet) — a shell nyelve váltható (HU/EN), először a chrome (M7, i18n)
+
+A HU/EN felület első szelete: a nyelvváltó beállítás, a fordítási mechanizmus és a shell **chrome**-ának
+(eszköztár, tálca, beállítás-dokk, keresősáv) angolja. A magyar marad a hiteles nyelv; a státuszüzenetek és a
+rács a következő szeletek.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/i18n.h` (új):** `uiText(hu, lang)` — a forrás a magyar, az `en` egy `QHash`-ból
+  adja az angolt; ismeretlen kulcs/nem-`en` nyelv a forrást adja vissza (a hiányzó fordítás soha nem üres címke).
+- **`apps/desktop-shell/src/main_window.{h,cpp}`:** `ui/language` QSettings (default `hu`); `MainWindow::t()`
+  és `setLanguage()` — a váltás **újraindítás nélkül**, helyben átcímkézve; a beállítás-dokk `Nyelv:` lenője.
+  A chrome (eszköztár, tálca, beállítás-dokk címkék, keresősáv) `t()`-be csomagolva.
+- **`--languagetest` (új):** a tiszta `uiText`-táblát, a QSettings-perzisztenciát és a helyben átcímkézést
+  méri — motor és mag nélkül.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (68 ellenőrzés mind „ok", köztük a languagetest és a check-repo)
+--languagetest     → language_map=ok · language_default=ok · language_switch=ok ·
+                     language_persist=ok · language_restore=ok · language=ok
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A **státuszüzenetek és a rács** (`home/app.js` + `antikolt-card.js`) angolja — a chrome kész, a többi a
+  következő szeletek; a PiP (architektúra-döntés); a teljes képernyőolvasó-illesztés (NVDA); az OAuth
+  összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonharminchetedik szelet) — a preview-név a tartalom hash-e (F2, `sha256` blobtár)
 
 A nyitott `sha256` blobtár-tétel, ami eddig a Rust `sha2` crate hiányára hivatkozva „blokkolt"-ként állt. A

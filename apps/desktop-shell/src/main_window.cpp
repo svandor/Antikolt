@@ -276,6 +276,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
     }
 
+    // The shell language is a user preference too (i18n, ADR-078): read it before the toolbar builds, so the
+    // chrome starts in the chosen language. Hungarian is authoritative; anything unrecognised stays Hungarian.
+    {
+        QSettings settings;
+        const QString lang = settings.value(QStringLiteral("ui/language")).toString();
+        if (lang == QStringLiteral("en") || lang == QStringLiteral("hu")) {
+            language_ = lang;
+        }
+    }
+
     buildToolBar();
     buildCardArea();
 
@@ -381,6 +391,77 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setupTray();
 }
 
+void MainWindow::setLanguage(const QString& language) {
+    const QString next = (language == QStringLiteral("en") || language == QStringLiteral("hu"))
+                             ? language
+                             : QStringLiteral("hu");
+    if (next == language_) {
+        return;
+    }
+    language_ = next;
+    QSettings settings;
+    settings.setValue(QStringLiteral("ui/language"), language_);
+    // Re-label the chrome in place (i18n, ADR-078): the strings are the Hungarian sources, `t()` maps them.
+    if (action_start_engine_ != nullptr) {
+        action_start_engine_->setText(t(QStringLiteral("Motor indítása")));
+    }
+    if (action_home_ != nullptr) {
+        action_home_->setText(t(QStringLiteral("⌂ Kezdőlap")));
+    }
+    if (action_freeze_ != nullptr) {
+        action_freeze_->setText(t(QStringLiteral("❄ Fagyasztás")));
+    }
+    if (action_sessions_ != nullptr) {
+        action_sessions_->setText(t(QStringLiteral("🗂 Munkamenetek")));
+    }
+    if (action_settings_ != nullptr) {
+        action_settings_->setText(t(QStringLiteral("⚙ Beállítások")));
+    }
+    if (action_site_theme_ != nullptr) {
+        action_site_theme_->setText(t(QStringLiteral("🌓 Oldal-téma: %1")).arg(page_media_));
+    }
+    if (profile_button_ != nullptr) {
+        profile_button_->setText(t(QStringLiteral("💾 Profil")));
+    }
+    if (print_button_ != nullptr) {
+        print_button_->setText(t(QStringLiteral("🖨️ PDF")));
+    }
+    if (tray_ != nullptr) {
+        tray_->setToolTip(t(QStringLiteral("Antikolt — fut")));
+    }
+    if (tray_open_ != nullptr) {
+        tray_open_->setText(t(QStringLiteral("Megnyitás")));
+    }
+    if (tray_quit_ != nullptr) {
+        tray_quit_->setText(t(QStringLiteral("Kilépés")));
+    }
+    if (settings_dock_ != nullptr) {
+        settings_dock_->setWindowTitle(t(QStringLiteral("Beállítások")));
+    }
+    if (settings_live_label_ != nullptr) {
+        settings_live_label_->setText(t(QStringLiteral("Élő kártyák (max):")));
+    }
+    if (settings_idle_label_ != nullptr) {
+        settings_idle_label_->setText(t(QStringLiteral("Hibernálás tétlenség után (perc):")));
+    }
+    if (settings_cold_label_ != nullptr) {
+        settings_cold_label_->setText(t(QStringLiteral("Hideg kártya (óra):")));
+    }
+    if (settings_budget_label_ != nullptr) {
+        settings_budget_label_->setText(t(QStringLiteral("Memória-büdzsé (MiB):")));
+    }
+    if (settings_profile_label_ != nullptr) {
+        settings_profile_label_->setText(t(QStringLiteral("Erőforrás-profil:")));
+    }
+    if (settings_language_label_ != nullptr) {
+        settings_language_label_->setText(t(QStringLiteral("Nyelv:")));
+    }
+    if (find_edit_ != nullptr) {
+        find_edit_->setAccessibleName(t(QStringLiteral("Keresés az oldalon")));
+        find_edit_->setPlaceholderText(t(QStringLiteral("Keresés az oldalon…")));
+    }
+}
+
 bool MainWindow::trayEnabled() {
     return qEnvironmentVariableIsEmpty("ANTIKOLT_NO_TRAY");
 }
@@ -396,15 +477,15 @@ void MainWindow::setupTray() {
         return;
     }
     tray_ = new QSystemTrayIcon(windowIcon(), this);
-    tray_->setToolTip(QStringLiteral("Antikolt — fut"));
+    tray_->setToolTip(t(QStringLiteral("Antikolt — fut")));
     tray_menu_ = new QMenu(this);
-    QAction* open = tray_menu_->addAction(QStringLiteral("Megnyitás"));
-    open->setObjectName(QStringLiteral("tray.open"));
-    connect(open, &QAction::triggered, this, &MainWindow::restoreFromTray);
+    tray_open_ = tray_menu_->addAction(t(QStringLiteral("Megnyitás")));
+    tray_open_->setObjectName(QStringLiteral("tray.open"));
+    connect(tray_open_, &QAction::triggered, this, &MainWindow::restoreFromTray);
     tray_menu_->addSeparator();
-    QAction* quit = tray_menu_->addAction(QStringLiteral("Kilépés"));
-    quit->setObjectName(QStringLiteral("tray.quit"));
-    connect(quit, &QAction::triggered, this, &MainWindow::quitFromTray);
+    tray_quit_ = tray_menu_->addAction(t(QStringLiteral("Kilépés")));
+    tray_quit_->setObjectName(QStringLiteral("tray.quit"));
+    connect(tray_quit_, &QAction::triggered, this, &MainWindow::quitFromTray);
     tray_->setContextMenu(tray_menu_);
     connect(tray_, &QSystemTrayIcon::activated, this,
             [this](QSystemTrayIcon::ActivationReason reason) {
@@ -2778,7 +2859,7 @@ void MainWindow::refreshUserPrefs() {
 
 void MainWindow::showSettings() {
     if (settings_dock_ == nullptr) {
-        settings_dock_ = new QDockWidget(QStringLiteral("Beállítások"), this);
+        settings_dock_ = new QDockWidget(t(QStringLiteral("Beállítások")), this);
         settings_dock_->setObjectName(QStringLiteral("settings"));
         auto* panel = new QWidget(settings_dock_);
         auto* layout = new QVBoxLayout(panel);
@@ -2788,7 +2869,8 @@ void MainWindow::showSettings() {
         auto* live = new QWidget(panel);
         auto* live_layout = new QHBoxLayout(live);
         live_layout->setContentsMargins(0, 0, 0, 0);
-        live_layout->addWidget(new QLabel(QStringLiteral("Élő kártyák (max):"), live));
+        settings_live_label_ = new QLabel(t(QStringLiteral("Élő kártyák (max):")), live);
+        live_layout->addWidget(settings_live_label_);
         prefs_live_cards_ = new QSpinBox(live);
         prefs_live_cards_->setRange(1, 12);
         live_layout->addWidget(prefs_live_cards_);
@@ -2797,7 +2879,8 @@ void MainWindow::showSettings() {
         auto* idle = new QWidget(panel);
         auto* idle_layout = new QHBoxLayout(idle);
         idle_layout->setContentsMargins(0, 0, 0, 0);
-        idle_layout->addWidget(new QLabel(QStringLiteral("Hibernálás tétlenség után (perc):"), idle));
+        settings_idle_label_ = new QLabel(t(QStringLiteral("Hibernálás tétlenség után (perc):")), idle);
+        idle_layout->addWidget(settings_idle_label_);
         prefs_idle_minutes_ = new QSpinBox(idle);
         prefs_idle_minutes_->setRange(1, 60);
         idle_layout->addWidget(prefs_idle_minutes_);
@@ -2806,7 +2889,8 @@ void MainWindow::showSettings() {
         auto* cold = new QWidget(panel);
         auto* cold_layout = new QHBoxLayout(cold);
         cold_layout->setContentsMargins(0, 0, 0, 0);
-        cold_layout->addWidget(new QLabel(QStringLiteral("Hideg kártya (óra):"), cold));
+        settings_cold_label_ = new QLabel(t(QStringLiteral("Hideg kártya (óra):")), cold);
+        cold_layout->addWidget(settings_cold_label_);
         prefs_cold_hours_ = new QSpinBox(cold);
         prefs_cold_hours_->setRange(1, 720);
         cold_layout->addWidget(prefs_cold_hours_);
@@ -2815,7 +2899,8 @@ void MainWindow::showSettings() {
         auto* budget = new QWidget(panel);
         auto* budget_layout = new QHBoxLayout(budget);
         budget_layout->setContentsMargins(0, 0, 0, 0);
-        budget_layout->addWidget(new QLabel(QStringLiteral("Memória-büdzsé (MiB):"), budget));
+        settings_budget_label_ = new QLabel(t(QStringLiteral("Memória-büdzsé (MiB):")), budget);
+        budget_layout->addWidget(settings_budget_label_);
         prefs_budget_mb_ = new QSpinBox(budget);
         prefs_budget_mb_->setRange(64, 4096);
         budget_layout->addWidget(prefs_budget_mb_);
@@ -2826,7 +2911,8 @@ void MainWindow::showSettings() {
         auto* profile = new QWidget(panel);
         auto* profile_layout = new QHBoxLayout(profile);
         profile_layout->setContentsMargins(0, 0, 0, 0);
-        profile_layout->addWidget(new QLabel(QStringLiteral("Erőforrás-profil:"), profile));
+        settings_profile_label_ = new QLabel(t(QStringLiteral("Erőforrás-profil:")), profile);
+        profile_layout->addWidget(settings_profile_label_);
         prefs_profile_ = new QComboBox(profile);
         prefs_profile_->addItem(QStringLiteral("Gyors"), QStringLiteral("fast"));
         prefs_profile_->addItem(QStringLiteral("Kiegyensúlyozott"), QStringLiteral("balanced"));
@@ -2837,6 +2923,21 @@ void MainWindow::showSettings() {
             "A névvel ellátott profil preset: felülírja a hibernálást és a büdzsét. A Kézi a fentieket hagyja."));
         profile_layout->addWidget(prefs_profile_);
         layout->addWidget(profile);
+
+        // The shell language (i18n, ADR-078): a runtime switch, applied in place — no restart.
+        auto* language = new QWidget(panel);
+        auto* language_layout = new QHBoxLayout(language);
+        language_layout->setContentsMargins(0, 0, 0, 0);
+        settings_language_label_ = new QLabel(t(QStringLiteral("Nyelv:")), language);
+        language_layout->addWidget(settings_language_label_);
+        prefs_language_ = new QComboBox(language);
+        prefs_language_->addItem(QStringLiteral("Magyar"), QStringLiteral("hu"));
+        prefs_language_->addItem(QStringLiteral("English"), QStringLiteral("en"));
+        prefs_language_->setCurrentIndex(prefs_language_->findData(language_));
+        connect(prefs_language_, &QComboBox::currentIndexChanged, this,
+                [this](int) { setLanguage(prefs_language_->currentData().toString()); });
+        language_layout->addWidget(prefs_language_);
+        layout->addWidget(language);
 
         auto* save = new QPushButton(QStringLiteral("Mentés"), panel);
         save->setObjectName(QStringLiteral("prefsSave"));
@@ -3176,18 +3277,22 @@ void MainWindow::buildToolBar() {
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
 
-    toolbar->addAction(QStringLiteral("Motor indítása"), this, &MainWindow::startEngine);
-    toolbar->addAction(QStringLiteral("⌂ Kezdőlap"), this, &MainWindow::loadHome);
-    toolbar->addAction(QStringLiteral("❄ Fagyasztás"), this, &MainWindow::freezeCard);
-    toolbar->addAction(QStringLiteral("🗂 Munkamenetek"), this, &MainWindow::showSessions);
-    toolbar->addAction(QStringLiteral("⚙ Beállítások"), this, &MainWindow::showSettings);
+    action_start_engine_ =
+        toolbar->addAction(t(QStringLiteral("Motor indítása")), this, &MainWindow::startEngine);
+    action_home_ = toolbar->addAction(t(QStringLiteral("⌂ Kezdőlap")), this, &MainWindow::loadHome);
+    action_freeze_ = toolbar->addAction(t(QStringLiteral("❄ Fagyasztás")), this, &MainWindow::freezeCard);
+    action_sessions_ =
+        toolbar->addAction(t(QStringLiteral("🗂 Munkamenetek")), this, &MainWindow::showSessions);
+    action_settings_ =
+        toolbar->addAction(t(QStringLiteral("⚙ Beállítások")), this, &MainWindow::showSettings);
 
     // Portable profile bundle (ADR-059): the shell owns the native file dialog; the core does the export/import.
     // The dialog cannot be clicked by the harness, so the button is the product's entry point while `--profiletest`
     // measures the underlying path through the bridge.
     auto* profile_button = new QToolButton(this);
+    profile_button_ = profile_button;
     profile_button->setObjectName(QStringLiteral("profileButton"));
-    profile_button->setText(QStringLiteral("💾 Profil"));
+    profile_button->setText(t(QStringLiteral("💾 Profil")));
     profile_button->setPopupMode(QToolButton::InstantPopup);
     profile_button->setAutoRaise(true);
     profile_button->setCursor(Qt::PointingHandCursor);
@@ -3206,8 +3311,9 @@ void MainWindow::buildToolBar() {
     // Save-as-PDF (F7 "nyomtatás"): the shell owns the native dialog, the engine writes the PDF. The dialog cannot
     // be clicked by the harness, so `--printtest` measures the underlying `print_pdf` path.
     auto* print_button = new QToolButton(this);
+    print_button_ = print_button;
     print_button->setObjectName(QStringLiteral("printButton"));
-    print_button->setText(QStringLiteral("🖨️ PDF"));
+    print_button->setText(t(QStringLiteral("🖨️ PDF")));
     print_button->setPopupMode(QToolButton::InstantPopup);
     print_button->setAutoRaise(true);
     print_button->setCursor(Qt::PointingHandCursor);
@@ -3220,14 +3326,15 @@ void MainWindow::buildToolBar() {
     print_button->setMenu(print_menu);
     toolbar->addWidget(print_button);
     // Site themes (ADR-037): the page decides what `prefers-color-scheme` means; this only reports it.
-    auto* siteTheme = toolbar->addAction(QStringLiteral("🌓 Oldal-téma: auto"));
-    siteTheme->setObjectName(QStringLiteral("siteThemeAction"));
-    connect(siteTheme, &QAction::triggered, this, [this, siteTheme] {
+    action_site_theme_ =
+        toolbar->addAction(t(QStringLiteral("🌓 Oldal-téma: %1")).arg(QStringLiteral("auto")));
+    action_site_theme_->setObjectName(QStringLiteral("siteThemeAction"));
+    connect(action_site_theme_, &QAction::triggered, this, [this] {
         const QStringList modes = {QStringLiteral("auto"), QStringLiteral("dark"),
                                    QStringLiteral("light")};
         const int next = (modes.indexOf(page_media_) + 1) % modes.size();
         setPageMedia(modes.at(next));
-        siteTheme->setText(QStringLiteral("🌓 Oldal-téma: %1").arg(page_media_));
+        action_site_theme_->setText(t(QStringLiteral("🌓 Oldal-téma: %1")).arg(page_media_));
     });
 
     // Zoom (ADR-038): the label is the state, the two buttons are the only way to change it.
@@ -3350,8 +3457,8 @@ void MainWindow::buildCardArea() {
     find_layout->setSpacing(6);
     find_edit_ = new QLineEdit(find_bar_);
     find_edit_->setObjectName(QStringLiteral("antikoltFindEdit"));
-    find_edit_->setAccessibleName(QStringLiteral("Keresés az oldalon"));
-    find_edit_->setPlaceholderText(QStringLiteral("Keresés az oldalon…"));
+    find_edit_->setAccessibleName(t(QStringLiteral("Keresés az oldalon")));
+    find_edit_->setPlaceholderText(t(QStringLiteral("Keresés az oldalon…")));
     find_edit_->setClearButtonEnabled(true);
     find_status_ = new QLabel(find_bar_);
     find_status_->setObjectName(QStringLiteral("antikoltFindStatus"));
