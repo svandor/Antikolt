@@ -325,6 +325,13 @@ void EngineClient::setPageDarkMode(qint64 surface, const QString& mode, ReplyHan
     send(QStringLiteral("set_forced_dark"), fields, std::move(handler));
 }
 
+void EngineClient::setVideoCap(qint64 surface, int maxHeight, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("max_height"), maxHeight);
+    send(QStringLiteral("set_video_cap"), fields, std::move(handler));
+}
+
 void EngineClient::metrics(qint64 surface, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));

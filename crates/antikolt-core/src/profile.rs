@@ -4,7 +4,7 @@
 //!
 //! A profile is a *bundle* of tuning values, not a single switch: how long a card may stay live,
 //! whether the engine host is kept warm, whether previews are refreshed in the background, what
-//! video resolution cap applies, and where the memory governor's warning and hard limits sit.
+//! video display cap applies, and where the memory governor's warning and hard limits sit.
 //!
 //! The numbers are engineering estimates that `docs/HU/03-MEMORIA.md` turns into measured budgets;
 //! they are deliberately in one place so that changing them is a one-line diff.
@@ -113,7 +113,10 @@ pub struct ProfileParams {
     pub engine_warm_idle_shutdown_ms: Option<u64>,
     /// Whether the idle preview refresher may run (`02` §12).
     pub preview_refresh: bool,
-    /// Cap on video height; the governor lowers the resolution to save memory.
+    /// Cap on the displayed height of top-level videos (ADR-020/ADR-076). This is a *display* cap, not a
+    /// decode-resolution cap: CEF exposes no per-page video decode-resolution limit, so the cap limits the
+    /// rendered box rather than the decoded stream, and it reaches only top-level `video` elements (a
+    /// cross-origin iframe keeps its own document).
     pub video_max_height: u32,
     /// Governor band boundary: above this the core starts freeing background resources.
     pub memory_warn_bytes: u64,

@@ -3,6 +3,33 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-076 — A `video_max_height` megjelenítési sapka, nem dekódolási sapka (2026-11-23)
+
+**Kontextus:** az ADR-020 erőforrás-profiljai `video_max_height` mezőt hordoznak (Fast 2160, Balanced 1080,
+Saver 720, Ultra 480), és a profilszöveg azt ígérte, hogy „a governor csökkenti a felbontást, hogy memóriát
+spóroljon". A mezőt a shell eddig csak **jelentette** (`--memoryreport`), nem alkalmazta — ez volt az F6 utolsó
+nyitott vezérlő-művelete. A kutatás megállapította: a CEF/Chromium **nem ad** laponkénti videó-dekódolási
+felbontáskorlátot (nincs ilyen CDP-op), és a CSS-injekció is csak a top-level `video` elemeket éri el (a
+cross-origin iframe saját dokumentum — biztonsági határ).
+
+**Döntés:**
+
+1. **A sapka megjelenítési sapka:** a motor egy nevesített stíluselemmel (`antikolt-video-cap`) a
+   `video{max-height:Npx}` szabályt injektálja (`set_video_cap` op), a profil `video_max_height`-je hajtja. A
+   szabályt a profilváltás cseréli, a `manual` profil (nincs paraméter) eltávolítja — ugyanaz a trükk, mint a
+   sötét oldalak kapcsolója (ADR-044/045).
+2. **A dekódolási felbontás `not-measurable`:** a megjelenítési sapka a *renderelt dobozt* korlátozza, nem a
+   *dekódolt folyamot* — a CEF nem ad laponkénti videó-dekódolási korlátot, így a memória-megtakarítás közvetett
+   (kisebb komponált doboz), nem a dekódolási puffer csökkenése. Ezt a teszt **kimondja**
+   (`video_cap_resolution=not-measurable`), nem hallgatja el.
+3. **A hatókör top-level `video`:** a cross-origin iframe-ek kívül esnek (saját dokumentum); a sapka ezt nem
+   kerüli meg.
+
+**Következmény:** (+) a profil `video_max_height`-je most már **alkalmazva** van (nem csak jelentve), és a
+`--videocaptest` méri (Fast 2160px → Saver 720px a renderelt magassággal → Manual eltávolítva); (−) a valódi
+dekódolási felbontás-csökkentés CEF-ben nem megvalósítható, ezért a memória-ígéret ezen a téren közvetett és
+dokumentáltan korlátos.
+
 ## ADR-075 — A `<antikolt-card>` önálló csomag (2026-11-22)
 
 **Kontextus:** a kártya web-komponense eddig a kezdőlap saját szkriptjében (`app.js`) élt, a rács belső globálisaival
@@ -1217,6 +1244,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-073 | Bejelentkezési popup: gesztus → valódi ablak az opener partíciójában (közös sütik), 60 s, külön követve (`popup_browser`); gesztus nélkül blokkolva; `popup_requested`/`popup_closed` események; a shell a `popup_open` jelzővel függeszti fel a hibernálást | Elfogadva |
 | ADR-074 | Memória-büdzsé (F6): `memory_budget_mb` a `user_prefs`-ben (`user_version=7`, default 512, 64..=4096, `serde(default)`); a shell `refreshUserPrefs`-szel cache-eli, a `system.memory` `budgetBytes`-ként adja; a rács used/budget sávot rajzol; `--metricstest` `page_budget_bytes > 0` | Elfogadva |
 | ADR-075 | `<antikolt-card>` önálló csomag: `home/antikolt-card.js` IIFE, a rács és a felhasználói lap ugyanezt tölti; a konténer/munkaterület `<select>` a `setOptions`-ból, a fókusz-állapot `getPendingFocusId()`-dal | Elfogadva |
+| ADR-076 | A `video_max_height` megjelenítési sapka: a motor `set_video_cap` opja nevesített stíluselemmel (`video{max-height:Npx}`), a profil hajtja, a `manual` eltávolítja; a dekódolási felbontás `not-measurable` (a CEF-nek nincs laponkénti korlátja), a hatókör top-level `video` | Elfogadva |
 
 ---
 

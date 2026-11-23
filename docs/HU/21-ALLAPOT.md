@@ -9,7 +9,7 @@
 ```
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
-38 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
+66 ellenőrzés     ok        (63 önteszt + build + core service + check-repo; lásd alább, mit bizonyít mindegyik)
 check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+53+9+1+15 Rust-teszt)
 ```
 
@@ -55,7 +55,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Munkamenetek | `--sessionpanel`, `--scrollbook`, `--wipetest`, `--cleanuptest` | látszik, mi van életben, mennyi RAM/lemez; `keep`/`sweep`/`wipe` végrehajtás; a „Politika" oszlop legördülővel **kártyánként (origin-szinten)** felülírja a konténer-alapértelmezést (`session_panel=ok`) |
 | Bejelentkezési popup, profil-gomb, fogd-és-vidd | `--partitiontest`, `--profiletest`, `--workspacetest` | popup (ADR-073): gesztus → valódi ablak a kártya partíciójában, 60 s, a hibernálás felfüggesztve (a gesztus-út `not-measurable`); profil-gomb: natív `QFileDialog` a `profile_export`/`import` fölött (a dialógus `not-measurable`, az út `--profiletest`-tel mérve); fogd-és-vidd: kártya → munkaterület-fül a `<select>` mellett (ADR-058) |
 | Előnézet | `--preview*` | a háttér-worker szabályai (ADR-041) és az ütemező mérve |
-| Memória | `--metricstest`, `--memorytest`, `--prefstest`, `--memorypressuretest`, `--memorypressuree2etest`, `--memoryhibernatetest`, `--memorywarnpausetest`, `--memoryreport` | az engine working set-je mérve (`engine_working_set_bytes`), a büdzsé a profil `memory_budget_mb`-je (`budgetBytes`); a rács used/budget sávot rajzol, és `mem-over`/`mem-warn`/`mem-hard` jelzéssel mutatja a nyomást (a híd átadja a `overBudget`/`pressure`-t, 126. szelet); a kártya `memory_bytes`-e a fagyasztáskori working set (séma 0008); a `system.memory` `overBudget` jele a médiaminőség-korlát alapja, és a profil `warn`/`hard` sávjaiból `pressure` (normal/warn/hard) is számítódik (ADR-020, 124. szelet), és a `hard` sáv elérése hibernálja az élő kártyát, a `warn` sáv pedig szünetelteti a preview-munkást (ADR-020, 127–128. szelet); a `--memoryreport` a teljes vezérlő-állapotot (profil + büdzsé + working set + kártyánkénti memória + nyomás) egyben írja |
+| Memória | `--metricstest`, `--memorytest`, `--prefstest`, `--memorypressuretest`, `--memorypressuree2etest`, `--memoryhibernatetest`, `--memorywarnpausetest`, `--videocaptest`, `--memoryreport` | az engine working set-je mérve (`engine_working_set_bytes`), a büdzsé a profil `memory_budget_mb`-je (`budgetBytes`); a rács used/budget sávot rajzol, és `mem-over`/`mem-warn`/`mem-hard` jelzéssel mutatja a nyomást (a híd átadja a `overBudget`/`pressure`-t, 126. szelet); a kártya `memory_bytes`-e a fagyasztáskori working set (séma 0008); a `system.memory` `overBudget` jele a médiaminőség-korlát alapja, és a profil `warn`/`hard` sávjaiból `pressure` (normal/warn/hard) is számítódik (ADR-020, 124. szelet), és a `hard` sáv elérése hibernálja az élő kártyát, a `warn` sáv pedig szünetelteti a preview-munkást (ADR-020, 127–128. szelet); a profil `video_max_height`-je **megjelenítési sapkaként** a top-level `video`-ra kerül (`set_video_cap`, ADR-076, `--videocaptest`: Fast 2160px → Saver 720px → Manual eltávolítva), a dekódolási felbontás `not-measurable`; a `--memoryreport` a teljes vezérlő-állapotot (profil + büdzsé + working set + kártyánkénti memória + nyomás) egyben írja |
 | Tálca, napló, téma | `--traytest`, `--logtest`, `--themetest` | a napló nem ír feleslegesen, a témák a helyes színt adják |
 | Nyomtatás (mentés PDF-be) | `--printtest` | a motor a saját kompozitorával (`PrintToPDF`) írja a PDF-et; a shell `🖨️ PDF` gombja natív fájldialógust nyit (a dialógus `not-measurable`, az utat a `--printtest` méri — F7 nyitány) |
 | Keresés az oldalon (Ctrl+F) | `--findtest` | a motor `Find`/`CefFindHandler` útján keresi a szöveget és a találatszámot `find_result` eseménnyel jelenti; a shell Ctrl+F keresősávot mutat (Enter = következő, Shift+Enter = előző, Esc = bezárás) |
@@ -80,7 +80,9 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
    (T1/T2) bekötése**, a **motor leállítás/újraindítás ciklusa**, a **rács raszterizálása**, a **raszter-kezdőlap
    mód**, annak **automatikus aktiválása**, a **kattintás-leképezés**, a **raszter megjelenítése + kattintás-horog**
    és az **oldalarány-megőrző illesztés** kész (ADR-074/020, 102–120. szelet), a `warn`/`hard` sávokból pedig már `pressure` jel számítódik (ADR-020, 124. szelet), és a `hard` sáv hibernálja az élő kártyát, a `warn` sáv pedig szünetelteti a preview-munkást (ADR-020, 127–128. szelet); a profil **többi dimenziójának**
-   tényleges vezérlő-művelete (a videófelbontás-korlát) marad hátra (az ütemterv 3–4 hetes tétele).
+   tényleges vezérlő-művelete, a `video_max_height`, **kész megjelenítési sapkaként** (ADR-076, `--videocaptest`:
+   a profil értéke `video{max-height:Npx}` szabályként jut a top-level `video`-ra, a `manual` profil eltávolítja);
+   a **dekódolási** felbontás-csökkentés `not-measurable` — a CEF nem ad laponkénti videó-dekódolási korlátot.
 
 ## Amihez emberi lépés kell (nem kód)
 

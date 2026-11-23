@@ -3,6 +3,47 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonharminchatodik szelet) — a videó-magasság-sapka mint megjelenítési sapka (F6)
+
+Az F6 utolsó nyitott vezérlő-művelete: a profil `video_max_height`-je eddig csak **jelentve** volt
+(`--memoryreport`), nem alkalmazva. Ez a szelet alkalmazza — **megjelenítési sapkaként**, mert a kutatás
+kimondta, hogy a CEF/Chromium nem ad laponkénti videó-dekódolási felbontáskorlátot (ADR-076).
+
+### Mi változott
+
+- **`apps/engine-host` (`protocol.h`/`.cpp`, `host.cpp`):** új `set_video_cap` op + `VideoCap` osztály — egy
+  nevesített stíluselemmel (`antikolt-video-cap`) a `video{max-height:Npx}` szabályt injektálja (a sötét oldalak
+  kapcsolójának trükkje, ADR-044/045); a `0` eltávolítja, a profilváltás cseréli.
+- **`apps/desktop-shell` (`engine_client`, `main_window`):** `EngineClient::setVideoCap`; a shell a derivált
+  profil `video_max_height`-jét cache-eli (`video_max_height_`), és a `loadFinished`-ben, valamint a
+  profilváltáskor alkalmazza (mint a téma/nagyítás/sötét oldalak).
+- **`--videocaptest` (új):** a rácsba egy top-level `<video>`-t injektál, majd három profilt jár be — Fast
+  (2160), Saver (720), Manual (nincs paraméter) —, és méri, hogy a számított `max-height` és a renderelt magasság
+  követi a profilt.
+- **`crates/antikolt-core/src/profile.rs`:** a `video_max_height` dokumentációja őszintén megmondja, hogy ez
+  **megjelenítési** sapka, nem dekódolási.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (66 ellenőrzés mind „ok", köztük a videocaptest és a check-repo)
+--videocaptest     → video_fast_max=2160px · video_fast_present=true · video_cap_max=720px ·
+                     video_cap_height=720 · video_manual_max=none · video_cap=ok
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Őszinte korlát (kimondva, nem elhallgatva)
+
+A sapka a **renderelt dobozt** korlátozza, nem a **dekódolt folyamot**: a CEF-nek nincs laponkénti
+videó-dekódolási korlátja, így a memória-megtakarítás közvetett (kisebb komponált doboz), és a hatókör a
+top-level `video` (a cross-origin iframe saját dokumentum). A teszt ezt `video_cap_resolution=not-measurable`-ként
+írja ki. ADR-076.
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (PiP, a teljes képernyőolvasó-illesztés, HU/EN); az OAuth összekötése; az emberi kiadási tételek
+  (SignPath, Store).
+
 ## 2026-11-23 (százhuszonharmincötödik szelet) — akadálymentesség: nevesített vezérlők + Ctrl+F (F7)
 
 Az F7 hatodik darabja: a **billentyűzetes navigáció és a képernyőolvasó-támogatás** első, mérhető része. A keresősáv

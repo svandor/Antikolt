@@ -2441,6 +2441,159 @@ int runContainerPolicyCheck() {
     return ok ? 0 : 1;
 }
 
+/// Prove the profile's video-height cap reaches the page (F6, ADR-020/ADR-076): `Fast` carries a 2160p cap,
+/// `Saver` a 720p cap, and `Manual` none — so the shell applies the derived profile's `video_max_height` as a
+/// display cap on top-level `video` elements through the engine's named style element, and removes it when the
+/// profile has no params. Every step is driven by the real profile, not a hand-written call. The decode-resolution
+/// side is reported as `not-measurable`: CEF exposes no per-page video decode-resolution limit, so the cap is a
+/// *display* cap and that is said out loud rather than faked.
+int runVideoCapCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    const auto styleScript = [] {
+        return QStringLiteral(
+            "JSON.stringify({max:getComputedStyle(document.getElementById('v')).maxHeight,"
+            "present:document.getElementById('antikolt-video-cap')!==null,"
+            "height:document.getElementById('v').getBoundingClientRect().height})");
+    };
+
+    QString fast_max;
+    bool fast_present = false;
+    QString cap_max;
+    bool cap_present = false;
+    qint64 cap_height = 0;
+    QString manual_max;
+    bool manual_present = false;
+
+    // `loadFinished` can fire twice for one page; the chain below must run exactly once.
+    bool ran = false;
+
+    QEventLoop loop;
+    const auto readStyle = [&](qint64 id, const std::function<void(const QString&, bool, qint64)>& done) {
+        window.engine()->evaluate(id, styleScript(),
+                                  [done](const QJsonObject& reply, const QString& error) {
+                                      if (!error.isEmpty()) {
+                                          done({}, false, -1);
+                                          return;
+                                      }
+                                      const QJsonObject o =
+                                          QJsonDocument::fromJson(
+                                              reply.value(QStringLiteral("value")).toString().toUtf8())
+                                              .object();
+                                      done(o.value(QStringLiteral("max")).toString(),
+                                           o.value(QStringLiteral("present")).toBool(),
+                                           static_cast<qint64>(
+                                               o.value(QStringLiteral("height")).toDouble()));
+                                  });
+    };
+    const auto setProfile = [&](const QString& kind, const std::function<void(bool)>& done) {
+        QJsonObject prefs;
+        prefs.insert(QStringLiteral("max_live_cards"), 5);
+        prefs.insert(QStringLiteral("idle_hibernate_ms"), static_cast<qint64>(600000));
+        prefs.insert(QStringLiteral("cold_card_ms"), static_cast<qint64>(86400000));
+        prefs.insert(QStringLiteral("memory_budget_mb"), 512);
+        prefs.insert(QStringLiteral("resource_profile"), kind);
+        window.core()->userPrefsSet(prefs, [done](const QJsonObject&, const QString& error) {
+            done(error.isEmpty());
+        });
+    };
+
+    QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int) {
+                         if (!url.startsWith(QStringLiteral("file:")) || ran) {
+                             return;
+                         }
+                         ran = true;
+                         // Inject a top-level <video> with a known 16:9 box, then walk the three profiles.
+                         window.engine()->evaluate(
+                             id,
+                             QStringLiteral(
+                                 "(function(){var v=document.createElement('video');v.id='v';"
+                                 "v.width=1920;v.height=1080;document.body.appendChild(v);"
+                                 "return 'injected';})()"),
+                             [&, id](const QJsonObject&, const QString&) {
+                                 // `Fast` = 2160p cap: the baseline, proving the profile value maps to the rule.
+                                 setProfile(QStringLiteral("fast"), [&, id](bool ok_fast) {
+                                     if (!ok_fast) {
+                                         loop.quit();
+                                         return;
+                                     }
+                                     window.refreshUserPrefs();
+                                     QTimer::singleShot(500, &loop, [&, id] {
+                                         readStyle(id, [&, id](const QString& max, bool present, qint64) {
+                                             fast_max = max;
+                                             fast_present = present;
+                                             // `Saver` = 720p: it must actually cap the 1080p box.
+                                             setProfile(QStringLiteral("saver"), [&, id](bool ok_saver) {
+                                                 if (!ok_saver) {
+                                                     loop.quit();
+                                                     return;
+                                                 }
+                                                 window.refreshUserPrefs();
+                                                 QTimer::singleShot(500, &loop, [&, id] {
+                                                     readStyle(id,
+                                                               [&, id](const QString& max, bool present,
+                                                                       qint64 height) {
+                                                                   cap_max = max;
+                                                                   cap_present = present;
+                                                                   cap_height = height;
+                                                                   // `Manual` has no params: the cap is removed.
+                                                                   setProfile(QStringLiteral("manual"),
+                                                                              [&, id](bool ok_manual) {
+                                                                                  if (!ok_manual) {
+                                                                                      loop.quit();
+                                                                                      return;
+                                                                                  }
+                                                                                  window.refreshUserPrefs();
+                                                                                  QTimer::singleShot(
+                                                                                      500, &loop, [&, id] {
+                                                                                          readStyle(
+                                                                                              id,
+                                                                                              [&](const QString& max,
+                                                                                                  bool present,
+                                                                                                  qint64) {
+                                                                                                  manual_max = max;
+                                                                                                  manual_present =
+                                                                                                      present;
+                                                                                                  loop.quit();
+                                                                                              });
+                                                                                      });
+                                                                              });
+                                                               });
+                                                 });
+                                             });
+                                         });
+                                     });
+                                 });
+                             });
+                     });
+    QTimer::singleShot(60000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    out << "video_fast_max=" << fast_max << '\n';
+    out << "video_fast_present=" << (fast_present ? "true" : "false") << '\n';
+    out << "video_cap_max=" << cap_max << '\n';
+    out << "video_cap_present=" << (cap_present ? "true" : "false") << '\n';
+    out << "video_cap_height=" << cap_height << '\n';
+    out << "video_manual_max=" << manual_max << '\n';
+    out << "video_manual_present=" << (manual_present ? "true" : "false") << '\n';
+    out << "video_cap_resolution=not-measurable (CEF exposes no per-page video decode-resolution limit;"
+           " the cap is a display cap)\n";
+    const bool ok = fast_present && fast_max == QStringLiteral("2160px") && cap_present &&
+                    cap_max == QStringLiteral("720px") && cap_height > 0 && cap_height <= 720 &&
+                    manual_max == QStringLiteral("none") && !manual_present;
+    out << "video_cap=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runMemoryPressureCheck() {
     QTextStream out(stdout);
 
@@ -9794,6 +9947,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("memorywarnpausetest"),
         QStringLiteral("Prove the warn band pauses the preview worker (F6), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption videocaptest(
+        QStringLiteral("videocaptest"),
+        QStringLiteral("Prove the profile's video-height cap reaches top-level videos (F6), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption printtest(
         QStringLiteral("printtest"),
         QStringLiteral("Prove the page saves to PDF (F7), then exit."),
@@ -9904,6 +10061,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(memorypressuree2etest);
     parser.addOption(memoryhibernatetest);
     parser.addOption(memorywarnpausetest);
+    parser.addOption(videocaptest);
     parser.addOption(printtest);
     parser.addOption(findtest);
     parser.addOption(downloadtest);
@@ -10112,6 +10270,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(memorywarnpausetest)) {
         return runMemoryWarnPauseCheck(parser.value(memorywarnpausetest));
+    }
+
+    if (parser.isSet(videocaptest)) {
+        return runVideoCapCheck(parser.value(videocaptest));
     }
 
     if (parser.isSet(printtest)) {

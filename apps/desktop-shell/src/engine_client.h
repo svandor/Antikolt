@@ -116,6 +116,10 @@ public:
     /// The engine injects one named style element and replaces or removes exactly that, so a mode change never
     /// needs a reload. The user's switch, not a default — see `MainWindow::setPageDarkMode`.
     void setPageDarkMode(qint64 surface, const QString& mode, ReplyHandler handler = {});
+    /// Cap the displayed height of top-level videos (`set_video_cap`, ADR-020/ADR-076): the profile's
+    /// `video_max_height` in CSS pixels, 0 to remove the cap. The engine injects one named style element and
+    /// replaces or removes exactly that, so a profile change never needs a reload.
+    void setVideoCap(qint64 surface, int maxHeight, ReplyHandler handler = {});
     /// What one surface costs: `{dom_nodes, js_heap_bytes, engine_working_set_bytes}` (ADR-036).
     ///
     /// The numbers are measured by the engine — the page's own node count and JS heap through DevTools, and

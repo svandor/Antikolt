@@ -73,6 +73,11 @@ struct Command {
     /// injects one named style element, so a mode change is a replacement and `off` removes exactly what this
     /// host added. An empty value means "leave the page alone".
     std::string dark_mode;
+    /// Video display cap (`set_video_cap`, ADR-020/ADR-076): the profile's `video_max_height`, in CSS pixels.
+    /// 0 means "no cap" — the host removes exactly the style element it added. This is a *display* cap on
+    /// top-level `video` elements: CEF exposes no per-page decode-resolution limit, and a cross-origin iframe
+    /// keeps its own document (a browser security boundary), so the cap never reaches inside it.
+    int video_max_height = 0;
     /// Scrolling (`scroll`): the distance in CSS pixels, and whether the move is animated.
     int scroll_x = 0;
     int scroll_y = 0;

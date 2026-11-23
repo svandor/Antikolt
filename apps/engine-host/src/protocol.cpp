@@ -137,6 +137,9 @@ bool ParseCommand(const std::string& payload, Command* out) {
             out->dark_mode = forced->GetBool() ? "invert" : "off";
         }
     }
+    // Video display cap (`set_video_cap`): 0 removes the cap (and is also the "not sent" default), a positive
+    // value caps the displayed height of top-level videos. A negative value is rejected by the dispatcher.
+    out->video_max_height = static_cast<int>(GetNumber(message, "max_height"));
     // Scrolling (`scroll`): CSS pixels, and whether the movement is animated.
     out->scroll_x = static_cast<int>(GetNumber(message, "x"));
     out->scroll_y = static_cast<int>(GetNumber(message, "y"));

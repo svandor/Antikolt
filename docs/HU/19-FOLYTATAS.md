@@ -30,7 +30,7 @@ git status                  →  tiszta munkafa, minden pusholva (origin/main)
 
 | Tétel | Hol | Mi a teendő | Mi bizonyítja |
 |---|---|---|---|
-| F6 `video_max_height` | `main_window.cpp` (governor) | kutatás: a CEF-nek nincs tiszta videófelbontás-korlátja; CSS-injekció csak a top-level `video`-t éri (az iframe-eket nem) | önteszt, ha mérhetővé tehető; különben dokumentált `not-measurable` |
+| F6 `video_max_height` | **kész** (ADR-076, 136. szelet) | a profil `video_max_height`-je **megjelenítési sapkaként** alkalmazva (`set_video_cap` op, nevesített stíluselem); a dekódolási felbontás-csökkentés `not-measurable` (a CEF nem ad laponkénti korlátot) | `--videocaptest`: Fast 2160px → Saver 720px (renderelt magasság 720) → Manual eltávolítva |
 | OAuth összekötés | `main_window.cpp` (popup, 02-ARCH §8.5) | a mechanizmus kész, a bejelentkezési gesztus-út a harnessben nem kattintható | `not-measurable` gesztus; a kész mechanizmus már mért |
 | `sha256` blobtár | `previews.h` / motor | `cargo vendor` egy **hálózatos** gépen (`sha2`), tartalom-szerinti név a fájlnév helyett | új önteszt a tartalom-szerinti címzésre |
 | PiP | motor (CEF 158) | a CEF 158 PiP-je **views-alapú** (`CefBrowserViewDelegate`), a shell ablakos (nem views) API-t használ — valószínűleg architektúra-váltás kell, előbb döntés | — |

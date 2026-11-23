@@ -873,6 +873,11 @@ void MainWindow::wireEngine(EngineClient* engine) {
                 if (page_dark_mode_ != QStringLiteral("off") && live_engine_ != nullptr) {
                     live_engine_->setPageDarkMode(surface, page_dark_mode_, nullptr);
                 }
+                // The profile's video-height cap (ADR-020/ADR-076): a display cap on top-level videos,
+                // re-applied on every load like the theme and zoom, because a navigation forgets it.
+                if (video_max_height_ > 0 && live_engine_ != nullptr) {
+                    live_engine_->setVideoCap(surface, video_max_height_, nullptr);
+                }
                 // The grid must show the cards the core owns, so the list is pushed once the page is
                 // there to receive it. A real card is not a grid, and the *tracked* home id is not a reliable
                 // test on its own: it is cleared when a card detaches, and that detach can arrive after the
@@ -2717,11 +2722,21 @@ void MainWindow::refreshUserPrefs() {
                 hard_override > 0
                     ? hard_override
                     : static_cast<qint64>(profile.value(QStringLiteral("memory_hard_bytes")).toDouble());
+            // The top-level video display cap (ADR-020/ADR-076) comes from the same derived profile. A
+            // `manual` profile carries no params, so its factory 0 (no cap) is the honest default.
+            video_max_height_ =
+                static_cast<int>(profile.value(QStringLiteral("video_max_height")).toDouble());
         } else {
             preview_refresh_ = true;
             engine_shutdown_ms_ = -1;
             memory_warn_bytes_ = warn_override > 0 ? warn_override : 850LL * 1024 * 1024;
             memory_hard_bytes_ = hard_override > 0 ? hard_override : 1000LL * 1024 * 1024;
+            video_max_height_ = 0;
+        }
+        // A profile change re-applies the cap to the live card immediately, so the user's switch is not
+        // silently deferred to the next card load. The grid has no videos, but the same call is harmless there.
+        if (live_engine_ != nullptr && surface_ != 0) {
+            live_engine_->setVideoCap(surface_, video_max_height_, nullptr);
         }
         // An open dock follows the core's answer, not a stale copy of it.
         if (settings_dock_ != nullptr && settings_dock_->isVisible()) {

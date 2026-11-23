@@ -91,7 +91,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 
 ### M6 — „Elfér 150 MB-ban" (F6 vége)
 - [ ] Öt erőforrás-profil, automatikus váltással.
-- [ ] Büdzsé-vezérlő sávokkal, médiaminőség-korláttal.
+- [x] Büdzsé-vezérlő sávokkal, médiaminőség-korláttal. — a büdzsé a profilban (`memory_budget_mb`, ADR-074, `--prefstest`/`--memoryreport`), a médiaminőség-korlát `video_max_height` **megjelenítési sapka** (`set_video_cap`, ADR-076, `--videocaptest`); a dekódolási felbontás-csökkentés `not-measurable` (a CEF nem ad laponkénti korlátot)
 - [ ] Raszter-kezdőlap (motor leállítva).
 - [ ] Hangolási riport (mely kapcsolók segítettek, mérve).
 

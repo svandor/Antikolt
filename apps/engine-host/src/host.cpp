@@ -1081,6 +1081,69 @@ private:
     DISALLOW_COPY_AND_ASSIGN(ForcedDark);
 };
 
+/// Caps the displayed height of top-level videos (`set_video_cap`, ADR-020/ADR-076).
+///
+/// This is the profile's `video_max_height` (720p on `Saver`, 480p on `Ultra`, …) applied to the page: one
+/// named style element (`max-height` on `video`), replaced on a change and removed on 0 — exactly the same
+/// trick the dark-pages switch uses, so a profile change never needs a reload. It is a *display* cap, not a
+/// decode-resolution cap: CEF exposes no per-page video decode-resolution limit, and a cross-origin iframe
+/// keeps its own document (a security boundary this host cannot cross), so the cap reaches only top-level
+/// `video` elements of the page's own document. The honest consequence, documented rather than hidden: it
+/// limits the rendered box, not the decoded stream.
+class VideoCap : public CefBaseRefCounted {
+public:
+    VideoCap(int64_t request_id, int max_height) : request_id_(request_id), max_height_(max_height) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<VideoCap> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", Script());
+        params->SetBool("returnByValue", true);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "Runtime.evaluate", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) { self->OnApplied(reply); }));
+        return call->Start(browser);
+    }
+
+private:
+    std::string Script() const {
+        // One expression, so the whole switch is a single round trip. The rule targets only top-level
+        // `video` elements — the honest scope, since iframes are out of reach (see the class comment).
+        std::string script =
+            "(function(){var id='antikolt-video-cap';var old=document.getElementById(id);";
+        if (max_height_ <= 0) {
+            script += "if(old){old.remove();}return 'off';})()";
+            return script;
+        }
+        // `max_height_` is a validated integer, so the CSS carries no user text and cannot escape the rule.
+        const std::string css = "video{max-height:" + std::to_string(max_height_) + "px;}";
+        script += "var css='" + css + "';";
+        script += "if(old){old.textContent=css;return 'on';}";
+        script += "var s=document.createElement('style');s.id=id;s.textContent=css;";
+        script += "document.documentElement.appendChild(s);return 'on';})()";
+        return script;
+    }
+
+    void OnApplied(const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            StdioLink::Instance().ReplyError(request_id_,
+                                             reply.from_protocol ? "invalid_argument" : "internal",
+                                             reply.error.c_str());
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", true);
+        result->SetInt("max_height", max_height_);
+        StdioLink::Instance().Reply(request_id_, result);
+    }
+
+    int64_t request_id_;
+    int max_height_ = 0;
+
+    IMPLEMENT_REFCOUNTING(VideoCap);
+    DISALLOW_COPY_AND_ASSIGN(VideoCap);
+};
+
 /// Emulates the page's `prefers-color-scheme` (`set_media`, ADR-037).
 ///
 /// This is how a page that *supports* a dark theme actually gets one: the browser reports the emulated
@@ -2375,6 +2438,21 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
         if (!forced->Start(state.browser)) {
             link.ReplyError(command.id, "not_supported",
                             "DevTools is unavailable, cannot force dark pages");
+        }
+        // The reply is sent by the object above when DevTools confirms it.
+    } else if (command.op == "set_video_cap") {
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.video_max_height < 0) {
+            link.ReplyError(command.id, "invalid_argument", "max_height must be >= 0");
+            return;
+        }
+        CefRefPtr<VideoCap> cap(new VideoCap(command.id, command.video_max_height));
+        if (!cap->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported",
+                            "DevTools is unavailable, cannot cap video height");
         }
         // The reply is sent by the object above when DevTools confirms it.
     } else if (command.op == "metrics") {
