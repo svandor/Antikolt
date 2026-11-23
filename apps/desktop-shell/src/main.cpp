@@ -2899,27 +2899,33 @@ int runCrashCheck(const QString& enginePath) {
 
     qint64 home_surface = 0;
     bool terminated = false;
+    bool recovered = false;
     int term_status = -1;
     {
         QEventLoop loop;
         QObject::connect(window.engine(), &EngineClient::rendererTerminated, &loop,
-                         [&](qint64 surface, int status, int code) {
-                             (void)surface;
-                             (void)code;
+                         [&](qint64, int status, int) {
                              terminated = true;
                              term_status = status;
-                             loop.quit();
                          });
         QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
                          [&](qint64 id, const QString& url, int) {
                              if (!url.startsWith(QStringLiteral("file:"))) {
                                  return;
                              }
-                             home_surface = id;
-                             // One beat, then crash the renderer on purpose.
-                             QTimer::singleShot(500, &loop, [&, id] {
-                                 window.engine()->navigate(id, QStringLiteral("chrome://crash"));
-                             });
+                             if (home_surface == 0) {
+                                 // First grid load: one beat, then crash the renderer on purpose.
+                                 home_surface = id;
+                                 QTimer::singleShot(500, &loop, [&, id] {
+                                     window.engine()->navigate(id, QStringLiteral("chrome://crash"));
+                                 });
+                                 return;
+                             }
+                             // A later load on the home surface is the shell's automatic reload after the crash.
+                             if (terminated && id == home_surface) {
+                                 recovered = true;
+                                 loop.quit();
+                             }
                          });
         QTimer::singleShot(30000, &loop, &QEventLoop::quit);
         loop.exec();
@@ -2928,7 +2934,8 @@ int runCrashCheck(const QString& enginePath) {
     out << "crash_home_surface=" << home_surface << '\n';
     out << "crash_terminated=" << (terminated ? "true" : "false") << '\n';
     out << "crash_status=" << term_status << '\n';
-    const bool ok = home_surface != 0 && terminated;
+    out << "crash_recovered=" << (recovered ? "true" : "false") << '\n';
+    const bool ok = home_surface != 0 && terminated && recovered;
     out << "crash=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

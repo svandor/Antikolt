@@ -399,6 +399,8 @@ private:
     QString pending_card_id_;
     /// The card currently on screen, for the scroll book (it outlives `pending_card_id_`).
     QString current_card_id_;
+    /// The live card's URL, tracked so a crashed renderer can be reloaded (F7 crash recovery). Empty on the grid.
+    QString live_card_url_;
     /// How many previews this run has produced; the cap keeps a long browsing session from filling the
     /// disk with screenshots.
     int previews_made_ = 0;

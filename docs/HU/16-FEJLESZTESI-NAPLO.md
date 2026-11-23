@@ -3,6 +3,36 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonharmincharmadik szelet) — az összeomlás utáni automatikus újratöltés (F7)
+
+A 132. szelet a detektálást tette be; most a **helyreállítás második fele**: az összeomlott oldal automatikus
+újratöltése. A `CefBrowser` túléli a renderer kilépését, ezért egy friss navigáció új renderert indít — a rács a
+kezdőlapra, a kártya a saját URL-jére tér vissza.
+
+### Mi változott
+
+- **`apps/desktop-shell` (main_window):** `live_card_url_` nyomon követi az élő kártya URL-jét; a
+  `rendererTerminated` kezelő most az összeomlott felületet azonnal újratölti (`homePageUrl()` a rácsnál, a
+  tárolt URL a kártyánál), és ezt a státuszba is írja.
+- **`--crashtest` (bővítve):** a `chrome://crash` összeomlás után most azt is ellenőrzi, hogy a rács
+  **magától visszatér** (a kezdőlap újratöltődik).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (63 ellenőrzés mind „ok", köztük a crashtest és a check-repo)
+--crashtest       → crash_terminated=true · crash_status=2 · crash_recovered=true · crash=ok
+cargo test        → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+A motor naplója a teljes ciklust mutatja: `navigate` → renderer kilép (`STATUS_ACCESS_VIOLATION`) → a shell
+`navigate`-je (az automatikus újratöltés) → a rács ismét betölt.
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (PDF, PiP, akadálymentesség, HU/EN); az F6 `video_max_height` kutatási tétele; az OAuth
+  összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonharminckettedik szelet) — a renderer összeomlásának detektálása (F7)
 
 Az F7 negyedik darabja: a **crash-recovery első fele** — a renderer összeomlásának detektálása. A motor

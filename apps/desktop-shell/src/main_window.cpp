@@ -303,6 +303,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         setStatus(QStringLiteral("kártya felület: %1 · %2")
                       .arg(surface)
                       .arg(title.isEmpty() ? target : title));
+        live_card_url_ = opening_home ? QString() : target;
         live_engine_->navigate(surface, target);
         if (opening_home) {
             // The grid is the only page allowed to talk to the shell. Installing it here (before the
@@ -322,6 +323,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         surface_ = 0;
         home_surface_ = 0;
         live_card_pinned_ = false;
+        live_card_url_.clear();
         setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
         // A card went back to disk: the engine is now idle, so the raster home's clock starts (T2). Skipped while
         // already in the raster home (enterRasterMode detaches too, and must not re-arm itself).
@@ -820,13 +822,18 @@ void MainWindow::wireEngine(EngineClient* engine) {
     });
     // Find-in-page results (F7 "Ctrl+F") come from whichever engine owns the live surface.
     connect(engine, &EngineClient::findResult, this, &MainWindow::onFindResult);
-    // A crashed renderer (F7 "crash recovery"): the page is gone, so say so instead of leaving a dead surface.
+    // A crashed renderer (F7 "crash recovery"): reload the page. The browser object survives the renderer, so a
+    // fresh navigation spawns a new one — the grid goes home, a card reloads its own URL.
     connect(engine, &EngineClient::rendererTerminated, this,
-            [this](qint64 surface, int status, int code) {
-                setStatus(QStringLiteral("az oldal összeomlott (#%1): a renderer kilépett (%2, kód %3)")
+            [this, engine](qint64 surface, int status, int code) {
+                const QString url = (surface == home_surface_) ? homePageUrl() : live_card_url_;
+                setStatus(QStringLiteral("az oldal összeomlott (#%1) — újratöltés (állapot %2, kód %3)")
                               .arg(surface)
                               .arg(status)
                               .arg(code));
+                if (!url.isEmpty()) {
+                    engine->navigate(surface, url);
+                }
             });
     connect(engine, &EngineClient::engineReady, this, [this, engine](const QJsonObject& info) {
         setStatus(QStringLiteral("motor: %1 %2 · képességek: %3")
@@ -1101,6 +1108,7 @@ void MainWindow::ensureSurface() {
         // home engine, so the old surface is hibernated and recreated there.
         if (live_engine_ == target) {
             const QString dest = opening_home ? homePageUrl() : pending_url_;
+            live_card_url_ = opening_home ? QString() : dest;
             live_engine_->navigate(card_->surface(), dest);
             pending_url_.clear();
             pending_title_.clear();
