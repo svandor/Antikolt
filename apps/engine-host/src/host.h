@@ -56,6 +56,9 @@ struct HostConfig {
     /// Run the WebAuthn spike: create a virtual authenticator through CDP and report whether it works
     /// (F0, ADR-027/023). Used by `--webauthntest`.
     bool webauthn_test = false;
+    /// Run the isolated-world spike: create a CDP isolated world and prove the main world cannot see
+    /// into it (the foundation for autofill, ADR-053). Used by `--isolatedworldtest`.
+    bool isolated_world_test = false;
     /// Native window to embed the surface into; `nullptr` means the host creates a top-level window.
     ///
     /// This is how the one live card lives inside the Qt shell's window while the engine keeps its
@@ -99,6 +102,10 @@ struct HostState {
     std::atomic<bool> webauthn_done{false};
     /// Whether that answer was a usable authenticator (drives the exit code).
     std::atomic<bool> webauthn_ok{false};
+    /// The isolated-world spike's CDP answer has arrived.
+    std::atomic<bool> isolated_world_done{false};
+    /// Whether the main world really could not see the isolated world's probe (drives the exit code).
+    std::atomic<bool> isolated_world_ok{false};
     int http_status = 0;
     std::string final_url;
     std::string title;
@@ -259,6 +266,7 @@ class EngineClient : public CefClient,
                      public CefMessageRouterBrowserSide::Handler {
 public:
     EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
+                 bool isolated_world_test,
                  std::map<std::string, std::string> permissions = {});
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -346,12 +354,17 @@ private:
     HostState* state_;
     bool quit_on_first_load_;
     bool webauthn_test_;
+    bool isolated_world_test_;
     CefRefPtr<CefMessageRouterBrowserSide> router_;
     CefRefPtr<PermissionPolicy> permission_;
 
     /// Submit the WebAuthn spike's `WebAuthn.addVirtualAuthenticator` call (F0, ADR-027/023). The
     /// handler reports `webauthn_authenticator=ok|unsupported` on stdout and flips `webauthn_done`.
     void StartWebAuthnProbe(CefRefPtr<CefBrowser> browser);
+    /// Submit the isolated-world spike (ADR-053): `Page.getFrameTree` → `Page.createIsolatedWorld` →
+    /// set a probe in the isolated world → read it from the main world. The handler reports
+    /// `isolated_world=ok|leaked|unsupported` and flips `isolated_world_done`.
+    void StartIsolatedWorldProbe(CefRefPtr<CefBrowser> browser);
 
     IMPLEMENT_REFCOUNTING(EngineClient);
     DISALLOW_COPY_AND_ASSIGN(EngineClient);

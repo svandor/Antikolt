@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvenegyedik szelet) — kitöltés izolált világban: spike (M7)
+
+A jelszó-kitöltés biztonsági alapjának de-kockáztató spike-ja: működik-e az izolált világ a CEF 158-ban?
+**Igen** — a CDP `Page.createIsolatedWorld` létrehozza, és a benne beállított próba a fő világ számára
+láthatatlan.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `--isolatedworldtest` flag + `EngineClient::StartIsolatedWorldProbe`
+  (4 lépés: getFrameTree → createIsolatedWorld → Runtime.evaluate a világban → Runtime.evaluate a fő
+  világban), a `HostState.isolated_world_done/ok` és a kilépési kód.
+- **`scripts/verify.ps1`:** `isolatedworldtest` kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--isolatedworldtest → isolated_world=ok main_sees=undefined (exit 0)
+scripts/verify.ps1 → ALL CHECKS PASSED (74 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A tényleges kitöltés (a core-ból a hitelesítő lekérése origin-szerint + az űrlap-kitöltő szkript);
+  a grafikus széf-panel; a teljes `navigator.credentials` passkey-folyamat; a PiP
+  (views-architektúra-váltás).
+
 ## 2026-11-23 (százötvenedik szelet) — a széf a shellből: CoreClient vault-módszerek + `--vaulttest` (M7)
 
 A széf most már a shellből is vezérelhető — nem csak a core Rust-tesztjeiből.

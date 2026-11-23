@@ -226,8 +226,9 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
     CefWindowInfo window_info;
     window_info.SetAsChild(window, CefRect(origin_x, origin_y, width, height));
 
-    CefRefPtr<EngineClient> client_handler(
-        new EngineClient(state, config.quit_on_first_load, config.webauthn_test, config.permissions));
+    CefRefPtr<EngineClient> client_handler(new EngineClient(
+        state, config.quit_on_first_load, config.webauthn_test, config.isolated_world_test,
+        config.permissions));
     CefBrowserSettings browser_settings;
     // The surface's request context: its own storage (cookies, cache, localStorage) and its container's proxy. Passing
     // nullptr here was the old behaviour — every card shared one global cookie jar and the `partition` key was a
@@ -1610,10 +1611,12 @@ bool EngineApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 }
 
 EngineClient::EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
+                           bool isolated_world_test,
                            std::map<std::string, std::string> permissions)
     : state_(state),
       quit_on_first_load_(quit_on_first_load),
       webauthn_test_(webauthn_test),
+      isolated_world_test_(isolated_world_test),
       permission_(new PermissionPolicy(std::move(permissions))) {
     router_ = CefMessageRouterBrowserSide::Create(MessageRouterConfig());
     router_->AddHandler(this, /*first=*/false);
@@ -1942,6 +1945,9 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     if (webauthn_test_) {
         StartWebAuthnProbe(browser);
     }
+    if (isolated_world_test_) {
+        StartIsolatedWorldProbe(browser);
+    }
 }
 
 void EngineClient::StartWebAuthnProbe(CefRefPtr<CefBrowser> browser) {
@@ -1994,6 +2000,99 @@ void EngineClient::StartWebAuthnProbe(CefRefPtr<CefBrowser> browser) {
         }));
     if (!enable->Start(browser)) {
         fail("devtools unavailable");
+    }
+}
+
+void EngineClient::StartIsolatedWorldProbe(CefRefPtr<CefBrowser> browser) {
+    // ADR-053 (no dialog on the page) and safe autofill both need an isolated world: the page's main
+    // world must never see the credential the shell fills. This spike proves CEF 158's CDP path can
+    // create one, and that a probe set there really is invisible to the page.
+    auto fail = [state = state_](const std::string& error) {
+        std::printf("isolated_world=unsupported error=%s\n", error.c_str());
+        std::fflush(stdout);
+        state->isolated_world_done.store(true);
+        state->isolated_world_ok.store(false);
+    };
+
+    // 1. The main frame's id, which `Page.createIsolatedWorld` needs.
+    CefRefPtr<DevToolsCall> get_frame_tree(new DevToolsCall(
+        "Page.getFrameTree", nullptr,
+        [state = state_, browser, fail](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+            if (!reply.ok()) {
+                fail(reply.error);
+                return;
+            }
+            CefRefPtr<CefDictionaryValue> frame_tree = reply.Dictionary("frameTree");
+            CefRefPtr<CefDictionaryValue> frame =
+                frame_tree ? frame_tree->GetDictionary("frame") : nullptr;
+            const std::string frame_id =
+                frame ? frame->GetString("id").ToString() : std::string();
+            if (frame_id.empty()) {
+                fail("Page.getFrameTree gave no main frame id");
+                return;
+            }
+            // 2. Create the isolated world (the autofill world).
+            CefRefPtr<CefDictionaryValue> create_params = CefDictionaryValue::Create();
+            create_params->SetString("frameId", frame_id);
+            create_params->SetString("worldName", "antikolt-autofill");
+            CefRefPtr<DevToolsCall> create_world(new DevToolsCall(
+                "Page.createIsolatedWorld", create_params,
+                [state, browser, fail](CefRefPtr<CefBrowser>,
+                                       const DevToolsReply& create_reply) {
+                    if (!create_reply.ok()) {
+                        fail(create_reply.error);
+                        return;
+                    }
+                    const int context_id = create_reply.Int("executionContextId", 0);
+                    if (context_id == 0) {
+                        fail("Page.createIsolatedWorld gave no executionContextId");
+                        return;
+                    }
+                    // 3. Set a probe inside the isolated world.
+                    CefRefPtr<CefDictionaryValue> set_params = CefDictionaryValue::Create();
+                    set_params->SetString("expression",
+                                          "window.__antikolt_isolated_probe = 'secret'; 'set'");
+                    set_params->SetBool("returnByValue", true);
+                    set_params->SetInt("contextId", context_id);
+                    CefRefPtr<DevToolsCall> set_probe(new DevToolsCall(
+                        "Runtime.evaluate", set_params,
+                        [state, browser, fail](CefRefPtr<CefBrowser>,
+                                               const DevToolsReply& set_reply) {
+                            if (!set_reply.ok()) {
+                                fail(set_reply.error);
+                                return;
+                            }
+                            // 4. Read the same name from the MAIN world: it must be invisible.
+                            CefRefPtr<CefDictionaryValue> get_params = CefDictionaryValue::Create();
+                            get_params->SetString("expression",
+                                                  "typeof window.__antikolt_isolated_probe");
+                            get_params->SetBool("returnByValue", true);
+                            CefRefPtr<DevToolsCall> get_probe(new DevToolsCall(
+                                "Runtime.evaluate", get_params,
+                                [state](CefRefPtr<CefBrowser>, const DevToolsReply& get_reply) {
+                                    const std::string seen = get_reply.String("value");
+                                    const bool invisible =
+                                        get_reply.ok() && seen == "undefined";
+                                    std::printf("isolated_world=%s main_sees=%s\n",
+                                                invisible ? "ok" : "leaked", seen.c_str());
+                                    std::fflush(stdout);
+                                    state->isolated_world_done.store(true);
+                                    state->isolated_world_ok.store(invisible);
+                                }));
+                            if (!get_probe->Start(browser)) {
+                                fail("Runtime.evaluate submit failed");
+                            }
+                        }));
+                    if (!set_probe->Start(browser)) {
+                        fail("Runtime.evaluate submit failed");
+                    }
+                }));
+            if (!create_world->Start(browser)) {
+                fail("Page.createIsolatedWorld submit failed");
+            }
+        }));
+    if (!get_frame_tree->Start(browser)) {
+        fail("Page.getFrameTree submit failed");
     }
 }
 
@@ -2336,7 +2435,8 @@ int RunEngineHost(const HostConfig& config) {
         // The WebAuthn spike also waits for its CDP answer, so a fast load cannot end the process
         // before `webauthn_authenticator=…` is printed.
         while ((!state.load_finished.load() ||
-                (config.webauthn_test && !state.webauthn_done.load())) &&
+                (config.webauthn_test && !state.webauthn_done.load()) ||
+                (config.isolated_world_test && !state.isolated_world_done.load())) &&
                !state.load_failed.load() && !state.quit_requested.load()) {
             PumpWindowsMessages();
             CefDoMessageLoopWork();
@@ -2374,6 +2474,9 @@ int RunEngineHost(const HostConfig& config) {
     }
     if (config.webauthn_test && !state.webauthn_ok.load()) {
         return 1;  // the spike must not report a green when the authenticator did not come back.
+    }
+    if (config.isolated_world_test && !state.isolated_world_ok.load()) {
+        return 1;  // the spike must not report a green when the isolation did not hold.
     }
     return (config.quit_on_first_load && !loaded) ? 1 : 0;
 }

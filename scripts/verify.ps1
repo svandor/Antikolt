@@ -94,6 +94,8 @@ $engineChecks = @(
     @{ Name = 'partitiontest'; Args = @('--partitiontest'); Direct = $true },
     # F0 (ADR-027/023): the WebAuthn spike — can the engine create a CDP virtual authenticator?
     @{ Name = 'webauthntest'; Args = @('--webauthntest'); Direct = $true },
+    # ADR-053: the isolated-world spike — can the engine run JS invisibly to the page's main world?
+    @{ Name = 'isolatedworldtest'; Args = @('--isolatedworldtest'); Direct = $true },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },

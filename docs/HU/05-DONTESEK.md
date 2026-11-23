@@ -3,6 +3,24 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-088 — A kitöltés izolált világban: a CDP isolated world működik a CEF 158-ban (2026-11-23)
+
+**Kontextus:** a jelszó-kitöltés (autofill) biztonságos formája az izolált világ: a shell által beírt
+titok a lap fő világa számára láthatatlan (ADR-053 szerint a lapon nincs dialógus, és a titok sosem
+kerül a fő világba). A kérdés az volt, hogy a CEF 158 CDP-úton tud-e ilyen világot létrehozni.
+
+**Döntés (a spike eredménye):**
+
+1. **A `Page.createIsolatedWorld` működik:** a `--isolatedworldtest` (getFrameTree →
+   createIsolatedWorld → Runtime.evaluate a világban → Runtime.evaluate a fő világban) azt méri,
+   hogy az izolált világban beállított próba a fő világból `undefined`.
+2. **Az izoláció ténylegesen tart:** `isolated_world=ok main_sees=undefined` (exit 0) — tehát a
+   jelszó-kitöltés izolált világban, CEF-patch nélkül járható.
+
+**Következmény:** (+) a biztonságos autofill alapja de-kockáztatva; (+) a `--isolatedworldtest` a
+kapuban méri; (−) a tényleges kitöltés (a core-ból a hitelesítő lekérése + az űrlap-kitöltő szkript)
+még külön szeletek.
+
 ## ADR-087 — A széf a shellből is elérhető: CoreClient vault-módszerek + `--vaulttest` (2026-11-23)
 
 **Kontextus:** a széf a core-ban él (ADR-083/084/085), de a shell eddig nem tudta vezérelni — csak a
