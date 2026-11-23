@@ -10,7 +10,7 @@
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
 38 önteszt        ok        (lásd alább, mit bizonyít mindegyik)
-check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+49+8+1+15 Rust-teszt)
+check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+53+9+1+15 Rust-teszt)
 ```
 
 A hordozható példány: `scripts/dist.ps1 -Release` → `dist/Antikolt/` (445.6 MB), asztali és Start-menü
@@ -46,7 +46,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Felhasználói beállítások | Rust-tesztek (`sqlite_store::tests`, `service.rs`), `--prefstest` | `UserPrefs` default (`max_live_cards=5`, `idle_hibernate_ms=600_000`, `cold_card_ms=86_400_000`, `memory_budget_mb=512`, `resource_profile=Balanced`), validáció; IPC `user_prefs`/`user_prefs_set`, `profile_export`/`profile_import`; a shell ⚙ Beállítások dokkja szerkeszti (profil-lenővel); a profil az ADR-020 `ProfileKind`-je (séma 0009–0010); a `user_prefs` válasz a levezetett `profile`-t is viszi, a shell `preview_refresh`-t és `engine_warm_idle_shutdown_ms`-t (T1/T2) cache-el |
 | Keresés | `--searchtest`, `--tagtest` | ékezet-független cím/webcím/jegyzet/címke, és az **oldalszöveg** is (`search_page_text=ok`) |
 | Konténerek | `--containertest` | színes pont, választó a kártyán, chip-legend + szűrő, tábla a magban, `＋`/dupla kattintás/`×`, használt konténer törlése **áthelyezéssel**, proxy/engedély-szerkesztő a rácson (`container_policy=ok`), partíció-takarítás törléskor (`container_partition_cleanup=ok`) |
-| Munkaterületek | `--workspacetest` | fül-sor a magban tárolt munkaterület-táblából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó |
+| Munkaterületek | `--workspacetest`, `--workspacedragtest` | fül-sor a magban tárolt munkaterület-táblából, a kártya `workspace` mezője tárolt adat, fül-életciklus, kártya-választó; fogd-és-vidd a fülre (`draggable` kártya → `drop` a fülre → `setWorkspace`, ADR-058; a `<select>` marad a billentyűzetes út) |
 | Címkék | `--tagtest` | címke a kártyán, mag-normalizálás (trim/dedup/12×32), kereshető |
 | Kezdőlap | `--addcardtest` | `＋` + soros űrlap: a kártya a magba kerül (cím/URL/munkaterület ellenőrizve), átnevezés a cím-szerkesztő `Enter`-jével (`wrote_by=gesture`), webcím-átírás (`edit_card_url=ok`), tároló-ellenőrzés (`db_status=ok schema=7 … verified=yes`), kétlépéses törlés (`delete_armed=ok delete_card=ok`, ADR-068); a teszt kitakarít maga után |
 | `<antikolt-card>` csomag | `--gridtest`, `--addcardtest`, `--containertest` | a komponens önálló `home/antikolt-card.js`-ben (ADR-075), a rács és egy felhasználói lap ugyanezt tölti; `home/user-home.example.html` minimális példa; a konténer/munkaterület `<select>` a `setOptions`-ból; a kapu minden kártya-interakciós tesztje zöld |

@@ -127,6 +127,7 @@ $engineChecks = @(
     @{ Name = 'gridscaletest'; Args = @('--gridscaletest') },
     @{ Name = 'containertest'; Args = @('--containertest') },
     @{ Name = 'workspacetest'; Args = @('--workspacetest') },
+    @{ Name = 'workspacedragtest'; Args = @('--workspacedragtest') },
     @{ Name = 'profiletest'; Args = @('--profiletest') },
     @{ Name = 'addcardtest'; Args = @('--addcardtest') },
     @{ Name = 'tagtest'; Args = @('--tagtest') },

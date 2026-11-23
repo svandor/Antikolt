@@ -7855,6 +7855,265 @@ int runWorkspaceCheck(const QString& enginePath) {
     return failures == 0 ? 0 : 1;
 }
 
+int runWorkspaceDragCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    int failures = 0;
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_CORE", MainWindow::coreExecutable().toUtf8());
+
+    const auto evaluate_json = [](EngineClient* client, qint64 surface, const QString& script) {
+        struct State {
+            QEventLoop loop;
+            QJsonObject value;
+        };
+        auto state = std::make_shared<State>();
+        client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
+            if (error.isEmpty()) {
+                state->value =
+                    QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8())
+                        .object();
+            }
+            state->loop.quit();
+        });
+        QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+        state->loop.exec();
+        return state->value;
+    };
+    const auto evaluate_text = [](EngineClient* client, qint64 surface, const QString& script) {
+        struct State {
+            QEventLoop loop;
+            QString value;
+        };
+        auto state = std::make_shared<State>();
+        client->evaluate(surface, script, [state](const QJsonObject& reply, const QString& error) {
+            state->value = error.isEmpty() ? reply.value(QStringLiteral("value")).toString() : error;
+            state->loop.quit();
+        });
+        QTimer::singleShot(20000, &state->loop, &QEventLoop::quit);
+        state->loop.exec();
+        return state->value;
+    };
+    const auto settle = [](int milliseconds) {
+        QEventLoop loop;
+        QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+
+    MainWindow window;
+    window.show();
+    window.move(130, 95);
+    window.raise();
+    window.activateWindow();
+    window.startEngine();
+    EngineClient* client = window.engine();
+
+    qint64 home_surface = 0;
+    {
+        QEventLoop loop;
+        const QMetaObject::Connection connection =
+            QObject::connect(client, &EngineClient::loadFinished, &loop,
+                             [&](qint64 surface, const QString& url, int) {
+                                 if (url.startsWith(QStringLiteral("file:"))) {
+                                     home_surface = surface;
+                                     loop.quit();
+                                 }
+                             });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+        QObject::disconnect(connection);
+    }
+    out << "home_surface=" << home_surface << '\n';
+    if (home_surface == 0) {
+        out << "workspace_drag=FAILED (the home page never loaded)\n";
+        window.close();
+        return 1;
+    }
+    settle(1400);
+
+    // Wait for the workspace table and the grid to be ready, then pick a card that is actually on screen
+    // (the active tab), so the drag gesture below has a rendered `<antikolt-card>` host to start from.
+    QJsonObject state;
+    for (int attempt = 0; attempt < 25; ++attempt) {
+        state = evaluate_json(client, home_surface,
+                              QStringLiteral("JSON.stringify(window.antikoltWorkspaceState())"));
+        if (!state.value(QStringLiteral("table")).toArray().isEmpty() &&
+            !state.value(QStringLiteral("cards")).toArray().isEmpty()) {
+            break;
+        }
+        settle(300);
+    }
+    QStringList card_ids;
+    QStringList card_workspaces;
+    for (const QJsonValue& value : state.value(QStringLiteral("cards")).toArray()) {
+        const QString entry = value.toString();
+        card_ids.append(entry.left(entry.indexOf(QLatin1Char(':'))));
+        card_workspaces.append(entry.mid(entry.indexOf(QLatin1Char(':')) + 1));
+    }
+    QStringList known_ids;
+    for (const QJsonValue& value : state.value(QStringLiteral("table")).toArray()) {
+        const QString row = value.toString();
+        known_ids.append(row.left(row.indexOf(QLatin1Char(':'))));
+    }
+    const QString active = state.value(QStringLiteral("active")).toString();
+    QString card_id = card_ids.value(0);
+    QString original = card_workspaces.value(0);
+    for (int index = 0; index < card_ids.size(); ++index) {
+        if (card_workspaces.value(index) == active) {
+            card_id = card_ids.value(index);
+            original = card_workspaces.value(index);
+            break;
+        }
+    }
+    QString target;
+    for (const QString& workspace_id : known_ids) {
+        if (workspace_id != original) {
+            target = workspace_id;
+            break;
+        }
+    }
+    if (card_id.isEmpty() || target.isEmpty()) {
+        out << "workspace_drag=FAILED (no card or no other workspace)\n";
+        window.close();
+        return 1;
+    }
+
+    // 1. A card is draggable, and its dragstart arms the custom MIME type the tabs accept (ADR-058). A synthetic
+    //    dragstart is the only gesture a harness can fire without a trusted user input; the handler runs against the
+    //    real element, so it proves the wiring, not a re-implementation of it.
+    const QString wiring_json = evaluate_text(
+        client, home_surface,
+        QStringLiteral("(() => {"
+                       " const id = '%1';"
+                       " const find = () => [...document.querySelectorAll('antikolt-card')]"
+                       ".find((h) => h.card && h.card.id === id);"
+                       " let host = find();"
+                       " if (!host) {"
+                       "   for (const tab of document.querySelectorAll('.ws-pick')) { tab.click();"
+                       "     host = find(); if (host) { break; } }"
+                       " }"
+                       " if (!host) { return JSON.stringify({found: false}); }"
+                       " const dt = new DataTransfer();"
+                       " host.dispatchEvent(new DragEvent('dragstart', {dataTransfer: dt, bubbles: true, cancelable: true}));"
+                       " return JSON.stringify({found: true, draggable: host.draggable === true,"
+                       "  mime: dt.getData('application/x-antikolt-card')});"
+                       " })()")
+            .arg(card_id));
+    const QJsonObject wiring = QJsonDocument::fromJson(wiring_json.toUtf8()).object();
+    const bool drag_wired = wiring.value(QStringLiteral("found")).toBool() &&
+                            wiring.value(QStringLiteral("draggable")).toBool() &&
+                            wiring.value(QStringLiteral("mime")).toString() == card_id;
+    out << "workspace_drag_wired=" << (drag_wired ? "ok" : "FAILED")
+        << " draggable=" << (wiring.value(QStringLiteral("draggable")).toBool() ? "yes" : "no")
+        << " mime=" << wiring.value(QStringLiteral("mime")).toString() << '\n';
+    if (!drag_wired) {
+        ++failures;
+    }
+
+    // 2. The tab accepts only the card's own type: an unrelated text drag must not move a card (ADR-058's gate).
+    const QString gate_json = evaluate_text(
+        client, home_surface,
+        QStringLiteral("(() => {"
+                       " const tab = document.querySelector('.ws-tab[data-workspace=\"%1\"]');"
+                       " if (!tab) { return JSON.stringify({tab: false}); }"
+                       " const cardDt = new DataTransfer();"
+                       " cardDt.setData('application/x-antikolt-card', 'probe');"
+                       " const accept = new DragEvent('dragover', {dataTransfer: cardDt, bubbles: true, cancelable: true});"
+                       " tab.dispatchEvent(accept);"
+                       " const textDt = new DataTransfer();"
+                       " textDt.setData('text/plain', 'hello');"
+                       " const ignore = new DragEvent('dragover', {dataTransfer: textDt, bubbles: true, cancelable: true});"
+                       " tab.dispatchEvent(ignore);"
+                       " return JSON.stringify({tab: true, accepted: accept.defaultPrevented === true,"
+                       "  ignored: ignore.defaultPrevented === false});"
+                       " })()")
+            .arg(target));
+    const QJsonObject gate = QJsonDocument::fromJson(gate_json.toUtf8()).object();
+    const bool gate_ok = gate.value(QStringLiteral("tab")).toBool() &&
+                         gate.value(QStringLiteral("accepted")).toBool() &&
+                         gate.value(QStringLiteral("ignored")).toBool();
+    out << "workspace_drag_gate=" << (gate_ok ? "ok" : "FAILED")
+        << " accepted=" << (gate.value(QStringLiteral("accepted")).toBool() ? "yes" : "no")
+        << " ignored=" << (gate.value(QStringLiteral("ignored")).toBool() ? "yes" : "no") << '\n';
+    if (!gate_ok) {
+        ++failures;
+    }
+
+    // 3. A drop on the target tab moves the card through the product's own path (the same `setWorkspace` the
+    //    `<select>` uses), and the grid must agree with the answer.
+    const auto drop_on = [&](const QString& workspace_id) {
+        const QString answer = evaluate_text(
+            client, home_surface,
+            QStringLiteral("(() => {"
+                           " const tab = document.querySelector('.ws-tab[data-workspace=\"%1\"]');"
+                           " if (!tab) { return 'no-tab'; }"
+                           " const dt = new DataTransfer();"
+                           " dt.setData('application/x-antikolt-card', '%2');"
+                           " tab.dispatchEvent(new DragEvent('drop', {dataTransfer: dt, bubbles: true, cancelable: true}));"
+                           " return 'dropped'; })()")
+                .arg(workspace_id, card_id));
+        settle(1200);
+        return answer;
+    };
+
+    const QString drop_answer = drop_on(target);
+    QJsonObject after;
+    for (int attempt = 0; attempt < 25; ++attempt) {
+        after = evaluate_json(client, home_surface,
+                              QStringLiteral("JSON.stringify(window.antikoltWorkspaceState())"));
+        QStringList now;
+        for (const QJsonValue& value : after.value(QStringLiteral("cards")).toArray()) {
+            const QString entry = value.toString();
+            if (entry.startsWith(card_id + QLatin1Char(':'))) {
+                now.append(entry.mid(entry.indexOf(QLatin1Char(':')) + 1));
+            }
+        }
+        if (now == QStringList{target}) {
+            break;
+        }
+        settle(200);
+    }
+    QStringList now_workspaces;
+    for (const QJsonValue& value : after.value(QStringLiteral("cards")).toArray()) {
+        const QString entry = value.toString();
+        if (entry.startsWith(card_id + QLatin1Char(':'))) {
+            now_workspaces.append(entry.mid(entry.indexOf(QLatin1Char(':')) + 1));
+        }
+    }
+    const bool moved = drop_answer == QStringLiteral("dropped") && now_workspaces == QStringList{target};
+    out << "workspace_drag_move=" << (moved ? "ok" : "FAILED") << " card=" << card_id
+        << " target=" << target << " now=" << now_workspaces.join(',')
+        << " answer=" << drop_answer << '\n';
+    if (!moved) {
+        ++failures;
+    }
+
+    // 4. Drop it back on the original tab, so the profile is left exactly as it was found.
+    if (!original.isEmpty() && original != target) {
+        const QString back = drop_on(original);
+        const QJsonObject restored = evaluate_json(
+            client, home_surface, QStringLiteral("JSON.stringify(window.antikoltWorkspaceState())"));
+        QStringList restored_workspaces;
+        for (const QJsonValue& value : restored.value(QStringLiteral("cards")).toArray()) {
+            const QString entry = value.toString();
+            if (entry.startsWith(card_id + QLatin1Char(':'))) {
+                restored_workspaces.append(entry.mid(entry.indexOf(QLatin1Char(':')) + 1));
+            }
+        }
+        const bool restored_ok = back == QStringLiteral("dropped") &&
+                                 restored_workspaces == QStringList{original};
+        out << "workspace_drag_restored=" << (restored_ok ? "ok" : "FAILED")
+            << " answer=" << back << '\n';
+        if (!restored_ok) {
+            ++failures;
+        }
+    }
+
+    window.close();
+    out << "workspace_drag_check=" << (failures == 0 ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return failures == 0 ? 0 : 1;
+}
+
         /// Prove the portable bundle: export the profile to one file, import it into a *fresh* profile, and compare
         /// (ADR-059).
         ///
@@ -8830,6 +9089,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("workspacetest"),
         QStringLiteral("Prove the tab row is the core's workspace table, and a card's workspace is stored."),
         QStringLiteral("path"));
+    const QCommandLineOption workspacedragtest(
+        QStringLiteral("workspacedragtest"),
+        QStringLiteral("Prove a card can be dragged onto a workspace tab and the core agrees (ADR-058)."),
+        QStringLiteral("path"));
     const QCommandLineOption profiletest(
         QStringLiteral("profiletest"),
         QStringLiteral("Prove the portable bundle: export a profile, import it into a fresh one, compare."),
@@ -8971,6 +9234,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(gridscaletest);
     parser.addOption(containertest);
     parser.addOption(workspacetest);
+    parser.addOption(workspacedragtest);
     parser.addOption(profiletest);
     parser.addOption(addcardtest);
     parser.addOption(tagtest);
@@ -9041,6 +9305,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(workspacetest)) {
         return runWorkspaceCheck(parser.value(workspacetest));
+    }
+
+    if (parser.isSet(workspacedragtest)) {
+        return runWorkspaceDragCheck(parser.value(workspacedragtest));
     }
 
     if (parser.isSet(profiletest)) {

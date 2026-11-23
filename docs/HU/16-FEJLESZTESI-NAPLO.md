@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonharmadik szelet) — a munkaterület fogd-és-vidd igazolása (ADR-058)
+
+A munkaterület fogd-és-vidd nyitott tétele lezárva: a huzal már a kódban volt (a kártya `draggable`, a `dragstart`
+a `application/x-antikolt-card` MIME-típust fegyverzi, a fül `dragover`-je **csak** ezt a típust fogadja el, a `drop`
+pedig a `setWorkspace`-et hívja — a `<select>` marad a billentyűzetes/elérhető út, a drag a gyors út, pont ahogy az
+ADR-058 „később kerülhet mellé" ága mondta), de **nem volt teszt, ami bizonyítja**. A `--workspacetest` csak a
+`<select>` utat méri, ezért a `21-ALLAPOT` „fogd-és-vidd" sora bizonyíték nélkül állt. Ez most megvan.
+
+### Mi változott
+
+- **`--workspacedragtest` (új, `runWorkspaceDragCheck` a shellben):** szintetikus drag/drop (a harnessben nincs
+  megbízható felhasználói gesztus), a **valódi** elemeken: a kártya `draggable`, a `dragstart` fel- és visszaadja a
+  MIME-típust, a fül `dragover`-je a kártya típusát elfogadja, az idegen szöveg-dragot elutasítja, a `drop` a
+  célfülre átteszi a kártyát (a mag is egyetért), és a visszadobás visszaállítja — a profil úgy marad, ahogy találtuk.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL SELF TESTS PASSED (55 ellenőrzés mind „ok", köztük a workspacedragtest és a check-repo)
+--workspacedragtest → workspace_drag_wired=ok draggable=yes mime=01SEED000000000000000003 ·
+                      workspace_drag_gate=ok accepted=yes ignored=yes ·
+                      workspace_drag_move=ok card=01SEED000000000000000003 target=w-work now=w-work answer=dropped ·
+                      workspace_drag_restored=ok answer=dropped · workspace_drag_check=ok
+cargo test            → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A profil-költöztetés gombja, az OAuth összekötése; az emberi kiadási tételek (SignPath, Store); az F6 maradék
+  vezérlője (videófelbontás, `warn`/`hard` sávok).
+
 ## 2026-11-22 (százhuszonkettedik szelet) — a konténerenkénti proxy/engedély igazolása (F3)
 
 Az F3 „konténerenkénti engedély/proxy" nyitott tétele lezárva: a kód már végig be volt kötve (a mag tárolja a

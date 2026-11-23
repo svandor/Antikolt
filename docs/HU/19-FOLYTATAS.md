@@ -317,7 +317,7 @@ normalizálva, a keresés ékezet nélkül is látja), és a **munkaterületek**
   (`workspaces_list`/`workspace_upsert`/`workspace_delete`), a kártya `workspace` mezője **tárolt adat** (a régi
   `index > 12` kitalálás javítva), a fül-soron van életciklus: `＋`, dupla kattintás = átnevezés, `×` = törlés (a
   mag `in_use` válasza megjelenik), és a kártya munkaterülete a kártya saját választójával váltható (ADR-058).
-  Nyitott: fogd-és-vidd (a `<select>` mellett, nem helyette).
+  A fogd-és-vidd is kész (ADR-058 megerősítve, `--workspacedragtest`, 123. szelet).
 - **Profil-költöztetés** — **kész a magban és a hídon** (ADR-059/060, `--profiletest`):
   `profile_export`/`profile_import` egy JSON-kötegben (`schema`, `cards`, `containers`, `workspaces`,
   `sessions`, `rules`); az ismeretlen séma elutasítás, az import előbb validál, a híd `profile.export/import`

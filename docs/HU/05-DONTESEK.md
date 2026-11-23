@@ -421,6 +421,11 @@ billentyűzettel nem használható; a `<select>` mindkettőt ingyen adja. A drag
 a teszt ugyanazt a választót használja, amit a felhasználó (`--workspacetest`); (−) két legördülő a meta-sorban
 zsúfoltabb, ezért a munkaterület-választó kisebb betűvel és keskenyebben jelenik meg.
 
+**Megerősítve (123. szelet):** a „később kerülhet *mellé*" ág megérkezett — a kártya `draggable`, a fülre dobható
+(`application/x-antikolt-card` MIME-típus, a fül `dragover`-je csak ezt fogadja el), a `drop` ugyanazt a
+`setWorkspace`-et hívja, mint a `<select>`; a `<select>` marad a billentyűzetes út. A huzalt a `--workspacedragtest`
+bizonyítja (`workspace_drag_wired`/`_gate`/`_move`/`_restored` mind `ok`).
+
 ## ADR-057 — A munkaterület életciklusa a fül-soron, ugyanazzal a gesztussal, mint a konténereké (2026-11-19)
 
 **Kontextus:** az ADR-056 a munkaterület-táblát a magba tette, de a felületen nem lehetett munkaterületet
