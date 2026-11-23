@@ -204,6 +204,14 @@ if (-not $shell -or -not $core) {
     Add-Result 'vaultpaneltest' ($LASTEXITCODE -eq 0)
 }
 
+Write-Host '=== passkeystoretest ===' -ForegroundColor Cyan
+if (-not $shell -or -not $core) {
+    Add-Result 'passkeystoretest' $false 'missing antikolt-shell.exe or antikolt-core-service.exe'
+} else {
+    & $shell --passkeystoretest $core
+    Add-Result 'passkeystoretest' ($LASTEXITCODE -eq 0)
+}
+
 Write-Host '=== sessionpanel ===' -ForegroundColor Cyan
 if (-not $shell -or -not $engine -or -not $core) {
     Add-Result 'sessionpanel' $false 'missing shell, engine or core service'

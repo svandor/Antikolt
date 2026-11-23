@@ -3,6 +3,28 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvennyolcadik szelet) — a passkey-tárolás mérve (M7)
+
+A széf passkey-tárolása end-to-end mérve: a `SecretKind::Passkey` útvonal írja/olvassa a `passkey`
+mezőt.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/main.cpp`:** `runPasskeyStoreCheck` + `--passkeystoretest`.
+- **`scripts/verify.ps1`:** `passkeystoretest` kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--passkeystoretest → passkey_store=ok (exit 0): unlock/create/get mind ok
+scripts/verify.ps1 → ALL CHECKS PASSED (79 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A teljes `navigator.credentials.create/get` a valós felületen (`not-measurable`, fókusz-gesztus) +
+  a kulcs-export a virtuális hitelesítőből a széfbe; a PiP views-architektúra-váltás.
+
 ## 2026-11-23 (százötvenhetedik szelet) — a PiP de-kockáztatása: a flag nem elég (M7)
 
 A PiP views-váltásának szükségessége empirikusan megerősítve.

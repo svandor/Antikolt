@@ -26,8 +26,8 @@ handover.
 A runnable Windows build: a **Qt 6.8 shell** + a **CEF 158 engine host** + a **Rust core** that owns the data. The grid
 is a virtualised card view (503 cards → ~25 DOM elements), a card hibernates to disk (MHTML + scroll/anchor/form state)
 and restores offline, containers and workspaces are first-class, the profile is portable as one JSON bundle, and **all
-stores live in SQLite** (schema `user_version = 10`, WAL) as their only writer. Decisions are recorded as **ADR-001 …
-ADR-081** in [`docs/HU/05-DONTESEK.md`](docs/HU/05-DONTESEK.md); the development log runs to slice **144** in
+stores live in SQLite** (schema `user_version = 11`, WAL) as their only writer. Decisions are recorded as **ADR-001 …
+ADR-094** in [`docs/HU/05-DONTESEK.md`](docs/HU/05-DONTESEK.md); the development log runs to slice **158** in
 [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md).
 
 What closed in the most recent session (slices 136–144):
@@ -50,9 +50,9 @@ What closed in the most recent session (slices 136–144):
 git clone https://github.com/svandor/Antikolt && cd Antikolt
 
 # 1. Fast, needs only Rust + Node: the same checks CI runs.
-pwsh -File scripts/check-repo.ps1   # SPDX, links, hygiene, release files, JS parse, cargo fmt, clippy -D warnings, 156 Rust tests
+pwsh -File scripts/check-repo.ps1   # SPDX, links, hygiene, release files, JS parse, cargo fmt, clippy -D warnings, 190 Rust tests
 
-# 2. The full gate: builds both native binaries and runs the 68 self tests (needs Qt 6.8 + CEF, GPU disabled).
+# 2. The full gate: builds both native binaries and runs the 76 self tests (needs Qt 6.8 + CEF, GPU disabled).
 $env:ANTIKOLT_ENGINE_DISABLE_GPU='1'
 pwsh -File scripts/verify.ps1       # ends with "ALL CHECKS PASSED"
 
@@ -145,8 +145,8 @@ sha256-preview, HU/EN teljes, automatikus profil, könyvjelző-import, kiadási 
 
 **Első lépés az új munkamenetben:** `pwsh -File scripts/check-repo.ps1`, majd a teljes kapu **ezen a gépen**,
 szoftveres rendereléssel: `$env:ANTIKOLT_ENGINE_DISABLE_GPU='1'; pwsh -File scripts/verify.ps1` — a hardveres GPU-út
-a VECTOR-on továbbra is elhal (RTX 5080), de ez **nem blokkolja** a termékmunkát. A kapu most **71 ellenőrzés**
-(68 önteszt + build + core service + check-repo), `cargo test` **156** zöld (78+53+9+1+15), séma `user_version=10`.
+a VECTOR-on továbbra is elhal (RTX 5080), de ez **nem blokkolja** a termékmunkát. A kapu most **79 ellenőrzés**
+(76 önteszt + build + core service + check-repo), `cargo test` **190** zöld (93+69+12+1+15), séma `user_version=11`.
 
 **A maradék — terv, sorrendben:**
 

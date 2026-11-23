@@ -20,7 +20,7 @@
 > Rust core owns the data: cards, containers (isolated cookie partitions), workspaces, the session ledger and the
 > portable profile bundle. Leaving a card **hibernates** it to disk (MHTML snapshot + scroll/anchor/form state) and
 > destroys the engine view; returning restores it offline in seconds. Measured on the current build: `verify.ps1`
-> runs **75 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **93 + 69 + 12 +
+> runs **76 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **93 + 69 + 12 +
 > 1 + 15 Rust tests**), and `dist.ps1 -Release` produces a 446 MB portable build. Start with
 > [`docs/EN/README.md`](docs/EN/README.md); the authoritative plan and the decision log are Hungarian
 > ([`docs/HU/`](docs/HU/)). Licence: [`LICENSE`](LICENSE) (MPL-2.0) · authors: [`AUTHORS`](AUTHORS) ·
@@ -51,7 +51,7 @@
 | `perf/measure-engine.ps1` | memóriamérő: a motor folyamatfájának privát memóriája, markdown + JSON riport |
 | `home/` | a kezdőlap: `<antikolt-card>`, virtualizált rács, négy téma, keresés, billentyűzet — böngészőben önállóan is megnyitható |
 | **Aláírás** | **Store + SignPath** — a Store az MSIX-et írja alá (ingyenes), a SignPath a saját hordozható kiadást ([ADR-040](docs/HU/05-DONTESEK.md), [részletek](docs/HU/20-ALASAS.md)) |
-| Shell ↔ motor | **kész és mérve**: IPC, fagyasztás/hibernálás, előnézet, memória-mérés, oldal-téma, nagyítás, görgetés — `scripts/verify.ps1` 75 öntesztje |
+| Shell ↔ motor | **kész és mérve**: IPC, fagyasztás/hibernálás, előnézet, memória-mérés, oldal-téma, nagyítás, görgetés — `scripts/verify.ps1` 76 öntesztje |
 
 ## Kipróbálás (Windows, ma)
 

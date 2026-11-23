@@ -6679,6 +6679,90 @@ int runVaultPanelCheck(const QString& corePath) {
     return panel_ok ? 0 : 1;
 }
 
+int runPasskeyStoreCheck(const QString& corePath) {
+    QTextStream out(stdout);
+    CoreClient client;
+    const QString data_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                             QStringLiteral("/passkeystore-selftest");
+    QDir(data_dir).removeRecursively();
+    QDir().mkpath(data_dir);
+    if (!client.start(corePath, data_dir)) {
+        out << "passkey_store_start=FAILED\n";
+        return 1;
+    }
+
+    bool unlocked = false;
+    bool created = false;
+    bool got = false;
+    {
+        QEventLoop loop;
+        QObject::connect(&client, &CoreClient::failed, &loop, [&](const QString& message) {
+            out << "passkey_store_error=" << message << '\n';
+            loop.quit();
+        });
+        QObject::connect(&client, &CoreClient::ready, &loop, [&](const QJsonObject&) {
+            client.vaultUnlock(QStringLiteral("correct horse"),
+                               [&](const QJsonObject& unlock, const QString& unlock_error) {
+                                   unlocked =
+                                       unlock_error.isEmpty() && unlock.value("unlocked").toBool();
+                                   if (!unlocked) {
+                                       loop.quit();
+                                       return;
+                                   }
+                                   // A passkey is a public-key credential: its secret is the credential
+                                   // id + private key, stored in the `passkey` field (kind=passkey).
+                                   QJsonObject credential;
+                                   credential.insert(QStringLiteral("origin"),
+                                                    QStringLiteral("https://pelda.hu"));
+                                   credential.insert(QStringLiteral("kind"),
+                                                    QStringLiteral("passkey"));
+                                   credential.insert(QStringLiteral("passkey"),
+                                                    QStringLiteral("base64-test-credential-id"));
+                                   client.vaultCreate(
+                                       credential,
+                                       [&](const QJsonObject& created_obj,
+                                           const QString& create_error) {
+                                           created = create_error.isEmpty();
+                                           const QString id = created_obj
+                                                                  .value(QStringLiteral("credential"))
+                                                                  .toObject()
+                                                                  .value(QStringLiteral("id"))
+                                                                  .toString();
+                                           client.vaultGet(
+                                               id,
+                                               [&](const QJsonObject& get,
+                                                   const QString& get_error) {
+                                                   const QJsonObject credential_back =
+                                                       get.value(QStringLiteral("credential"))
+                                                           .toObject();
+                                                   got =
+                                                       get_error.isEmpty() &&
+                                                       credential_back.value(QStringLiteral("kind"))
+                                                               .toString() ==
+                                                           QStringLiteral("passkey") &&
+                                                       credential_back.value(QStringLiteral("passkey"))
+                                                               .toString() ==
+                                                           QStringLiteral("base64-test-credential-id");
+                                                   loop.quit();
+                                               });
+                                       });
+                               });
+        });
+        client.handshake();
+        QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "passkey_store_unlock=" << (unlocked ? "ok" : "FAILED") << '\n';
+    out << "passkey_store_create=" << (created ? "ok" : "FAILED") << '\n';
+    out << "passkey_store_get=" << (got ? "ok" : "FAILED") << '\n';
+    const bool ok = unlocked && created && got;
+    out << "passkey_store=" << (ok ? "ok" : "FAILED") << '\n';
+    client.shutdown();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runSelfTest(bool with_engine, const QString& enginePath) {
     QTextStream out(stdout);
     out << "antikolt-shell " << ANTIKOLT_VERSION << '\n';
@@ -10950,6 +11034,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("vaultpaneltest"),
         QStringLiteral("Prove the vault panel lists credentials without leaking secrets, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption passkeystoretest(
+        QStringLiteral("passkeystoretest"),
+        QStringLiteral("Prove the vault stores and reads a passkey credential, then exit."),
+        QStringLiteral("path"));
     parser.addOption(selftest);
     parser.addOption(engine);
     parser.addOption(embedtest);
@@ -11024,6 +11112,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(fillcredentialtest);
     parser.addOption(passkeyflowtest);
     parser.addOption(vaultpaneltest);
+    parser.addOption(passkeystoretest);
     parser.process(app);
 
     // Every self test measures one thing, and a self test always *names itself* on the command line; the plain
@@ -11128,6 +11217,9 @@ int main(int argc, char* argv[]) {
     }
     if (parser.isSet(vaultpaneltest)) {
         return runVaultPanelCheck(parser.value(vaultpaneltest));
+    }
+    if (parser.isSet(passkeystoretest)) {
+        return runPasskeyStoreCheck(parser.value(passkeystoretest));
     }
 
     if (parser.isSet(scrollzoomtest)) {
