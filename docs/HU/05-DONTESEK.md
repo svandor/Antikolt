@@ -3,6 +3,26 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-086 — A passkey F0 spike: a CDP virtuális hitelesítő működik a CEF 158-ban (2026-11-23)
+
+**Kontextus:** a 12-PASSKEY.md szerint a szoftveres passkey „B" útja a CDP
+`WebAuthn.addVirtualAuthenticator` virtuális hitelesítőre épül, de az F0 spike-nak kellett eldöntenie,
+működik-e ez a CEF 158-ban — mert a CDP WebAuthn-domain a beágyazói WebAuthn-megvalósításhoz kötődik,
+amit a CEF elvileg nem ad.
+
+**Döntés (a spike eredménye):**
+
+1. **A WebAuthn-domain elérhető, de előbb `WebAuthn.enable` kell:** az első próba
+   `addVirtualAuthenticator` közvetlen hívása `-32000 „The Virtual Authenticator Environment has not been
+   enabled"` hibát adott; a `WebAuthn.enable` → `addVirtualAuthenticator` sorrend viszont **működik**.
+2. **A virtuális hitelesítő létrejön:** a `--webauthntest` `webauthn_authenticator=ok id=<authenticatorId>`
+   kimenettel zár (exit 0) — tehát a B út a CEF 158-ban járható, CEF-patch nélkül.
+
+**Következmény:** (+) a passkey B útja de-kockáztatva: a CDP virtuális hitelesítő működik, nincs szükség
+CEF-patchre vagy segédfolyamatra; (+) a `--webauthntest` a kapuban méri; (−) a teljes
+`navigator.credentials.create/get` folyamat (secure-context tesztoldal, kulcs-export/import a széfbe) még
+külön szeletek.
+
 ## ADR-085 — A jelszó-CSV-import név szerinti oszlop-leképezéssel, a magban (2026-11-23)
 
 **Kontextus:** a Chrome és a Firefox a jelszavakat CSV-be exportálja, de eltérő oszlopkészlettel:

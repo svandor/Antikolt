@@ -92,6 +92,8 @@ $engineChecks = @(
     # The engine's own container isolation (ADR-071): run against the engine binary, not the shell, because the claim
     # is about request contexts, the proxy preference and the permission policy — no window is needed to prove it.
     @{ Name = 'partitiontest'; Args = @('--partitiontest'); Direct = $true },
+    # F0 (ADR-027/023): the WebAuthn spike — can the engine create a CDP virtual authenticator?
+    @{ Name = 'webauthntest'; Args = @('--webauthntest'); Direct = $true },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },

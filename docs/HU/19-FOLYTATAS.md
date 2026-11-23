@@ -12,7 +12,7 @@
 
 ```
 git rev-parse --short HEAD  →  d131c4f  (docs(slice-144): release files (THIRD-PARTY-NOTICES) + gate check (M8))
-scripts/verify.ps1          →  ALL CHECKS PASSED — 71 ellenőrzés mind „ok"
+scripts/verify.ps1          →  ALL CHECKS PASSED — 72 ellenőrzés mind „ok"
 cargo test                  →  187 zöld: 93 + 67 + 11 + 1 + 15
 git status                  →  tiszta munkafa, minden pusholva (origin/main)
 ```
@@ -48,7 +48,7 @@ A döntések után, sorrendben: vault + import → PiP (ha jóváhagyva) → tel
 | F6 `video_max_height` | **kész** (ADR-076, 136. szelet) | a profil `video_max_height`-je **megjelenítési sapkaként** alkalmazva (`set_video_cap` op, nevesített stíluselem); a dekódolási felbontás-csökkentés `not-measurable` (a CEF nem ad laponkénti korlátot) | `--videocaptest`: Fast 2160px → Saver 720px (renderelt magasság 720) → Manual eltávolítva |
 | Automatikus profilváltás (M6) | **kész** (ADR-080, 142. szelet) | `ProfileKind::Auto` + `resolve_profile` IPC (`{on_ac_power, pressure}` → `{kind, params}`); a shell `onAcPower()` + a memória-minta alapján minden ciklusban újra-kérdez | `--autoprofiltest`: normal/ac=balanced · normal/bat=saver · hard=ultra |
 | Könyvjelző-import (M7) | **kész** (ADR-081, 143. szelet) | Netscape-HTML → kártyák (`bookmarks.h` regex-parser + `newCardId`), az újra-import nem duplikál; a „💾 Profil" menüben `importBookmarksFromPath` | `--bookmarkimporttest`: parse + id-alak + upsert |
-| Jelszó-boltozat (M7) | `crates/antikolt-core-service/src/credentials.rs` (ADR-083/084/085) | a **titkosítás + a tároló + a TOTP + a CSV-import** kész (AES-256-GCM + Argon2id + DPAPI, `credential` tábla SQLite-only, `vault_*` + `vault_totp` + `vault_import_csv` IPC); a passkey és a shell-felület nyitott | `cargo test` 187 zöld (93+67+11+1+15) + a `--vaulttest` a shellben hátra |
+| Jelszó-boltozat (M7) | `crates/antikolt-core-service/src/credentials.rs` (ADR-083/084/085/086) | a **titkosítás + a tároló + a TOTP + a CSV-import + a passkey-F0-spike** kész (AES-256-GCM + Argon2id + DPAPI, `credential` tábla SQLite-only, `vault_*`/`vault_totp`/`vault_import_csv` IPC, a CDP virtuális hitelesítő **működik**); a teljes `navigator.credentials` folyamat és a shell-felület nyitott | `cargo test` 187 zöld (93+67+11+1+15) + `--webauthntest` a kapuban; a `--vaulttest` a shellben hátra |
 | OAuth összekötés | `main_window.cpp` (popup, 02-ARCH §8.5) | a mechanizmus kész, a bejelentkezési gesztus-út a harnessben nem kattintható | `not-measurable` gesztus; a kész mechanizmus már mért |
 | `sha256` blobtár | **kész** (ADR-077, 137. szelet) | a preview-név a tartalom hash-e (`previewContentName`, Qt `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből | `--previewhashtest` (publikus vektorok), `--previewgentest`/`--previewworkertest` (`preview_content_addressed=ok`) |
 | PiP | motor (CEF 158) | **döntés meghozva:** views-architektúra-váltás a Document-PiP-hez (a klasszikus video-PiP-hez a CEF nem ad API-t; a Document-PiP az Alloy/ablakos runtime-ban le van tiltva, csak a Chrome/views runtime-ban él) — külön, nagy szelet | — |
@@ -60,7 +60,7 @@ A döntések után, sorrendben: vault + import → PiP (ha jóváhagyva) → tel
 
 1. **Egy szelet = egy mérhető feature + önteszt.** Minden feature-nek saját `--…test` (vagy tiszta-függvény)
    kell, ami a kapuban fut.
-2. **A kapu a bizonyíték:** `scripts/verify.ps1` → `ALL CHECKS PASSED` (most 71 ellenőrzés). Soha ne zöldíts
+2. **A kapu a bizonyíték:** `scripts/verify.ps1` → `ALL CHECKS PASSED` (most 72 ellenőrzés). Soha ne zöldíts
    „hazugsággal": a számokat a kapu kimenetéből írd a doksiba, ne fejből.
 3. **Minden szelet végén:** build + kapu zöld → `16-FEJLESZTESI-NAPLO.md` bejegyzés a **mért** kimenettel →
    commit (`feat/test(slice-NNN): …`) → `git push`. A doksi nyelve a **magyar**.

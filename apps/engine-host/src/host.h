@@ -53,6 +53,9 @@ struct HostConfig {
     bool hidden = false;
     /// Stop as soon as the main frame has loaded (selftest).
     bool quit_on_first_load = false;
+    /// Run the WebAuthn spike: create a virtual authenticator through CDP and report whether it works
+    /// (F0, ADR-027/023). Used by `--webauthntest`.
+    bool webauthn_test = false;
     /// Native window to embed the surface into; `nullptr` means the host creates a top-level window.
     ///
     /// This is how the one live card lives inside the Qt shell's window while the engine keeps its
@@ -92,6 +95,10 @@ struct HostState {
     /// Set once CEF has actually created the browser. CEF creates it asynchronously, so the pump
     /// loop must not treat "no browser yet" as "browser closed" (that bug exited immediately).
     std::atomic<bool> browser_created{false};
+    /// The WebAuthn spike's CDP answer has arrived (set by the `DevToolsCall` handler).
+    std::atomic<bool> webauthn_done{false};
+    /// Whether that answer was a usable authenticator (drives the exit code).
+    std::atomic<bool> webauthn_ok{false};
     int http_status = 0;
     std::string final_url;
     std::string title;
@@ -251,7 +258,7 @@ class EngineClient : public CefClient,
                      public CefDownloadHandler,
                      public CefMessageRouterBrowserSide::Handler {
 public:
-    EngineClient(HostState* state, bool quit_on_first_load,
+    EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
                  std::map<std::string, std::string> permissions = {});
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -338,8 +345,13 @@ public:
 private:
     HostState* state_;
     bool quit_on_first_load_;
+    bool webauthn_test_;
     CefRefPtr<CefMessageRouterBrowserSide> router_;
     CefRefPtr<PermissionPolicy> permission_;
+
+    /// Submit the WebAuthn spike's `WebAuthn.addVirtualAuthenticator` call (F0, ADR-027/023). The
+    /// handler reports `webauthn_authenticator=ok|unsupported` on stdout and flips `webauthn_done`.
+    void StartWebAuthnProbe(CefRefPtr<CefBrowser> browser);
 
     IMPLEMENT_REFCOUNTING(EngineClient);
     DISALLOW_COPY_AND_ASSIGN(EngineClient);

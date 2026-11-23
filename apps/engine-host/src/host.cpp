@@ -227,7 +227,7 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
     window_info.SetAsChild(window, CefRect(origin_x, origin_y, width, height));
 
     CefRefPtr<EngineClient> client_handler(
-        new EngineClient(state, config.quit_on_first_load, config.permissions));
+        new EngineClient(state, config.quit_on_first_load, config.webauthn_test, config.permissions));
     CefBrowserSettings browser_settings;
     // The surface's request context: its own storage (cookies, cache, localStorage) and its container's proxy. Passing
     // nullptr here was the old behaviour — every card shared one global cookie jar and the `partition` key was a
@@ -1609,10 +1609,11 @@ bool EngineApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
            router_renderer_->OnProcessMessageReceived(browser, frame, source_process, message);
 }
 
-EngineClient::EngineClient(HostState* state, bool quit_on_first_load,
+EngineClient::EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
                            std::map<std::string, std::string> permissions)
     : state_(state),
       quit_on_first_load_(quit_on_first_load),
+      webauthn_test_(webauthn_test),
       permission_(new PermissionPolicy(std::move(permissions))) {
     router_ = CefMessageRouterBrowserSide::Create(MessageRouterConfig());
     router_->AddHandler(this, /*first=*/false);
@@ -1937,6 +1938,62 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
         CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
         payload->SetInt("surface", static_cast<int>(state_->surface_id));
         StdioLink::Instance().Event("surface_created", payload);
+    }
+    if (webauthn_test_) {
+        StartWebAuthnProbe(browser);
+    }
+}
+
+void EngineClient::StartWebAuthnProbe(CefRefPtr<CefBrowser> browser) {
+    // F0 (ADR-027/023): does CEF 158's DevTools transport reach Chromium's `WebAuthn` domain, and does
+    // `addVirtualAuthenticator` hand back an authenticator id? The domain must be `enable`d first — the
+    // virtual authenticator environment is off until then, which is exactly the error the first probe hit.
+    auto fail = [state = state_](const std::string& error) {
+        std::printf("webauthn_authenticator=unsupported error=%s\n", error.c_str());
+        std::fflush(stdout);
+        state->webauthn_done.store(true);
+        state->webauthn_ok.store(false);
+    };
+
+    CefRefPtr<DevToolsCall> enable(new DevToolsCall(
+        "WebAuthn.enable", nullptr,
+        [state = state_, browser, fail](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+            if (!reply.ok()) {
+                fail(reply.error);
+                return;
+            }
+            CefRefPtr<CefDictionaryValue> options = CefDictionaryValue::Create();
+            options->SetString("protocol", "ctap2");
+            options->SetString("transport", "internal");
+            options->SetBool("hasResidentKey", true);
+            options->SetBool("hasUserVerification", true);
+            options->SetBool("isUserVerified", true);
+            options->SetBool("automaticPresenceSimulation", true);
+            CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+            params->SetDictionary("options", options);
+            CefRefPtr<DevToolsCall> add(new DevToolsCall(
+                "WebAuthn.addVirtualAuthenticator", params,
+                [state](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+                    const bool ok = reply.ok() && !reply.String("authenticatorId").empty();
+                    if (ok) {
+                        std::printf("webauthn_authenticator=ok id=%s\n",
+                                    reply.String("authenticatorId").c_str());
+                    } else if (reply.ok()) {
+                        std::printf("webauthn_authenticator=missing\n");
+                    } else {
+                        std::printf("webauthn_authenticator=unsupported error=%s\n",
+                                    reply.error.c_str());
+                    }
+                    std::fflush(stdout);
+                    state->webauthn_done.store(true);
+                    state->webauthn_ok.store(ok);
+                }));
+            if (!add->Start(browser)) {
+                fail("addVirtualAuthenticator submit failed");
+            }
+        }));
+    if (!enable->Start(browser)) {
+        fail("devtools unavailable");
     }
 }
 
@@ -2276,8 +2333,11 @@ int RunEngineHost(const HostConfig& config) {
     if (config.quit_on_first_load) {
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(kLoadTimeoutSeconds);
-        while (!state.load_finished.load() && !state.load_failed.load() &&
-               !state.quit_requested.load()) {
+        // The WebAuthn spike also waits for its CDP answer, so a fast load cannot end the process
+        // before `webauthn_authenticator=…` is printed.
+        while ((!state.load_finished.load() ||
+                (config.webauthn_test && !state.webauthn_done.load())) &&
+               !state.load_failed.load() && !state.quit_requested.load()) {
             PumpWindowsMessages();
             CefDoMessageLoopWork();
             std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
@@ -2311,6 +2371,9 @@ int RunEngineHost(const HostConfig& config) {
     CefShutdown();
     if (timed_out || failed) {
         return 1;
+    }
+    if (config.webauthn_test && !state.webauthn_ok.load()) {
+        return 1;  // the spike must not report a green when the authenticator did not come back.
     }
     return (config.quit_on_first_load && !loaded) ? 1 : 0;
 }

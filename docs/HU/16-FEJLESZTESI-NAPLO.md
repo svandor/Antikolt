@@ -3,6 +3,31 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvenkilencedik szelet) — passkey F0 spike: a CDP virtuális hitelesítő működik (M7)
+
+A passkey „B" útjának de-kockáztató spike-ja (12-PASSKEY.md): működik-e a
+`WebAuthn.addVirtualAuthenticator` a CEF 158-ban a DevTools-transzporton át? **Igen** — de csak a
+`WebAuthn.enable` után.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `--webauthntest` flag + `EngineClient::StartWebAuthnProbe` (kétlépéses
+  CDP-szekvencia: `WebAuthn.enable` → `WebAuthn.addVirtualAuthenticator`), a `HostState.webauthn_done/ok`
+  és a kilépési kód (a „hazug zöld" ellen: nem-zéró, ha a hitelesítő nem jön létre).
+- **`scripts/verify.ps1`:** `webauthntest` kapu-lépés (Direct, az engine-binárisra).
+
+### Bizonyíték (mért)
+
+```
+--webauthntest → webauthn_authenticator=ok id=913755a5-3355-4540-9386-b8aa868dbdc7 (exit 0)
+scripts/verify.ps1 → ALL CHECKS PASSED (72 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A teljes `navigator.credentials.create/get` folyamat (secure-context tesztoldal, kulcs-export/import a
+  széfbe); a shell vault-felület + izolált világú autofill; a PiP (views-architektúra-váltás).
+
 ## 2026-11-23 (száznegyvennyolcadik szelet) — Chrome/Firefox jelszó-CSV-import (M7)
 
 A „boltozat + CSV-import" döntés második fele: a Chrome és a Firefox jelszó-exportja a széfbe írható.

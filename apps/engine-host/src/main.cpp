@@ -156,6 +156,7 @@ int main(int argc, char* argv[]) {
 
     bool selftest = false;
     bool partition_test = false;
+    bool webauthn_test = false;
     bool stdio_mode = false;
     bool user_data_explicit = false;
 
@@ -165,6 +166,8 @@ int main(int argc, char* argv[]) {
             selftest = true;
         } else if (std::strcmp(arg, "--partitiontest") == 0) {
             partition_test = true;
+        } else if (std::strcmp(arg, "--webauthntest") == 0) {
+            webauthn_test = true;
         } else if (std::strcmp(arg, "--stdio") == 0) {
             stdio_mode = true;
         } else if (std::strcmp(arg, "--version") == 0) {
@@ -206,16 +209,18 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (selftest || partition_test) {
+    if (selftest || partition_test || webauthn_test) {
         config.hidden = true;
         config.quit_on_first_load = true;
         config.start_url = kSelftestUrl;
+        config.webauthn_test = webauthn_test;
         if (!user_data_explicit) {
             // A selftest must be hermetic: its own cache directory, removed afterwards. Otherwise a
             // leftover instance or a previous run fights over Chromium's cache locks and the result
             // depends on history instead of on the code.
             const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-            const char* prefix = partition_test ? "antikolt-partition-" : "antikolt-selftest-";
+            const char* prefix = partition_test ? "antikolt-partition-"
+                                                : (webauthn_test ? "antikolt-webauthn-" : "antikolt-selftest-");
             config.user_data_path =
                 (std::filesystem::temp_directory_path() /
                  (prefix + std::to_string(static_cast<long long>(stamp))))
@@ -250,7 +255,7 @@ int main(int argc, char* argv[]) {
                      config.user_data_path.c_str(), error.message().c_str());
         return 1;
     }
-    if (selftest || partition_test) {
+    if (selftest || webauthn_test) {
         std::printf("user_data=%s\n", config.user_data_path.c_str());
         std::fflush(stdout);
     }
@@ -261,7 +266,7 @@ int main(int argc, char* argv[]) {
     const int exit_code =
         stdio_mode ? antikolt::RunEngineHostServer(config) : antikolt::RunEngineHost(config);
 
-    if (selftest && !user_data_explicit) {
+    if ((selftest || webauthn_test) && !user_data_explicit) {
         std::error_code cleanup_error;
         std::filesystem::remove_all(config.user_data_path, cleanup_error);
     }
