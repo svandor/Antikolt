@@ -2942,6 +2942,76 @@ int runCrashCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+int runPdfCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    // A minimal single-page PDF, written to a real file so the browser gets a file:// URL to view. PDFium is
+    // lenient about the (absent) xref table and reconstructs it.
+    const QByteArray minimal_pdf =
+        "%PDF-1.4\n"
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>\nendobj\n"
+        "trailer\n<< /Root 1 0 R >>\n%%EOF\n";
+    const QString pdf_path = QDir::temp().filePath(
+        QStringLiteral("antikolt-pdf-%1.pdf").arg(QDateTime::currentMSecsSinceEpoch()));
+    {
+        QFile file(pdf_path);
+        file.open(QIODevice::WriteOnly);
+        file.write(minimal_pdf);
+        file.close();
+    }
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 home_surface = 0;
+    bool pdf_loaded = false;
+    bool pdf_downloaded = false;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::downloadFinished, &loop,
+                         [&](qint64, const QString&, bool) {
+                             pdf_downloaded = true;
+                             loop.quit();
+                         });
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             if (home_surface == 0) {
+                                 home_surface = id;
+                                 // One beat, then view the PDF.
+                                 QTimer::singleShot(500, &loop, [&, id] {
+                                     window.engine()->navigate(
+                                         id, QUrl::fromLocalFile(pdf_path).toString());
+                                 });
+                                 return;
+                             }
+                             if (url.contains(QStringLiteral(".pdf"))) {
+                                 pdf_loaded = true;
+                                 loop.quit();
+                             }
+                         });
+        QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "pdf_home_surface=" << home_surface << '\n';
+    out << "pdf_loaded=" << (pdf_loaded ? "true" : "false") << '\n';
+    out << "pdf_downloaded=" << (pdf_downloaded ? "true" : "false") << '\n';
+    const bool ok = home_surface != 0 && pdf_loaded && !pdf_downloaded;
+    out << "pdf=" << (ok ? "ok" : "FAILED") << '\n';
+    QFile::remove(pdf_path);
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -9680,6 +9750,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("crashtest"),
         QStringLiteral("Prove a renderer crash is detected (F7), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption pdftest(
+        QStringLiteral("pdftest"),
+        QStringLiteral("Prove a PDF renders in the viewer, not as a download (F7), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9770,6 +9844,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(findtest);
     parser.addOption(downloadtest);
     parser.addOption(crashtest);
+    parser.addOption(pdftest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9988,6 +10063,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(crashtest)) {
         return runCrashCheck(parser.value(crashtest));
+    }
+
+    if (parser.isSet(pdftest)) {
+        return runPdfCheck(parser.value(pdftest));
     }
 
     if (parser.isSet(enginerestarttest)) {

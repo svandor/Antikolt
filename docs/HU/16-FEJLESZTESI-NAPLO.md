@@ -3,6 +3,30 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonharmincnegyedik szelet) — a PDF megtekintése (F7)
+
+Az F7 ötödik darabja: a **PDF megjelenítése**. A CEF beépített PDFium-nézője már eddig is a helyén volt; most egy
+önteszt rögzíti, hogy a PDF **nézőként** nyílik (nem letöltésként), és ez a viselkedés a kapuban is ellenőrizve van.
+
+### Mi változott
+
+- **`--pdftest` (új):** egy minimális, egyoldalas PDF-et ír egy ideiglenes fájlba, a böngészőt erre navigálja, és
+  ellenőrzi, hogy a betöltés megtörténik (`loadFinished`) **és** nem indul letöltés (`download_finished` nincs) —
+  vagyis a PDF a nézőben jelenik meg.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (64 ellenőrzés mind „ok", köztük a pdftest és a check-repo)
+--pdftest         → pdf_loaded=true · pdf_downloaded=false · pdf=ok
+cargo test        → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (PiP, akadálymentesség, HU/EN); az F6 `video_max_height` kutatási tétele; az OAuth összekötése;
+  az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonharmincharmadik szelet) — az összeomlás utáni automatikus újratöltés (F7)
 
 A 132. szelet a detektálást tette be; most a **helyreállítás második fele**: az összeomlott oldal automatikus
