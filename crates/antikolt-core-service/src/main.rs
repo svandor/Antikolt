@@ -1027,6 +1027,19 @@ fn handle(
                 Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
             }
         }
+        "vault_get_for_origin" => {
+            let Some(origin) = request.get("origin").and_then(Value::as_str) else {
+                return (
+                    error_reply(id, "invalid_argument", "vault_get_for_origin needs origin"),
+                    true,
+                );
+            };
+            match vault.get_for_origin(origin, now_ms()) {
+                Ok(Some(credential)) => (ok_reply(id, json!({ "credential": credential })), true),
+                Ok(None) => (ok_reply(id, json!({ "credential": null })), true),
+                Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
+            }
+        }
         "vault_delete" => {
             let Some(credential_id) = request.get("id_of_credential").and_then(Value::as_str)
             else {

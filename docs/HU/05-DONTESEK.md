@@ -3,6 +3,25 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-090 — Az autofill-lookup origin-szerinti, pontos- majd aldomain-egyezéssel (2026-11-23)
+
+**Kontextus:** az autofillnek (ADR-089) a lap originje alapján kell megtalálnia a széfben a hitelesítőt.
+A kérdés: mi számít egyezésnek, ha a hitelesítőt például `https://pelda.hu`-hoz mentettük, a lap pedig
+`https://login.pelda.hu`-n van.
+
+**Döntés:**
+
+1. **`vault_get_for_origin`:** a core visszaadja a lap originjéhez illő hitelesítőt — **előbb pontos**
+   origin-egyezés, **aztán aldomain** (a tárolt host a lap hostjának szuffixe, host-határon).
+2. **A szuffix-egyezés biztonságos:** `pelda.hu` illik a `login.pelda.hu`-ra, de NEM a
+   `pelda.hu.evil.example`-re (a szuffixnek `.`-tal kell kezdődnie).
+3. **Nincs találat → `credential: null`, nem hiba** (az autofill-UI így tudja, hogy „nincs mentett
+   hitelesítő").
+
+**Következmény:** (+) az autofill-lookup mérve (pontos + aldomain + idegen host + szuffix-támadás);
+(+) a lookup a core-ban marad, a titok a `vault_get`-hez hasonlóan csak nyitott széfből jön; (−) a
+`fill_credential` parancs az engine-hostban és a shell-orchestráció még külön szeletek.
+
 ## ADR-089 — A kitöltés izolált világban működik: az űrlap megtelik, a titok nem szivárog (2026-11-23)
 
 **Kontextus:** az ADR-088 spike bebizonyította, hogy a CDP izolált világ létrejön a CEF 158-ban. A

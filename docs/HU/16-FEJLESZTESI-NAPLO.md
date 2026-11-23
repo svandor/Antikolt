@@ -3,6 +3,30 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvenharmadik szelet) — autofill-lookup origin-szerint (M7)
+
+A jelszó-kitöltés első fele: a core megtalálja a lap originjéhez illő hitelesítőt.
+
+### Mi változott
+
+- **`crates/antikolt-core-service/src/credentials.rs`:** `get_for_origin` (pontos → aldomain-egyezés,
+  szuffix-támadás ellen) + `hostname`/`origin_matches` segédfüggvények.
+- **`crates/antikolt-core-service/src/main.rs`:** `vault_get_for_origin` IPC (`origin` → `credential`
+  vagy `credential: null`).
+- **`tests/service.rs`:** `the_vault_resolves_a_credential_by_origin_for_autofill`.
+
+### Bizonyíték (mért)
+
+```
+cargo test → 190 zöld: 93 + 69 + 12 + 1 + 15   (a +3 lookup-teszt)
+scripts/verify.ps1 → ALL CHECKS PASSED (75 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A `fill_credential` parancs az engine-hostban + a shell-orchestráció; a grafikus széf-panel; a teljes
+  `navigator.credentials` passkey-folyamat; a PiP (views-architektúra-váltás).
+
 ## 2026-11-23 (százötvenkettedik szelet) — autofill izolált világban: spike (M7)
 
 A jelszó-kitöltés tényleges mechanizmusának de-kockáztató spike-ja: az izolált világban futó kitöltő

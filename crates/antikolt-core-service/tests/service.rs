@@ -637,3 +637,55 @@ fn the_vault_imports_a_chrome_password_csv() {
     service.stop();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_vault_resolves_a_credential_by_origin_for_autofill() {
+    let dir = temp_dir("vault-origin");
+    let mut service = Service::start(&dir);
+    let unlock = service.request("vault_unlock", json!({ "password": "pw" }));
+    assert_eq!(unlock["ok"], true, "unlock: {unlock}");
+
+    let created = service.request(
+        "vault_create",
+        json!({ "credential": {
+            "origin": "https://pelda.hu", "kind": "password",
+            "username": "alice", "password": "root-secret"
+        }}),
+    );
+    assert_eq!(created["ok"], true, "create: {created}");
+
+    // An exact subdomain credential wins over its parent.
+    let sub = service.request(
+        "vault_create",
+        json!({ "credential": {
+            "origin": "https://login.pelda.hu", "kind": "password",
+            "username": "bob", "password": "sub-secret"
+        }}),
+    );
+    assert_eq!(sub["ok"], true, "sub create: {sub}");
+
+    let exact = service.request(
+        "vault_get_for_origin",
+        json!({ "origin": "https://login.pelda.hu" }),
+    );
+    assert_eq!(exact["ok"], true, "lookup: {exact}");
+    assert_eq!(exact["data"]["credential"]["password"], "sub-secret");
+
+    // A page on a subdomain of the parent falls back to the parent's credential.
+    let parent = service.request(
+        "vault_get_for_origin",
+        json!({ "origin": "https://mail.pelda.hu" }),
+    );
+    assert_eq!(parent["data"]["credential"]["password"], "root-secret");
+
+    // An unrelated host has no credential, and the answer is `credential: null`, not an error.
+    let none = service.request(
+        "vault_get_for_origin",
+        json!({ "origin": "https://masik.hu" }),
+    );
+    assert_eq!(none["ok"], true);
+    assert!(none["data"]["credential"].is_null());
+
+    service.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

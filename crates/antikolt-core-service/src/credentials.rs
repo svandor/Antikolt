@@ -353,6 +353,61 @@ impl CredentialStore {
         Ok(Some(plain))
     }
 
+    /// Open the credential whose origin matches `page_origin` (exact first, then a subdomain) — the
+    /// autofill lookup. Requires the vault to be open; `None` = no matching credential.
+    pub fn get_for_origin(
+        &mut self,
+        page_origin: &str,
+        now_ms: u64,
+    ) -> Result<Option<CredentialPlain>, CredentialError> {
+        self.vault.touch(now_ms);
+        let cipher = self.require_open()?;
+        let credentials = self.db.all_credentials()?;
+        let exact = credentials
+            .iter()
+            .find(|credential| credential.origin == page_origin);
+        let chosen = exact.or_else(|| {
+            credentials
+                .iter()
+                .find(|credential| origin_matches(&credential.origin, page_origin))
+        });
+        let Some(credential) = chosen else {
+            return Ok(None);
+        };
+        let aad = record_aad(&credential.origin, &credential.id);
+        let open = |sealed: &Option<Vec<u8>>| -> Result<Option<String>, CredentialError> {
+            match sealed {
+                Some(blob) => {
+                    let bytes = cipher
+                        .open(&aad, blob)
+                        .map_err(|_| CredentialError::Locked)?;
+                    let text = String::from_utf8(bytes)
+                        .map_err(|_| CredentialError::Rejected("the sealed record is not UTF-8"))?;
+                    Ok(Some(text))
+                }
+                None => Ok(None),
+            }
+        };
+        let plain = CredentialPlain {
+            id: credential.id.clone(),
+            container_id: credential.container_id.clone(),
+            origin: credential.origin.clone(),
+            kind: credential.kind.clone(),
+            label: credential.label.clone(),
+            username: open(&credential.username_ct)?,
+            password: open(&credential.password_ct)?,
+            totp_secret: open(&credential.totp_secret_ct)?,
+            totp_params: credential
+                .totp_params_json
+                .as_deref()
+                .and_then(|text| serde_json::from_str(text).ok()),
+            passkey: open(&credential.passkey_ct)?,
+            last_used_at: credential.last_used_at,
+        };
+        self.db.touch_credential(&plain.id, now_ms as i64)?;
+        Ok(Some(plain))
+    }
+
     /// The current TOTP code for a credential, plus the seconds until it rotates. `None` = unknown id.
     pub fn totp_code_for(
         &mut self,
@@ -412,6 +467,31 @@ fn record_aad(origin: &str, id: &str) -> Vec<u8> {
     aad.push(b'|');
     aad.extend_from_slice(id.as_bytes());
     aad
+}
+
+/// The lowercased hostname of an origin (`https://pelda.hu/login` → `pelda.hu`).
+fn hostname(origin: &str) -> Option<String> {
+    let rest = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    Some(rest[..end].to_ascii_lowercase())
+}
+
+/// Whether `page_origin` is on the same host as `stored`, or on a subdomain of it.
+fn origin_matches(stored: &str, page: &str) -> bool {
+    match (hostname(stored), hostname(page)) {
+        (Some(stored_host), Some(page_host)) => {
+            page_host == stored_host
+                || page_host
+                    .strip_suffix(stored_host.as_str())
+                    .is_some_and(|prefix| prefix.ends_with('.'))
+        }
+        _ => false,
+    }
 }
 
 fn meta_of(credential: Credential) -> CredentialMeta {
@@ -642,6 +722,58 @@ mod tests {
             .expect("known");
         assert_eq!(code, "94287082");
         assert!(remaining <= 30, "the code rotates within one period");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn origin_matching_is_exact_or_a_subdomain() {
+        assert!(origin_matches("https://pelda.hu", "https://pelda.hu"));
+        assert!(origin_matches("https://pelda.hu", "https://login.pelda.hu"));
+        assert!(origin_matches("https://pelda.hu/login", "https://pelda.hu"));
+        assert!(!origin_matches(
+            "https://pelda.hu",
+            "https://pelda.hu.evil.example"
+        ));
+        assert!(!origin_matches("https://pelda.hu", "https://masik.hu"));
+        assert!(!origin_matches("https://pelda.hu", "not-a-url"));
+    }
+
+    #[test]
+    fn get_for_origin_returns_exact_then_subdomain() {
+        let dir = scratch_dir();
+        let mut store = CredentialStore::open(&dir).expect("open");
+        store.unlock(Some("pw"), 1_000).expect("unlock");
+
+        let mut root = sample();
+        root.origin = "https://pelda.hu".to_string();
+        root.username = Some("alice".to_string());
+        root.password = Some("root-secret".to_string());
+        store.upsert(root, 2_000).expect("root");
+
+        let mut sub = sample();
+        sub.origin = "https://login.pelda.hu".to_string();
+        sub.username = Some("bob".to_string());
+        sub.password = Some("sub-secret".to_string());
+        store.upsert(sub, 3_000).expect("sub");
+
+        // Exact match wins over the subdomain's parent.
+        let exact = store
+            .get_for_origin("https://login.pelda.hu", 4_000)
+            .expect("lookup")
+            .expect("known");
+        assert_eq!(exact.password.as_deref(), Some("sub-secret"));
+
+        // A subdomain page falls back to the parent's credential.
+        let parent = store
+            .get_for_origin("https://mail.pelda.hu", 5_000)
+            .expect("lookup")
+            .expect("known");
+        assert_eq!(parent.password.as_deref(), Some("root-secret"));
+
+        assert!(store
+            .get_for_origin("https://masik.hu", 6_000)
+            .expect("lookup")
+            .is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 }
