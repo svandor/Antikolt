@@ -96,7 +96,9 @@ pinned:true})` → a kártya megnyílik, de a rövidített óra lejárta után *
 > `session_rules` op + panel-szerkesztő (óra, app-zárnál törlés, Mentés). `--rulestest`: `rules_ttl_ms=7200000`,
 > `rules_lock_wipe=true`, `rules_refused=refused`, `rules_reread_ttl_ms=7200000`, `session_rules=ok`.
 > A szerkesztőmezők a mag állapotát mutatják (`panel_ttl_hours=2`, `panel_lock_wipe=true`), a konténer-alapértelmezés változatlanul megy vissza.
-> **Ami hátra van:** kártyánkénti (origin-szintű) felülírás.
+> **Kártyánkénti (origin-szintű) felülírás: kész és mérve** (121. szelet) — a panel legördülője `session_upsert`-tel
+> írja a sor `policy`-ját, a mag `SessionRules::resolve`-olja; a `a_rows_own_policy_overrides_the_container_default`
+> teszt bizonyítja mindkét irányt (wipe felülírja a sweepet, keep felülírja a wipe-ot).
 
 ## 4. Előnézetek
 
@@ -309,8 +311,8 @@ normalizálva, a keresés ékezet nélkül is látja), és a **munkaterületek**
 
 - **Virtualizált rács 500 kártyával** — **mérve** (`--gridscaletest`): 503 kártya, 13 renderelt DOM-elem, 20 ms
   az első renderig; a görgetéses ugrás ebben a harnessben nem mérhető (nincs layout-magasság), ezt a teszt
-  kimondja. Nyitott: szerkeszthető kezdőlap + `<antikolt-card>`, konténerenkénti engedély/proxy, kártyánkénti
-  munkamenet-felülírás.
+  kimondja. Nyitott: konténerenkénti engedély/proxy (a szerkeszthető kezdőlap és a kártyánkénti munkamenet-
+  felülírás kész: 106./117./118. és 121. szelet).
 - **Munkaterületek** — **kész** (ADR-056/057/058, `--workspacetest`): a fül-sor a mag `workspaces.json`-jából jön
   (`workspaces_list`/`workspace_upsert`/`workspace_delete`), a kártya `workspace` mezője **tárolt adat** (a régi
   `index > 12` kitalálás javítva), a fül-soron van életciklus: `＋`, dupla kattintás = átnevezés, `×` = törlés (a

@@ -469,6 +469,48 @@ mod tests {
     }
 
     #[test]
+    fn a_rows_own_policy_overrides_the_container_default() {
+        let dir = scratch_dir();
+        let mut store = SessionStore::open(&dir).expect("open");
+        // The container default is sweep (keep the login), but one origin is a bank: it asked for wipe.
+        store.set_rules(rules_with_ttl(DAY_MS)).expect("set rules");
+        let mut bank = row("https://bank.example");
+        bank.policy = SessionPolicy::Wipe;
+        store.upsert(bank).expect("upsert the wipe");
+
+        let due = store.due(DAY_MS, false).expect("due");
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].session.origin, "https://bank.example");
+        // The per-origin wipe wins over the sweep default: it signs the user out.
+        assert!(
+            due[0].plan.signs_out(),
+            "a per-origin wipe must sign out even when the container default is sweep"
+        );
+        assert!(
+            due[0].plan.storage_types().contains(&"cookies"),
+            "wipe must clear the cookies"
+        );
+
+        // The inverse direction too: a keep override wins over a wipe container default.
+        let mut wipe_rules = rules_with_ttl(DAY_MS);
+        wipe_rules.container_default = SessionPolicy::Wipe;
+        store.set_rules(wipe_rules).expect("wipe default");
+        let mut kept = row("https://keep.example");
+        kept.policy = SessionPolicy::Keep;
+        store.upsert(kept).expect("upsert the keep");
+        let due_after = store.due(DAY_MS, false).expect("due");
+        assert!(
+            !due_after
+                .iter()
+                .any(|entry| entry.session.origin == "https://keep.example"),
+            "a per-origin keep clears nothing (no plan), even when the container default is wipe"
+        );
+
+        drop(store);
+        fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
     fn closing_a_row_removes_it_once() {
         let dir = scratch_dir();
         let mut store = SessionStore::open(&dir).expect("open");

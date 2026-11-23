@@ -3,6 +3,29 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százhuszonegyedik szelet) — a kártyánkénti munkamenet-felülbírálás igazolása
+
+Az ADR-039 nyitott tétele lezárva: a kártyánkénti (origin-szintű) munkamenet-felülbírálás a kódban már benne volt
+(a panel legördülője → `session_upsert`, a mag `SessionRules::resolve`-ol), de **nem volt teszt, ami bizonyítja**,
+hogy egy origin saját `wipe`-ja felülírja a konténer `sweep` alapértelmezését. Ez most megvan.
+
+### Mi változott
+
+- **Rust-teszt `a_rows_own_policy_overrides_the_container_default`:** egy `wipe` sor a `sweep` alapértelmezés alatt
+  is kijelentkeztet (törli a sütiket), és egy `keep` sor a `wipe` alapértelmezés alatt sem töröl semmit (nincs terv).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (54 önteszt + check-repo)
+cargo test                  → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A konténerenkénti engedély/proxy (F3), a munkaterület fogd-és-vidd, a profil-költöztetés gombja, az OAuth
+  összekötése; az emberi kiadási tételek.
+
 ## 2026-11-22 (százhuszadik szelet) — a raszter oldalarány-megőrző illesztése (F6)
 
 A raszter már nem nyúlik: a `raster_full_`-t a shell az ablakhoz képest **aránytartóan** méretezi
