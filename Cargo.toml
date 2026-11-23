@@ -24,6 +24,11 @@ thiserror = "1"
 aes-gcm = "0.10"
 argon2 = "0.5"
 zeroize = "1"
+# TOTP (RFC 6238): HMAC over SHA-1/256/512 and base32 for the stored secret.
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+data-encoding = "2"
 
 [profile.release]
 lto = "thin"

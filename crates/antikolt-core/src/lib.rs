@@ -24,6 +24,7 @@ pub mod profile;
 pub mod secrets;
 pub mod session;
 pub mod snapshot;
+pub mod totp;
 pub mod vault;
 
 /// Crate version, surfaced in the About dialog and in diagnostics.

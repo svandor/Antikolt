@@ -3,6 +3,26 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-084 — A TOTP a magban van, RFC 6238, és a kódot a szolgáltatás számolja (2026-11-23)
+
+**Kontextus:** a széf tárolója (ADR-083) már tartja a TOTP-titkot (`totp_secret_ct`), de a kód
+előállítása hiányzott. A TOTP a „jelszavak + TOTP + passkey" döntés középső lába, és a kódnak a mag
+oldalán kell születnie: a titok soha nem hagyhatja el a core-t.
+
+**Döntés:**
+
+1. **RFC 6238 a magban** (`totp.rs`): `totp_code(secret, digits, period, algorithm, now_ms)` — a
+   HMAC-SHA-1/256/512 + dinamikus csonkolás (RFC 4226) + base32 titok; a `now_ms` paraméter, így az
+   RFC vektorai óra nélkül tesztelhetők.
+2. **A kódot a szolgáltatás számolja** (`vault_totp` IPC): a shell az `id_of_credential`-t adja, a
+   core megnyitja a titkot és visszaadja a `{code, seconds_remaining}`-et — a titok a core-ban marad.
+3. **A paraméterek a `totp_params_json`-ben** (digits 6|8, period, algorithm), az RFC-alapértékekkel
+   (6 jegy, 30 s, SHA-1).
+
+**Következmény:** (+) a TOTP-kód mérve az RFC 6238 vektoraival (a „klasszikus csapda" elkerülve: a
+vektorok algoritmusonként más titkot használnak, 20/32/64 bájt); (+) a titok a core-ban marad;
+(−) a passkey (WebAuthn) és a CSV-import még külön szeletek. `cargo test` most **180** zöld.
+
 ## ADR-083 — A széf tárolója SQLite-only: a titkoknak nincs JSON-exportja (2026-11-23)
 
 **Kontextus:** az ADR-082 bekötötte a titkosítást (AES-256-GCM + Argon2id + DPAPI), de a széf még nem

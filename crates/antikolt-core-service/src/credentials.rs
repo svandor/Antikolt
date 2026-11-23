@@ -353,6 +353,40 @@ impl CredentialStore {
         Ok(Some(plain))
     }
 
+    /// The current TOTP code for a credential, plus the seconds until it rotates. `None` = unknown id.
+    pub fn totp_code_for(
+        &mut self,
+        id: &str,
+        now_ms: u64,
+    ) -> Result<Option<(String, u64)>, CredentialError> {
+        self.vault.touch(now_ms);
+        let cipher = self.require_open()?;
+        let Some(credential) = self.db.credential(id)? else {
+            return Ok(None);
+        };
+        let Some(secret_blob) = credential.totp_secret_ct.as_ref() else {
+            return Err(CredentialError::Rejected(
+                "this credential has no TOTP secret",
+            ));
+        };
+        let aad = record_aad(&credential.origin, &credential.id);
+        let secret = String::from_utf8(
+            cipher
+                .open(&aad, secret_blob)
+                .map_err(|_| CredentialError::Locked)?,
+        )
+        .map_err(|_| CredentialError::Rejected("the sealed record is not UTF-8"))?;
+        let (digits, period_seconds, algorithm) =
+            totp_params(credential.totp_params_json.as_deref());
+        let code =
+            antikolt_core::totp::totp_code(&secret, digits, period_seconds, algorithm, now_ms)
+                .map_err(|_| CredentialError::Rejected("cannot compute a TOTP code"))?;
+        let step_ms = period_seconds * 1000;
+        let seconds_remaining = (step_ms - (now_ms % step_ms)) / 1000;
+        self.db.touch_credential(id, now_ms as i64)?;
+        Ok(Some((code, seconds_remaining)))
+    }
+
     /// Drop one credential. Requires the vault to be open (a secret operation, ADR-010).
     pub fn delete(&mut self, id: &str, now_ms: u64) -> Result<bool, CredentialError> {
         self.vault.touch(now_ms);
@@ -389,6 +423,29 @@ fn meta_of(credential: Credential) -> CredentialMeta {
         label: credential.label,
         last_used_at: credential.last_used_at,
     }
+}
+
+/// The TOTP parameters from `totp_params_json`, with the RFC 6238 defaults (6 digits, 30 s, SHA-1).
+fn totp_params(json: Option<&str>) -> (u32, u64, antikolt_core::totp::TotpAlgorithm) {
+    let value: serde_json::Value = json
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let digits = value
+        .get("digits")
+        .and_then(|v| v.as_u64())
+        .filter(|d| *d == 6 || *d == 8)
+        .unwrap_or(6) as u32;
+    let period = value
+        .get("period")
+        .and_then(|v| v.as_u64())
+        .filter(|p| *p > 0)
+        .unwrap_or(30);
+    let algorithm = value
+        .get("algorithm")
+        .and_then(|v| v.as_str())
+        .and_then(antikolt_core::totp::TotpAlgorithm::parse)
+        .unwrap_or(antikolt_core::totp::TotpAlgorithm::Sha1);
+    (digits, period, algorithm)
 }
 
 /// DPAPI-wrapped key material; on non-Windows there is no platform key store, so the no-password
@@ -561,6 +618,30 @@ mod tests {
         assert!(store.tick(2_000 + 120_000 + 300_000), "5 idle minutes lock");
         assert!(!store.status(2_000 + 120_000 + 300_000).unlocked);
         assert!(store.get(&meta.id, 2_000 + 120_000 + 300_001).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn totp_code_for_reproduces_the_rfc_vector_through_the_store() {
+        let dir = scratch_dir();
+        let mut store = CredentialStore::open(&dir).expect("open");
+        store.unlock(Some("pw"), 1_000).expect("unlock");
+
+        let mut input = sample();
+        input.kind = "totp".to_string();
+        input.username = None;
+        input.password = None;
+        input.totp_secret = Some("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_string());
+        input.totp_params = Some(serde_json::json!({ "digits": 8 }));
+        let meta = store.upsert(input, 2_000).expect("create");
+
+        // RFC 6238 appendix B, T = 59 s, 8 digits, SHA-1 → 94287082.
+        let (code, remaining) = store
+            .totp_code_for(&meta.id, 59_000)
+            .expect("code")
+            .expect("known");
+        assert_eq!(code, "94287082");
+        assert!(remaining <= 30, "the code rotates within one period");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

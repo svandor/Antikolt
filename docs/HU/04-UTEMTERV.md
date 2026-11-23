@@ -77,7 +77,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 ### M4 — „Nem kell jelszót gépelnem" (F4 vége)
 - [ ] Széf (DEK/KEK, opcionális mesterjelszó), auto-zárolás, KDBX export. — a **titkosítás + a tároló** kész (AES-256-GCM + Argon2id + DPAPI, ADR-082/083, `secrets.rs` + `credentials.rs`, `vault_*` IPC); a KDBX-export és a kitöltés nyitott
 - [ ] Kitöltés izolált világban, origin-kötéssel, natív setterrel.
-- [ ] TOTP + vágólap-tisztítás.
+- [ ] TOTP + vágólap-tisztítás. — a **TOTP-kód** kész (RFC 6238, ADR-084, `totp.rs` + `vault_totp`); a vágólap-tisztítás nyitott
 - [ ] Belépési forgatókönyv + kézi átadás CAPTCHA esetén.
 
 ### M4b — passkey (F4b, v1.1)

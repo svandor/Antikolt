@@ -1047,6 +1047,29 @@ fn handle(
                 Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
             }
         }
+        "vault_totp" => {
+            let Some(credential_id) = request.get("id_of_credential").and_then(Value::as_str)
+            else {
+                return (
+                    error_reply(id, "invalid_argument", "vault_totp needs id_of_credential"),
+                    true,
+                );
+            };
+            match vault.totp_code_for(credential_id, now_ms()) {
+                Ok(Some((code, seconds_remaining))) => (
+                    ok_reply(
+                        id,
+                        json!({ "code": code, "seconds_remaining": seconds_remaining }),
+                    ),
+                    true,
+                ),
+                Ok(None) => (
+                    error_reply(id, "not_found", "no credential with that id"),
+                    true,
+                ),
+                Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
+            }
+        }
         "shutdown" => {
             // One last export of all four documents, so the readable copies next to the database are never older than
             // the last write. A failure is logged rather than refusing the shutdown: the rows are already on disk.

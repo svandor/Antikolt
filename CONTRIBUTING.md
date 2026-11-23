@@ -18,7 +18,7 @@ strict on a few points.
 ```sh
 git clone https://github.com/antikolt/antikolt
 cd antikolt
-cargo test --all          # 174 tests
+cargo test --all          # 180 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 node --check home/app.js

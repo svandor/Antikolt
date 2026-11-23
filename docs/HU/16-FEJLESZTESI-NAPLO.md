@@ -3,6 +3,33 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvenhetedik szelet) — TOTP-kódgenerálás (RFC 6238, M7)
+
+A „jelszavak + TOTP + passkey" döntés középső lába: a széf már tárolja a TOTP-titkot (146. szelet), most
+már **kódot is számol** belőle — a core-ban, így a titok sosem hagyja el a magot.
+
+### Mi változott
+
+- **`crates/antikolt-core/src/totp.rs` (új):** `totp_code` — RFC 6238 (HMAC-SHA-1/256/512 + dinamikus
+  csonkolás, RFC 4226) + base32 titok; a `now_ms` paraméter, így az RFC vektorai óra nélkül futnak.
+- **`crates/antikolt-core-service/src/credentials.rs`:** `totp_code_for` + `totp_params` (az RFC-alapérték:
+  6 jegy, 30 s, SHA-1).
+- **`crates/antikolt-core-service/src/main.rs`:** `vault_totp` IPC — `id_of_credential` → `{code,
+  seconds_remaining}`; a titok megnyitása a core-ban történik.
+- **Függőségek:** `hmac`, `sha1`, `sha2`, `data-encoding`.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (71 ellenőrzés)
+cargo test         → 180 zöld: 93 + 61 + 10 + 1 + 15   (a +6 TOTP-teszt: 5 RFC-vektor + 1 store-végpont)
+```
+
+### Ami továbbra is nyitott
+
+- A passkey (WebAuthn virtuális hitelesítő); a Chrome/Firefox CSV-import; a shell-vault felület +
+  izolált világú kitöltés; a PiP (views-architektúra-váltás).
+
 ## 2026-11-23 (száznegyvenhatodik szelet) — a széf tárolója: credential tábla + vault IPC (M7)
 
 A jelszó-boltozat második fele: a titkosítás (145. szelet) után most már **tárol** is. A `credential`
