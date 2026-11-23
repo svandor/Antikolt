@@ -55,7 +55,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Munkamenetek | `--sessionpanel`, `--scrollbook`, `--wipetest`, `--cleanuptest` | látszik, mi van életben, mennyi RAM/lemez; `keep`/`sweep`/`wipe` végrehajtás; a „Politika" oszlop legördülővel **kártyánként (origin-szinten)** felülírja a konténer-alapértelmezést (`session_panel=ok`) |
 | Bejelentkezési popup, profil-gomb, fogd-és-vidd | `--partitiontest`, `--profiletest`, `--workspacetest` | popup (ADR-073): gesztus → valódi ablak a kártya partíciójában, 60 s, a hibernálás felfüggesztve (a gesztus-út `not-measurable`); profil-gomb: natív `QFileDialog` a `profile_export`/`import` fölött (a dialógus `not-measurable`, az út `--profiletest`-tel mérve); fogd-és-vidd: kártya → munkaterület-fül a `<select>` mellett (ADR-058) |
 | Előnézet | `--preview*` | a háttér-worker szabályai (ADR-041) és az ütemező mérve |
-| Memória | `--metricstest`, `--memorytest`, `--prefstest`, `--memorypressuretest`, `--memorypressuree2etest`, `--memoryreport` | az engine working set-je mérve (`engine_working_set_bytes`), a büdzsé a profil `memory_budget_mb`-je (`budgetBytes`); a rács used/budget sávot rajzol, és `mem-over`/`mem-warn`/`mem-hard` jelzéssel mutatja a nyomást (a híd átadja a `overBudget`/`pressure`-t, 126. szelet); a kártya `memory_bytes`-e a fagyasztáskori working set (séma 0008); a `system.memory` `overBudget` jele a médiaminőség-korlát alapja, és a profil `warn`/`hard` sávjaiból `pressure` (normal/warn/hard) is számítódik (ADR-020, 124. szelet); a `--memoryreport` a teljes vezérlő-állapotot (profil + büdzsé + working set + kártyánkénti memória + nyomás) egyben írja |
+| Memória | `--metricstest`, `--memorytest`, `--prefstest`, `--memorypressuretest`, `--memorypressuree2etest`, `--memoryhibernatetest`, `--memoryreport` | az engine working set-je mérve (`engine_working_set_bytes`), a büdzsé a profil `memory_budget_mb`-je (`budgetBytes`); a rács used/budget sávot rajzol, és `mem-over`/`mem-warn`/`mem-hard` jelzéssel mutatja a nyomást (a híd átadja a `overBudget`/`pressure`-t, 126. szelet); a kártya `memory_bytes`-e a fagyasztáskori working set (séma 0008); a `system.memory` `overBudget` jele a médiaminőség-korlát alapja, és a profil `warn`/`hard` sávjaiból `pressure` (normal/warn/hard) is számítódik (ADR-020, 124. szelet), és a `hard` sáv elérése hibernálja az élő kártyát (ADR-020, 127. szelet); a `--memoryreport` a teljes vezérlő-állapotot (profil + büdzsé + working set + kártyánkénti memória + nyomás) egyben írja |
 | Tálca, napló, téma | `--traytest`, `--logtest`, `--themetest` | a napló nem ír feleslegesen, a témák a helyes színt adják |
 
 ## Ami nyitva van (tudatosan, nem elfelejtve)
@@ -73,8 +73,8 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
    médiaminőség-korlát **jele**, a profil **előnézet-frissítése**, a **hangolási riport**, a **motor-élettartam
    (T1/T2) bekötése**, a **motor leállítás/újraindítás ciklusa**, a **rács raszterizálása**, a **raszter-kezdőlap
    mód**, annak **automatikus aktiválása**, a **kattintás-leképezés**, a **raszter megjelenítése + kattintás-horog**
-   és az **oldalarány-megőrző illesztés** kész (ADR-074/020, 102–120. szelet), a `warn`/`hard` sávokból pedig már `pressure` jel számítódik (ADR-020, 124. szelet); a profil **többi dimenziójának**
-   tényleges vezérlő-művelete (a videófelbontás-korlát és a `warn`/`hard` szintre kötött akció) marad hátra (az ütemterv 3–4 hetes tétele).
+   és az **oldalarány-megőrző illesztés** kész (ADR-074/020, 102–120. szelet), a `warn`/`hard` sávokból pedig már `pressure` jel számítódik (ADR-020, 124. szelet), és a `hard` sáv hibernálja az élő kártyát (ADR-020, 127. szelet); a profil **többi dimenziójának**
+   tényleges vezérlő-művelete (a `warn` szintre kötött akció és a videófelbontás-korlát) marad hátra (az ütemterv 3–4 hetes tétele).
 
 ## Amihez emberi lépés kell (nem kód)
 

@@ -313,12 +313,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             live_card_pinned_ = pending_pinned_;
             pending_pinned_ = false;
             armIdleTimer();
+            memory_check_->start();
         }
     });
     connect(card_, &LiveCard::surfaceDetached, this, [this](qint64 surface) {
         surface_ = 0;
         home_surface_ = 0;
         live_card_pinned_ = false;
+        if (memory_check_ != nullptr) {
+            memory_check_->stop();
+        }
         setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
         // A card went back to disk: the engine is now idle, so the raster home's clock starts (T2). Skipped while
         // already in the raster home (enterRasterMode detaches too, and must not re-arm itself).
@@ -339,6 +343,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     idle_->setSingleShot(true);
     idle_->setInterval(static_cast<int>(idle_hibernate_ms_));
     connect(idle_, &QTimer::timeout, this, &MainWindow::onIdleTimeout);
+    // The memory-pressure governor (F6, ADR-020): a repeating sample while a card is live. The factory 15 s keeps
+    // the cost trivial; `ANTIKOLT_MEMORY_CHECK_MS` shortens it so the self test does not wait a quarter minute.
+    const int memory_check_ms = qEnvironmentVariableIntValue("ANTIKOLT_MEMORY_CHECK_MS");
+    memory_check_ = new QTimer(this);
+    memory_check_->setInterval(memory_check_ms > 0 ? memory_check_ms : 15000);
+    connect(memory_check_, &QTimer::timeout, this, &MainWindow::checkMemoryPressure);
     // Activity is what the user does, not what the engine reports: mouse and keyboard, wherever they
     // land inside the shell. The page's own input arrives in the engine's process, so the card also
     // wakes the clock through the bridge (a page that is not touched never sends anything).
@@ -513,6 +523,27 @@ void MainWindow::onIdleTimeout() {
             return_to_grid_ = true;
             freezeCard();
         });
+}
+
+void MainWindow::checkMemoryPressure() {
+    // The "aggressive action" (F6, ADR-020): a live card whose working set is at or above the hard band is treated
+    // like the idle timeout — the same guards (pinned, popup, media) and the same freeze path, only the trigger
+    // differs. The measure is the same `metrics` the page's memory figure uses (ADR-036).
+    if (surface_ == 0 || surface_ == home_surface_ || !card_->hasSurface() || hibernating_ ||
+        live_engine_ == nullptr || !live_engine_->isRunning()) {
+        return;
+    }
+    live_engine_->metrics(surface_, [this](const QJsonObject& measured, const QString& error) {
+        if (!error.isEmpty()) {
+            return;
+        }
+        const qint64 used = static_cast<qint64>(
+            measured.value(QStringLiteral("engine_working_set_bytes")).toString().toLongLong());
+        if (memory_hard_bytes_ > 0 && used >= memory_hard_bytes_) {
+            setStatus(QStringLiteral("memória-nyomás: a kártya a kemény sáv fölött"));
+            onIdleTimeout();
+        }
+    });
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {

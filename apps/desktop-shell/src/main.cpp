@@ -2553,6 +2553,76 @@ int runMemoryPressureE2eCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+int runMemoryHibernateCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    // The aggressive action (F6, ADR-020): force the hard band to 1 MiB and the check clock to 1 s, so a freshly
+    // opened card (~100 MiB working set) is hibernated by the governor, not by the idle timer (which stays long).
+    qputenv("ANTIKOLT_MEMORY_HARD_BYTES", "1048576");
+    qputenv("ANTIKOLT_MEMORY_CHECK_MS", "1000");
+    qputenv("ANTIKOLT_HIBERNATE_MS", "60000");
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    EngineClient* client = window.engine();
+    QEventLoop loop;
+    qint64 home_surface = 0;
+    qint64 card_surface = 0;
+    bool home_loaded = false;
+    bool closed = false;
+
+    QObject::connect(client, &EngineClient::surfaceClosed, &loop, [&](qint64 id) {
+        if (id == card_surface) {
+            closed = true;
+            out << "card_closed=" << id << '\n';
+            loop.quit();
+        }
+    });
+    QObject::connect(client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int) {
+                         if (!home_loaded && url.startsWith(QStringLiteral("file:"))) {
+                             home_loaded = true;
+                             home_surface = id;
+                             out << "home_loaded=" << url << '\n';
+                             // Click an *unpinned* card, the same way the lifecycle test does: the memory governor
+                             // reuses the idle timeout's guards, and a pinned card must stay alive.
+                             QTimer::singleShot(500, &loop, [&, id] {
+                                 client->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "(function(){var els=document.querySelectorAll('#viewport "
+                                         "antikolt-card');for(var i=0;i<els.length;i++){if(els[i].card"
+                                         "&&!els[i].card.pinned){els[i].click();return 'clicked';}}"
+                                         "return 'no-unpinned-card';})()"),
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         const bool clicked = error.isEmpty() &&
+                                                             reply.value(QStringLiteral("value")).toString() ==
+                                                                 QStringLiteral("clicked");
+                                         out << "card_click=" << (clicked ? "ok" : "FAILED") << '\n';
+                                     });
+                             });
+                         }
+                     });
+    QObject::connect(client, &EngineClient::surfaceCreated, &loop, [&](qint64 id) {
+        if (!home_loaded || id == home_surface || card_surface != 0) {
+            return;
+        }
+        card_surface = id;
+        out << "card_surface=" << id << '\n';
+    });
+
+    QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    out << "memory_hibernate=" << (closed ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return closed ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -9267,6 +9337,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("memorypressuree2etest"),
         QStringLiteral("Prove the pressure signal end to end against a forced band, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption memoryhibernatetest(
+        QStringLiteral("memoryhibernatetest"),
+        QStringLiteral("Prove the hard band hibernates the live card (F6), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9351,6 +9425,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(containerpolicytest);
     parser.addOption(memorypressuretest);
     parser.addOption(memorypressuree2etest);
+    parser.addOption(memoryhibernatetest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9545,6 +9620,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(memorypressuree2etest)) {
         return runMemoryPressureE2eCheck(parser.value(memorypressuree2etest));
+    }
+
+    if (parser.isSet(memoryhibernatetest)) {
+        return runMemoryHibernateCheck(parser.value(memoryhibernatetest));
     }
 
     if (parser.isSet(enginerestarttest)) {

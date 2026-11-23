@@ -3,6 +3,35 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonhetedik szelet) — a kemény sáv hibernálja az élő kártyát (F6)
+
+A 124–126. szelet a `pressure` jelet építette és a rácson láthatóvá tette; most a **művelet** jött: a
+„hard = agresszív akció" (ADR-020). Ha az élő kártya mért working set-je eléri a kemény sávot, a shell ugyanazon az
+úton hibernálja, mint a tétlenség-időzítő — ugyanazok az őrzők (kitűzött, popup, média), csak a kiváltó más.
+
+### Mi változott
+
+- **`main_window.{h,cpp}` — `checkMemoryPressure()` + `memory_check_`:** ismétlődő mintaóra, amely élő kártyánál a
+  `metrics`-szel méri a working set-et, és a `memory_hard_bytes_` elérésekor az `onIdleTimeout`-ot hívja (a
+  `freezeCard` út közös). A gyári 15 s elhanyagolható; `ANTIKOLT_MEMORY_CHECK_MS` rövidíti a teszthez. A kártya
+  leválásakor az óra leáll.
+- **`--memoryhibernatetest` (új):** 1 MiB-os kemény sáv + 1 s mintaóra + hosszú tétlenség-ablak → a frissen nyitott
+  kártya (~100 MiB) a governor-tól megy lemezre, nem a tétlenségtől.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1     → ALL SELF TESTS PASSED (58 ellenőrzés mind „ok", köztük a memoryhibernatetest és a check-repo)
+--memoryhibernatetest  → home_loaded=file:///…/home/index.html · card_click=ok · card_surface=2 ·
+                         card_closed=2 · memory_hibernate=ok
+cargo test              → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A `warn` szint hatása (a háttér-preview szüneteltetése) és a `video_max_height` médiaminőség-korlátja; az OAuth
+  összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonhatodik szelet) — a rács mutatja a memória-nyomást, és a híd megtalálva (F6)
 
 A 125. szelet `pressure` jele a **lapig** most ért el — és közben kiderült, hogy eddig **nem ért el**: a híd

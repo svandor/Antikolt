@@ -315,6 +315,9 @@ private:
     void noteActivity();
     /// The clock ran out: hibernate the card, unless it must stay alive (playing media).
     void onIdleTimeout();
+    /// The memory governor's aggressive action (F6, ADR-020): the live card's working set at or above the hard
+    /// band is treated like the idle timeout — the same guards and freeze path, only the trigger differs.
+    void checkMemoryPressure();
     void setStatus(const QString& text);
 
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -343,6 +346,9 @@ private:
     /// The hibernation clock (docs/HU/02 §4.2). Ten minutes of no user activity puts the live card
     /// back on disk, which is the whole memory promise in one timer.
     QTimer* idle_ = nullptr;
+    /// The memory-pressure check clock (F6, ADR-020): a repeating timer that, while a card is live, samples its
+    /// working set against the hard band. `ANTIKOLT_MEMORY_CHECK_MS` shortens it for the self test.
+    QTimer* memory_check_ = nullptr;
     /// True while the card in front is being hibernated, so a late reply cannot re-arm the clock.
     bool hibernating_ = false;
     /// Set when the idle timeout hibernated the card: the grid comes back once the surface is gone,
