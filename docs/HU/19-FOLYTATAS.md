@@ -34,7 +34,7 @@ git status                  →  tiszta munkafa, minden pusholva (origin/main)
 | OAuth összekötés | `main_window.cpp` (popup, 02-ARCH §8.5) | a mechanizmus kész, a bejelentkezési gesztus-út a harnessben nem kattintható | `not-measurable` gesztus; a kész mechanizmus már mért |
 | `sha256` blobtár | **kész** (ADR-077, 137. szelet) | a preview-név a tartalom hash-e (`previewContentName`, Qt `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből | `--previewhashtest` (publikus vektorok), `--previewgentest`/`--previewworkertest` (`preview_content_addressed=ok`) |
 | PiP | motor (CEF 158) | a CEF 158 PiP-je **views-alapú** (`CefBrowserViewDelegate`), a shell ablakos (nem views) API-t használ — valószínűleg architektúra-váltás kell, előbb döntés | — |
-| HU/EN felület | **chrome kész** (ADR-078, 138. szelet), a rács nyitott | `ui/language` QSettings + `i18n.h` `uiText` + `setLanguage` (helyben átcímkéz); a **státuszüzenetek és a rács** angolja a következő szelet | `--languagetest`: language_map/default/switch/persist/restore=ok |
+| HU/EN felület | **chrome + rács kész** (ADR-078/079, 138–139. szelet), az inline címkék nyitottak | `ui/language` + `i18n.h` `uiText` + `setLanguage` (chrome); `data-language` + `pushLanguageToGrid` + `home/app.js` `t()` (rács); a kártya inline címkéi és a státuszüzenetek a következő szelet | `--languagetest` + `--gridlangtest`: a chrome és a rács HU/EN vált |
 | Teljes képernyőolvasó-illesztés | külső | képernyőolvasóval (NVDA) manuális | emberi lépés |
 | Kiadás | SignPath, Store | emberi lépés (Partner Center, tanúsítvány) | — |
 

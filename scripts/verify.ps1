@@ -93,6 +93,7 @@ $engineChecks = @(
     # is about request contexts, the proxy preference and the permission policy — no window is needed to prove it.
     @{ Name = 'partitiontest'; Args = @('--partitiontest'); Direct = $true },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
+    @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'lifecycletest'; Args = @('--lifecycletest') },
     @{ Name = 'opentest'; Args = @('--opentest') },
     @{ Name = 'embedtest'; Args = @('--embedtest') },

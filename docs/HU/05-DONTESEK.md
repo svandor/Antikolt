@@ -3,6 +3,27 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-079 — A rács nyelve is a shellt követi (HU/EN), a `data-language` attribútummal (2026-11-23)
+
+**Kontextus:** az ADR-078 a shell **chrome**-át tette válthatóvá; a rács (`home/app.js`) még magyar volt. A
+rács külön folyamatban fut (a motorban), ezért a nyelvet át kell adni neki — ugyanúgy, ahogy a téma (ADR-037)
+már átmegy.
+
+**Döntés:**
+
+1. **A nyelv a `data-language` attribútumban él** a rács `<html>`-jén, a téma `data-theme`-jének mintájára.
+   A shell a `pushLanguageToGrid`-del küldi (load-kor és `setLanguage`-kor), és a `window.antikoltSetLanguage`
+   horgon át kéri a helybeni újrarenderelést.
+2. **A rács a saját karakterláncait egy `t()`-tel fordítja** (`home/app.js`, HU→EN `EN` térkép), a
+   `data-language` alapján; ismeretlen kulcs/nem-`en` a magyar forrást adja vissza. A `system.language` híd
+   a tartalék (ha a push még nem érkezett meg).
+3. **A nyelvváltás újratöltés nélküli a rácson is:** a `setLanguage` újraírja a statikus címkéket (kereső,
+   új kártya gomb) és újrarendereli a lapot (számláló, üres állapot, konténer-legenda, kártyák).
+
+**Következmény:** (+) a rács HU/EN vált, a `--gridlangtest` méri (a kereső placeholder „Keresés" → „Search",
+a `window.antikoltLanguage` tanúja); (−) a kártya **inline** szerkesztőcímkéi („Mentés", „＋címke" az
+`antikolt-card.js`-ben) és a rács statikus aria-címkéi egyelőre magyarok (következő szelet).
+
 ## ADR-078 — A shell nyelve futásidőben váltható (HU/EN), először a chrome (2026-11-23)
 
 **Kontextus:** a felület teljes egészében magyar (a magyar a hiteles nyelv), az angol fordítás a HU/EN nyitott
@@ -1294,6 +1315,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-076 | A `video_max_height` megjelenítési sapka: a motor `set_video_cap` opja nevesített stíluselemmel (`video{max-height:Npx}`), a profil hajtja, a `manual` eltávolítja; a dekódolási felbontás `not-measurable` (a CEF-nek nincs laponkénti korlátja), a hatókör top-level `video` | Elfogadva |
 | ADR-077 | A preview-név a tartalom hash-e (`previewContentName`, `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből; a frissesség-ellenőrzés a tárolt `preview_ref`-re néz | Elfogadva |
 | ADR-078 | A shell nyelve futásidőben váltható (`ui/language` QSettings, default `hu`); `i18n.h` `uiText` HU→EN táblázatból; a `setLanguage` helyben átcímkézi a chrome-ot; a státuszüzenetek és a rács a következő szeletek | Elfogadva |
+| ADR-079 | A rács nyelve is a shellt követi (`data-language` attribútum + `pushLanguageToGrid` + `window.antikoltSetLanguage`); a rács saját `t()`-je (`home/app.js` EN térkép) újratöltés nélkül újrarenderel; a kártya inline címkéi és a statikus aria-címkék a következő szelet | Elfogadva |
 
 ---
 

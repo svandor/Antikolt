@@ -295,6 +295,9 @@ private:
     /// The chrome and the product's own page must never disagree about the theme: the toolbar's buttons are
     /// the user's choice, so the grid follows them (measured: the two used to be separate switches).
     void pushThemeToGrid(qint64 surface);
+    /// Push the shell's language to the grid (i18n, ADR-079): the page owns a `data-language` attribute and
+    /// re-renders its own strings from it, the same way the theme attribute works.
+    void pushLanguageToGrid(qint64 surface);
     void ensureSurface();
     void closeLiveCard();
     void handleBridgeCall(qint64 surface, const QString& method, const QJsonObject& args,

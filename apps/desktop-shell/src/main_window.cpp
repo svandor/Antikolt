@@ -460,6 +460,10 @@ void MainWindow::setLanguage(const QString& language) {
         find_edit_->setAccessibleName(t(QStringLiteral("Keresés az oldalon")));
         find_edit_->setPlaceholderText(t(QStringLiteral("Keresés az oldalon…")));
     }
+    // The grid is the product's own page; its strings follow the same choice (i18n, ADR-079).
+    if (home_surface_ != 0) {
+        pushLanguageToGrid(home_surface_);
+    }
 }
 
 bool MainWindow::trayEnabled() {
@@ -824,6 +828,22 @@ void MainWindow::pushThemeToGrid(qint64 surface) {
         [](const QJsonObject&, const QString&) {});
 }
 
+void MainWindow::pushLanguageToGrid(qint64 surface) {
+    if (engine_ == nullptr || surface == 0) {
+        return;
+    }
+    // The page owns the attribute and re-renders its own strings from it (home/app.js `setLanguage`); the
+    // storage write is the same one its own code does, so a reload keeps the choice. Storage can be denied in a
+    // locked profile — the attribute still applies for this session, hence the try/catch on the page.
+    engine_->evaluate(
+        surface,
+        QStringLiteral("document.documentElement.setAttribute('data-language','%1');"
+                       "try{localStorage.setItem('antikolt.language','%1')}catch(e){}"
+                       "if(window.antikoltSetLanguage){window.antikoltSetLanguage('%1')}")
+            .arg(language_),
+        [](const QJsonObject&, const QString&) {});
+}
+
 QString MainWindow::engineExecutable() {
     const QString fromEnvironment = qEnvironmentVariable("ANTIKOLT_ENGINE");
     if (!fromEnvironment.isEmpty() && QFileInfo::exists(fromEnvironment)) {
@@ -970,6 +990,7 @@ void MainWindow::wireEngine(EngineClient* engine) {
                     // The page starts in the toolbar's theme, not in its own remembered default: one product,
                     // one theme switch (measured: the grid used to come up grey while the chrome was amoled).
                     pushThemeToGrid(surface);
+                    pushLanguageToGrid(surface);
                     pushCardsToGrid(surface);
                     // The grid is the only place the preview worker may run (ADR-041), and its empty frames
                     // are exactly what the worker exists to fill. Scheduled a beat after the push, so the
@@ -1588,6 +1609,14 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
         // asks for it, so a normal run cannot reach it and no page can hang the shell by accident.
         if (qEnvironmentVariableIsSet("ANTIKOLT_BRIDGE_TEST") &&
             method == QStringLiteral("test.hang")) {
+            return;
+        }
+        if (method == QStringLiteral("system.language")) {
+            // The page asks which language the shell speaks, so the grid's own strings agree with the chrome
+            // (i18n, ADR-079). It is the shell's preference, not a page guess.
+            QJsonObject data;
+            data.insert(QStringLiteral("language"), language_);
+            replyToPage(request, data, QString());
             return;
         }
         if (method == QStringLiteral("system.memory")) {

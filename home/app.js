@@ -65,6 +65,35 @@ const PAGE_WORKSPACES = [
 // the shell's push — whichever arrives first.
 let pageWorkspaces = PAGE_WORKSPACES;
 
+// The grid's own strings (i18n, ADR-079). Hungarian is authoritative; the shell pushes `data-language`, and
+// `t()` maps the Hungarian source to English when that attribute says `en`. A missing entry falls back to the
+// Hungarian source, so an untranslated string is never blank.
+const EN = {
+  "cím nélküli kártya": "untitled card",
+  "Új munkaterület": "New workspace",
+  "Munkaterület neve": "Workspace name",
+  "Új konténer": "New container",
+  "Új konténer neve": "New container name",
+  "Konténer neve": "Container name",
+  "Kártyák új konténere": "New container for cards",
+  "＋ konténer": "＋ container",
+  "Nincs a keresésnek megfelelő kártya.": "No cards match the search.",
+  "Keresés": "Search",
+  "Keresés — cím, webcím, jegyzet, címke, oldalszöveg (ékezet nélkül is)":
+    "Search — title, URL, note, tag, page text (diacritics optional)",
+  "Új kártya": "New card",
+  "Új kártya (Ctrl N)": "New card (Ctrl N)",
+  "CEF (beágyazott kártya)": "CEF (embedded card)",
+  "mock bridge (statikus előnézet)": "mock bridge (static preview)",
+};
+const pageLanguage = () => document.documentElement.dataset.language || "hu";
+const t = (hu) => (pageLanguage() === "en" && EN[hu] ? EN[hu] : hu);
+const cardCount = (n) => (pageLanguage() === "en" ? `${n} card${n === 1 ? "" : "s"}` : `${n} kártya`);
+const noResults = (term) =>
+  pageLanguage() === "en"
+    ? `No results for “${term}”. Try fewer words, or clear the search.`
+    : `Nincs találat erre: „${term}”. Próbálj kevesebb szót, vagy töröld a keresést.`;
+
 /** A new card's id: a 26-character ULID-shaped string, so the core's ordering stays lexicographic by creation. */
 function newCardId() {
   const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -180,7 +209,8 @@ function createMockBridge() {
     system: {
       memory: () =>
         Promise.resolve({ usedBytes: 0, budgetBytes: 1024 * 1024 * 1024, engineState: "mock" }),
-      engine: () => Promise.resolve("mock bridge (statikus előnézet)"),
+      engine: () => Promise.resolve(t("mock bridge (statikus előnézet)")),
+      language: () => Promise.resolve(pageLanguage()),
       getLayout: () => Promise.resolve(layout),
     },
   };
@@ -211,7 +241,7 @@ function pageCardFromCore(row, index) {
   const pinned = Boolean(row.pinned);
   return {
     id: String(row.id ?? ""),
-    title: String(row.title ?? "") || String(row.url ?? "") || "cím nélküli kártya",
+    title: String(row.title ?? "") || String(row.url ?? "") || t("cím nélküli kártya"),
     url: String(row.url ?? ""),
     domain: safeDomain(String(row.url ?? "")),
     notes: String(row.notes ?? ""),
@@ -389,6 +419,7 @@ class HomePage {
 
     this.bindEvents();
     this.restoreTheme();
+    this.restoreLanguage();
     await this.refreshSystem();
   }
 
@@ -992,7 +1023,7 @@ class HomePage {
       input.type = "text";
       input.className = "ws-input";
       input.value = this.workspaceEdit.name ?? "";
-      input.placeholder = this.workspaceEdit.mode === "add" ? "Új munkaterület" : "Munkaterület neve";
+      input.placeholder = this.workspaceEdit.mode === "add" ? t("Új munkaterület") : t("Munkaterület neve");
       input.setAttribute("aria-label", input.placeholder);
       const confirm = document.createElement("span");
       confirm.className = "ws-editor-hint";
@@ -1015,8 +1046,8 @@ class HomePage {
       const add = document.createElement("button");
       add.type = "button";
       add.className = "ws-add";
-      add.setAttribute("aria-label", "Új munkaterület");
-      add.title = "Új munkaterület";
+      add.setAttribute("aria-label", t("Új munkaterület"));
+      add.title = t("Új munkaterület");
       add.textContent = "＋";
       add.addEventListener("click", () => this.beginWorkspaceEdit({ mode: "add", name: "" }));
       nav.append(add);
@@ -1136,7 +1167,7 @@ class HomePage {
       chip.className = "legend-chip";
       chip.dataset.container = container.id;
       chip.setAttribute("role", "group");
-      chip.title = `${container.name} — ${count} kártya`;
+      chip.title = `${container.name} — ${cardCount(count)}`;
       const pick = document.createElement("button");
       pick.type = "button";
       pick.className = "legend-pick";
@@ -1191,7 +1222,7 @@ class HomePage {
       input.dataset.containerEdit = edit.mode;
       input.value = edit.name ?? existing.name ?? "";
       input.name = "name";
-      input.placeholder = edit.mode === "add" ? "Új konténer neve" : "Konténer neve";
+      input.placeholder = edit.mode === "add" ? t("Új konténer neve") : t("Konténer neve");
       input.setAttribute("aria-label", input.placeholder);
 
       // Proxy (ADR-071): the mode, and — only for `fixed` — the host, port and bypass list.
@@ -1286,9 +1317,9 @@ class HomePage {
       const add = document.createElement("button");
       add.type = "button";
       add.className = "legend-add";
-      add.setAttribute("aria-label", "Új konténer");
-      add.title = "Új konténer";
-      add.textContent = "＋ konténer";
+      add.setAttribute("aria-label", t("Új konténer"));
+      add.title = t("Új konténer");
+      add.textContent = t("＋ konténer");
       add.addEventListener("click", () => this.beginContainerEdit({ mode: "add", name: "" }));
       this.legendEl.append(add);
     }
@@ -1303,7 +1334,7 @@ class HomePage {
       text.textContent = this.containerMove.error;
       const select = document.createElement("select");
       select.className = "legend-move-target";
-      select.setAttribute("aria-label", "Kártyák új konténere");
+      select.setAttribute("aria-label", t("Kártyák új konténere"));
       for (const container of pageContainers) {
         if (container.id === this.containerMove.id) continue;
         const option = document.createElement("option");
@@ -1497,13 +1528,13 @@ class HomePage {
     this.renderWindow();
 
     const total = this.filtered.length;
-    this.countEl.textContent = total ? `${total} kártya` : "";
+    this.countEl.textContent = total ? cardCount(total) : "";
     this.emptyEl.hidden = total !== 0;
     // The empty state names what was searched for: "nothing" is a statement about the *query*, and the user is
     // about to change it.
     this.emptyEl.textContent = this.searchTerm
-      ? `Nincs találat erre: „${this.searchTerm}”. Próbálj kevesebb szót, vagy töröld a keresést.`
-      : "Nincs a keresésnek megfelelő kártya.";
+      ? noResults(this.searchTerm)
+      : t("Nincs a keresésnek megfelelő kártya.");
     this.windowEl.hidden = total === 0;
   }
 
@@ -1697,6 +1728,46 @@ class HomePage {
       // ignore
     }
     this.setTheme(theme);
+  }
+
+  // The page's own strings follow the shell's language (i18n, ADR-079). The shell pushes `data-language` and
+  // calls `window.antikoltSetLanguage`; a static preview (no shell) reads the remembered choice instead.
+  applyStaticLabels() {
+    const search = this.searchEl;
+    if (search) {
+      search.placeholder = t("Keresés — cím, webcím, jegyzet, címke, oldalszöveg (ékezet nélkül is)");
+      search.setAttribute("aria-label", t("Keresés"));
+    }
+    const add = document.getElementById("card-add");
+    if (add) {
+      add.setAttribute("aria-label", t("Új kártya"));
+      add.title = t("Új kártya (Ctrl N)");
+    }
+  }
+
+  setLanguage(lang) {
+    const next = lang === "en" || lang === "hu" ? lang : "hu";
+    document.documentElement.dataset.language = next;
+    try {
+      localStorage.setItem("antikolt.language", next);
+    } catch {
+      // A locked-down profile may forbid storage; the language still applies for this session.
+    }
+    this.applyStaticLabels();
+    // The tab row (its add button) and the filtered view (count, empty state, legend, cards) all read `t()`:
+    // re-render them in place, no reload.
+    this.renderWorkspaces();
+    this.applyFilter();
+  }
+
+  restoreLanguage() {
+    let lang = "hu";
+    try {
+      lang = localStorage.getItem("antikolt.language") || document.documentElement.dataset.language || "hu";
+    } catch {
+      lang = document.documentElement.dataset.language || "hu";
+    }
+    this.setLanguage(lang);
   }
 
   async refreshSystem() {
@@ -1904,7 +1975,7 @@ function withNativeOpen(mock) {
       ...mock.system,
       engine: () =>
         Promise.resolve(
-          nativeBridge() ? "CEF (beágyazott kártya)" : "mock bridge (statikus előnézet)",
+          nativeBridge() ? t("CEF (beágyazott kártya)") : t("mock bridge (statikus előnézet)"),
         ),
       // The memory figure is measured by the engine (ADR-036), not estimated here. `overBudget` and `pressure` ride
       // the same reply (F6, ADR-020): the bridge must pass them through, or the grid's memory hint and pressure
@@ -1922,6 +1993,14 @@ function withNativeOpen(mock) {
           overBudget: Boolean(answer?.overBudget),
           pressure: answer?.pressure || "normal",
         };
+      },
+      language: async () => {
+        const native = nativeBridge();
+        if (!native?.request) {
+          return mock.system.language();
+        }
+        const answer = await native.request("system.language", {});
+        return answer?.language || "hu";
       },
     },
   };
@@ -1988,6 +2067,10 @@ window.antikoltArmedDelete = () => page.armedDelete ?? null;
 
 // The rename path direct (ADR-062), so a caller (a test, or a future menu item) does not have to fake a double click.
 window.antikoltRenameCard = (cardId, title) => page.setCardTitle(cardId, title);
+
+// The shell's language push (i18n, ADR-079): the same choice that re-labels the chrome re-renders the grid.
+window.antikoltSetLanguage = (lang) => page.setLanguage(lang);
+window.antikoltLanguage = () => pageLanguage();
 
 // The URL's own door (ADR-063), the same shape.
 window.antikoltCardUrl = (cardId, url) => page.setCardUrl(cardId, url);

@@ -3,6 +3,38 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonkilencedik szelet) — a rács nyelve is a shellt követi (HU/EN, M7)
+
+Az ADR-078 a shell chrome-át tette válthatóvá; ez a szelet a **rácsot** (`home/app.js`) köti rá ugyanarra a
+nyelvre — így a termék fő felülete is angolul beszél, ha a felhasználó azt választja.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/main_window.{h,cpp}`:** `pushLanguageToGrid` + a `system.language` híd; a nyelv a
+  `data-language` attribútumon át megy a rácsra (a téma `data-theme`-jének mintájára), load-kor és
+  `setLanguage`-kor, a `window.antikoltSetLanguage` horgon át újrarenderelve.
+- **`home/app.js`:** `t()` + HU→EN `EN` térkép; `setLanguage`/`restoreLanguage` (a `data-language`-ből és a
+  localStorage-ból); a számláló, az üres állapot, a konténer-legenda, a munkaterület/konténer gombok és a
+  kereső placeholder angolja.
+- **`home/index.html`:** `data-language="hu"` kezdőérték.
+- **`--gridlangtest` (új):** a kereső placeholder „Keresés" → „Search" váltását és a `window.antikoltLanguage`
+  tanúját méri — a shell saját `setLanguage` útján.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (69 ellenőrzés mind „ok", köztük a gridlangtest és a check-repo)
+--gridlangtest     → grid_lang_before=hu · grid_lang_after=en · grid_language_witness=en ·
+                     grid_placeholder_after=Search — title, URL, note, tag, page text (diacritics optional)
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A kártya **inline** szerkesztőcímkéi („Mentés", „＋címke" az `antikolt-card.js`-ben) és a rács statikus
+  aria-címkéi; a shell **státuszüzenetei**; a PiP (architektúra-döntés); a teljes képernyőolvasó-illesztés
+  (NVDA); az OAuth összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonnyolcadik szelet) — a shell nyelve váltható (HU/EN), először a chrome (M7, i18n)
 
 A HU/EN felület első szelete: a nyelvváltó beállítás, a fordítási mechanizmus és a shell **chrome**-ának

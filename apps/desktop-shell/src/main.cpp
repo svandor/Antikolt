@@ -1001,6 +1001,98 @@ int runLifecycleCheck(const QString& enginePath) {
 /// embedded card and asked what it is displaying. Neither a screenshot nor the shell's own
 /// bookkeeping is trusted: `window.antikoltGridState()` is the page's own witness, so a push that
 /// never arrived, arrived empty or was overwritten by the sample list all fail here.
+/// Prove the grid follows the shell's language (i18n, ADR-079): the search placeholder is Hungarian by default,
+/// the shell's `setLanguage("en")` pushes the choice to the grid and re-renders it, and the page's own witness
+/// (`window.antikoltLanguage`) agrees. No core: the grid's strings do not depend on the card list.
+int runGridLangCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+    qputenv("ANTIKOLT_NO_TRAY", "1");
+    {
+        QSettings settings;
+        settings.remove(QStringLiteral("ui/language"));
+    }
+
+    MainWindow window;
+    window.show();
+    window.move(140, 100);
+    window.startEngine();
+
+    EngineClient* client = window.engine();
+    QEventLoop loop;
+    QString placeholder_before;
+    QString placeholder_after;
+    QString lang_after;
+    bool loaded = false;
+
+    QObject::connect(client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "engine_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 surface, const QString& url, int) {
+                         if (loaded || !url.startsWith(QStringLiteral("file:"))) {
+                             return;
+                         }
+                         loaded = true;
+                         out << "grid_loaded=" << url << '\n';
+                         QTimer::singleShot(700, &loop, [&, surface] {
+                             client->evaluate(
+                                 surface,
+                                 QStringLiteral("document.getElementById('search').placeholder"),
+                                 [&, surface](const QJsonObject& reply, const QString& error) {
+                                     placeholder_before =
+                                         error.isEmpty()
+                                             ? reply.value(QStringLiteral("value")).toString()
+                                             : QString();
+                                     // Switch through the shell's own path; it pushes the choice to the grid.
+                                     window.setLanguage(QStringLiteral("en"));
+                                     QTimer::singleShot(700, &loop, [&, surface] {
+                                         client->evaluate(
+                                             surface,
+                                             QStringLiteral(
+                                                 "JSON.stringify({p:document.getElementById('search')"
+                                                 ".placeholder,l:window.antikoltLanguage()})"),
+                                             [&](const QJsonObject& reply2, const QString& error2) {
+                                                 if (!error2.isEmpty()) {
+                                                     out << "grid_after=FAILED " << error2 << '\n';
+                                                     loop.quit();
+                                                     return;
+                                                 }
+                                                 const QJsonObject after = QJsonDocument::fromJson(
+                                                     reply2.value(QStringLiteral("value"))
+                                                         .toString()
+                                                         .toUtf8())
+                                                     .object();
+                                                 placeholder_after =
+                                                     after.value(QStringLiteral("p")).toString();
+                                                 lang_after = after.value(QStringLiteral("l")).toString();
+                                                 window.setLanguage(QStringLiteral("hu"));
+                                                 loop.quit();
+                                             });
+                                     });
+                                 });
+                         });
+                     });
+
+    QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    const bool hu_before = placeholder_before.startsWith(QStringLiteral("Keresés"));
+    const bool en_after =
+        placeholder_after.startsWith(QStringLiteral("Search")) && lang_after == QStringLiteral("en");
+    out << "grid_lang_before=" << (hu_before ? "hu" : "FAILED") << '\n';
+    out << "grid_lang_after=" << (en_after ? "en" : "FAILED") << '\n';
+    out << "grid_placeholder_before=" << placeholder_before << '\n';
+    out << "grid_placeholder_after=" << placeholder_after << '\n';
+    out << "grid_language_witness=" << lang_after << '\n';
+    const bool ok = loaded && hu_before && en_after;
+    out << "grid_language=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runGridCheck(const QString& enginePath) {
     QTextStream out(stdout);
     int failures = 0;
@@ -9925,6 +10017,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("gridtest"),
         QStringLiteral("Prove the home grid shows the core's cards, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption gridlangtest(
+        QStringLiteral("gridlangtest"),
+        QStringLiteral("Prove the grid follows the shell's language (HU/EN), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption lifecycletest(
         QStringLiteral("lifecycletest"),
         QStringLiteral("Prove an idle card hibernates by itself, then exit."),
@@ -10158,6 +10254,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(opentest);
     parser.addOption(capturetest);
     parser.addOption(gridtest);
+    parser.addOption(gridlangtest);
     parser.addOption(lifecycletest);
     parser.addOption(sessionpanel);
     parser.addOption(wipetest);
@@ -10503,6 +10600,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(gridtest)) {
         return runGridCheck(parser.value(gridtest));
+    }
+
+    if (parser.isSet(gridlangtest)) {
+        return runGridLangCheck(parser.value(gridlangtest));
     }
 
     if (parser.isSet(capturetest)) {
