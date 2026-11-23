@@ -1,8 +1,72 @@
-# 19 — Folytatási munkarend (a 20. szelet után)
+# 19 — Folytatási munkarend (a 135. szelet után)
 
 > Ez a dokumentum **nem terv**, hanem munkarend: az aktuális állapotból indul, és minden tételhez
 > megadja, melyik fájlban, mi a teendő, és mi bizonyítja. A terv a `00`–`15`, a döntések a `05`, a
 > kronológia a `16`; ez a lap a következő munkamenet első olvasmánya.
+
+## ÁTADÁS — 2026-11-23 (a 135. szelet után, új munkamenethez)
+
+> Ez a fejezet az új munkamenet **első olvasmánya**. A `06b6e54` commitnál állunk; innen indul minden.
+
+### Állapot (mért, nem szándék)
+
+```
+git rev-parse --short HEAD  →  06b6e54  (feat(slice-135): name the controls and verify accessibility)
+scripts/verify.ps1          →  ALL CHECKS PASSED — 65 ellenőrzés mind „ok"
+cargo test                  →  156 zöld: 78 + 53 + 9 + 1 + 15
+git status                  →  tiszta munkafa, minden pusholva (origin/main)
+```
+
+### Ebben a munkamenetben készült el (123–135. szelet, mind zöld + pusholt)
+
+- **F6 memória-governor befejezve:** `--memorypressuretest` (jel), `--memorypressuree2etest` (e2e), a rács
+  mutatja a nyomást (híd-javítás a 126.-ban), `--memoryhibernatetest` (hard = hibernálás), `--memorywarnpausetest`
+  (warn = a preview 5 percre szünetel).
+- **F7 asztali alapok:** `--printtest` (mentés PDF-be), `--findtest` (Ctrl+F + keresősáv), `--downloadtest`
+  (letöltés), `--crashtest` (renderer-összeomlás detektálása **és** automatikus újratöltés), `--pdftest`
+  (PDF a PDFium-nézőben), `--accessibilitytest` (nevesített vezérlők + Ctrl+F regisztrálva).
+
+### Ami nyitva van (konkrét következő lépés)
+
+| Tétel | Hol | Mi a teendő | Mi bizonyítja |
+|---|---|---|---|
+| F6 `video_max_height` | `main_window.cpp` (governor) | kutatás: a CEF-nek nincs tiszta videófelbontás-korlátja; CSS-injekció csak a top-level `video`-t éri (az iframe-eket nem) | önteszt, ha mérhetővé tehető; különben dokumentált `not-measurable` |
+| OAuth összekötés | `main_window.cpp` (popup, 02-ARCH §8.5) | a mechanizmus kész, a bejelentkezési gesztus-út a harnessben nem kattintható | `not-measurable` gesztus; a kész mechanizmus már mért |
+| `sha256` blobtár | `previews.h` / motor | `cargo vendor` egy **hálózatos** gépen (`sha2`), tartalom-szerinti név a fájlnév helyett | új önteszt a tartalom-szerinti címzésre |
+| PiP | motor (CEF 158) | a CEF 158 PiP-je **views-alapú** (`CefBrowserViewDelegate`), a shell ablakos (nem views) API-t használ — valószínűleg architektúra-váltás kell, előbb döntés | — |
+| HU/EN felület | teljes shell + rács | nagy i18n-szelet (a magyar a hiteles nyelv) | önteszt + doksi |
+| Teljes képernyőolvasó-illesztés | külső | képernyőolvasóval (NVDA) manuális | emberi lépés |
+| Kiadás | SignPath, Store | emberi lépés (Partner Center, tanúsítvány) | — |
+
+### Kötelező munkarend (a szeletek ettől függnek)
+
+1. **Egy szelet = egy mérhető feature + önteszt.** Minden feature-nek saját `--…test` (vagy tiszta-függvény)
+   kell, ami a kapuban fut.
+2. **A kapu a bizonyíték:** `scripts/verify.ps1` → `ALL CHECKS PASSED` (most 65 ellenőrzés). Soha ne zöldíts
+   „hazugsággal": a számokat a kapu kimenetéből írd a doksiba, ne fejből.
+3. **Minden szelet végén:** build + kapu zöld → `16-FEJLESZTESI-NAPLO.md` bejegyzés a **mért** kimenettel →
+   commit (`feat/test(slice-NNN): …`) → `git push`. A doksi nyelve a **magyar**.
+4. **Dokumentumok:** `16` (kronológia), `21-ALLAPOT` (táblázat), `04-UTEMTERV` (pipa), `19` (ez a lap).
+
+### Sandbox (a felépített minta)
+
+- A `write`/`edit` fájlszerkesztés **nem** kér emelést.
+- A `build.ps1`, a `verify.ps1` és a `git push` **kér** `danger-full-access`-et (a cső-capture `EPERM`-je és az
+  ssh `CreateFileMapping` miatt) + egy egy mondatos indoklás. Megtagadás után **egyszer** kell újrapróbálni
+  ugyanazt a parancsot a szűkebb jogosultsággal — ez a jóváhagyás útja.
+
+### CEF 158 csapdák (ebben a munkamenetben tanultuk, ne fuss újra bele)
+
+- `CefBrowserHost::Find` **4 paramétert** vár (nincs `identifier`); az első `OnFindResult` a találatszámot
+  `active=0`-val adja (a kijelölés a következő értesítésben).
+- `CefSettings` **nem** ismeri a `download_default_directory`-t; a letöltés helye a `GetFullPath()`-ból tudható meg.
+- `CefPdfPrintSettings` mezője `display_header_footer` (nem `header_footer_enabled`), alapból ki.
+- A `chrome://crash` a determinisztikus renderer-összeomlás (`STATUS_ACCESS_VIOLATION`) — a `--crashtest` ezt használja.
+
+### Delegálás
+
+A fájlokat író és a kaput futtató munka a **fő szálon** (fizetett/pro útvonalon) maradjon a minőség miatt; a
+`subagent` (ingyenes lánc) önálló kutatásra/áttekintésre való.
 
 ## 0. Kiinduló állapot (mért)
 
