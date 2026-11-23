@@ -11,6 +11,25 @@
 #include <QTimer>
 #include <QtDebug>
 
+SurfacePolicy surfacePolicyFromEntry(const QJsonObject& entry) {
+    SurfacePolicy policy;
+    const QString mode = entry.value(QStringLiteral("proxy_mode")).toString();
+    const QString host = entry.value(QStringLiteral("proxy_host")).toString();
+    const int port = entry.value(QStringLiteral("proxy_port")).toInt();
+    if (mode == QStringLiteral("direct")) {
+        policy.proxy = QStringLiteral("direct");
+    } else if (mode == QStringLiteral("fixed") && !host.isEmpty() && port > 0) {
+        // A host that already names a scheme (`socks5://…`) is honoured as written; a bare host is an HTTP proxy,
+        // which is what a `host:port` setting means everywhere else.
+        policy.proxy = host.contains(QStringLiteral("://"))
+                           ? host
+                           : QStringLiteral("http://%1:%2").arg(host).arg(port);
+        policy.proxyBypass = entry.value(QStringLiteral("proxy_bypass")).toString();
+    }
+    policy.permissions = entry.value(QStringLiteral("permissions")).toObject();
+    return policy;
+}
+
 namespace {
 
 /// One frame: 4-byte little-endian length, then the JSON payload.

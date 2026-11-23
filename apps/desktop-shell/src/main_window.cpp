@@ -1086,22 +1086,8 @@ void MainWindow::ensureSurface() {
                           .left(12)));
     SurfacePolicy policy;
     if (!opening_home) {
+        policy = surfacePolicyFromEntry(container_policies_.value(pending_container_));
         policy.container = pending_container_;
-        const QJsonObject entry = container_policies_.value(pending_container_);
-        const QString mode = entry.value(QStringLiteral("proxy_mode")).toString();
-        const QString host = entry.value(QStringLiteral("proxy_host")).toString();
-        const int port = entry.value(QStringLiteral("proxy_port")).toInt();
-        if (mode == QStringLiteral("direct")) {
-            policy.proxy = QStringLiteral("direct");
-        } else if (mode == QStringLiteral("fixed") && !host.isEmpty() && port > 0) {
-            // A host that already names a scheme (`socks5://…`) is honoured as written; a bare host is an HTTP proxy,
-            // which is what a `host:port` setting means everywhere else.
-            policy.proxy = host.contains(QStringLiteral("://"))
-                               ? host
-                               : QStringLiteral("http://%1:%2").arg(host).arg(port);
-            policy.proxyBypass = entry.value(QStringLiteral("proxy_bypass")).toString();
-        }
-        policy.permissions = entry.value(QStringLiteral("permissions")).toObject();
     }
     if (!card_->attach(live_engine_, partition, policy)) {
         setStatus(QStringLiteral("a kártya nem tudott felületet kérni a motortól"));

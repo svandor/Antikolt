@@ -38,6 +38,10 @@ struct SurfacePolicy {
     QJsonObject permissions;
 };
 
+/// Build a card's policy from a container row (ADR-071): the proxy mode/host/port and the permission map the core
+/// stores. A bare host is an HTTP proxy; a host that already names a scheme (`socks5://…`) is honoured as written.
+SurfacePolicy surfacePolicyFromEntry(const QJsonObject& entry);
+
 class EngineClient : public QObject {
     Q_OBJECT
 

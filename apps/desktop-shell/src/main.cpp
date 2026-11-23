@@ -2391,6 +2391,52 @@ int runSandboxCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the per-container policy builder (F3, ADR-071): a container row becomes the right proxy + permission map,
+/// so a card opened in that container is routed and gated correctly. A pure function test — no engine needed.
+int runContainerPolicyCheck() {
+    QTextStream out(stdout);
+
+    QJsonObject direct;
+    direct.insert(QStringLiteral("proxy_mode"), QStringLiteral("direct"));
+    const SurfacePolicy p_direct = surfacePolicyFromEntry(direct);
+
+    QJsonObject fixed;
+    fixed.insert(QStringLiteral("proxy_mode"), QStringLiteral("fixed"));
+    fixed.insert(QStringLiteral("proxy_host"), QStringLiteral("127.0.0.1"));
+    fixed.insert(QStringLiteral("proxy_port"), 1080);
+    fixed.insert(QStringLiteral("proxy_bypass"), QStringLiteral("*.local"));
+    const SurfacePolicy p_fixed = surfacePolicyFromEntry(fixed);
+
+    QJsonObject scheme = fixed;
+    scheme.insert(QStringLiteral("proxy_host"), QStringLiteral("socks5://127.0.0.1"));
+    const SurfacePolicy p_scheme = surfacePolicyFromEntry(scheme);
+
+    QJsonObject perms;
+    perms.insert(QStringLiteral("geolocation"), QStringLiteral("allow"));
+    QJsonObject with_perms = fixed;
+    with_perms.insert(QStringLiteral("permissions"), perms);
+    const SurfacePolicy p_perms = surfacePolicyFromEntry(with_perms);
+
+    const SurfacePolicy p_empty = surfacePolicyFromEntry(QJsonObject());
+
+    out << "policy_direct=" << p_direct.proxy << '\n';
+    out << "policy_fixed=" << p_fixed.proxy << '\n';
+    out << "policy_scheme=" << p_scheme.proxy << '\n';
+    out << "policy_bypass=" << p_fixed.proxyBypass << '\n';
+    out << "policy_geo=" << p_perms.permissions.value(QStringLiteral("geolocation")).toString() << '\n';
+    out << "policy_empty=" << (p_empty.proxy.isEmpty() ? "empty" : p_empty.proxy) << '\n';
+    const bool ok = p_direct.proxy == QStringLiteral("direct") &&
+                    p_fixed.proxy == QStringLiteral("http://127.0.0.1:1080") &&
+                    p_fixed.proxyBypass == QStringLiteral("*.local") &&
+                    p_scheme.proxy == QStringLiteral("socks5://127.0.0.1") &&
+                    p_perms.permissions.value(QStringLiteral("geolocation")).toString() ==
+                        QStringLiteral("allow") &&
+                    p_empty.proxy.isEmpty();
+    out << "container_policy_check=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -8828,6 +8874,9 @@ int main(int argc, char* argv[]) {
         QStringLiteral("sandboxtest"),
         QStringLiteral("Prove a custom home cannot read sibling data files, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption containerpolicytest(
+        QStringLiteral("containerpolicytest"),
+        QStringLiteral("Prove the per-container proxy/permission builder (F3), then exit."));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -8909,6 +8958,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(resethometest);
     parser.addOption(homeedittest);
     parser.addOption(sandboxtest);
+    parser.addOption(containerpolicytest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9086,6 +9136,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(sandboxtest)) {
         return runSandboxCheck(parser.value(sandboxtest));
+    }
+
+    if (parser.isSet(containerpolicytest)) {
+        return runContainerPolicyCheck();
     }
 
     if (parser.isSet(enginerestarttest)) {

@@ -3,6 +3,32 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (százhuszonkettedik szelet) — a konténerenkénti proxy/engedély igazolása (F3)
+
+Az F3 „konténerenkénti engedély/proxy" nyitott tétele lezárva: a kód már végig be volt kötve (a mag tárolja a
+konténer proxy-ját és engedélyeit, a shell `SurfacePolicy`-t épít belőle, a motor alkalmazza — ADR-071), de a
+shell proxy-építő logikája nem volt külön tesztelve. Ezt kiemeltem tisztán tesztelhető függvénybe.
+
+### Mi változott
+
+- **`surfacePolicyFromEntry(entry)`** (szabad függvény az `engine_client.{h,cpp}`-ben): a konténer-sorból proxy-t és
+  engedélytérképet épít — `direct` → `direct`, `fixed` + puszta host → `http://host:port`, sémás host → változatlan,
+  a `proxy_bypass` és a `permissions` átmegy.
+- **`--containerpolicytest` (új, tiszta függvényteszt):** mind a három proxy-ág + a bypass + az engedély + az üres sor.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (55 önteszt + check-repo)
+--containerpolicytest       → policy_direct=direct · policy_fixed=http://127.0.0.1:1080 ·
+                              policy_scheme=socks5://127.0.0.1 · container_policy_check=ok
+cargo test                  → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A munkaterület fogd-és-vidd, a profil-költöztetés gombja, az OAuth összekötése; az emberi kiadási tételek.
+
 ## 2026-11-22 (százhuszonegyedik szelet) — a kártyánkénti munkamenet-felülbírálás igazolása
 
 Az ADR-039 nyitott tétele lezárva: a kártyánkénti (origin-szintű) munkamenet-felülbírálás a kódban már benne volt

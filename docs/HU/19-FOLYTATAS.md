@@ -326,8 +326,9 @@ normalizálva, a keresés ékezet nélkül is látja), és a **munkaterületek**
 - **Konténerek** — **kész** (ADR-050/051/052/053, `--containertest`): a kártya színes pontja és konténer-
   választója, a chip-legend + szűrő, a tábla a magban (SQLite-sorok, ADR-070), és a felületi életciklus: `＋`
   konténer, dupla kattintás = átnevezés, `×` = törlés — használt konténernél **áthelyezéssel** (ADR-054:
-  a mag `move_to`-val előbb áthelyez, aztán töröl; a legenda felajánlja). Nyitott: konténerenkénti
-  engedély/proxy (F3).
+  a mag `move_to`-val előbb áthelyez, aztán töröl; a legenda felajánlja). **Konténerenkénti engedély/proxy: kész
+  és mérve** (ADR-071, 122. szelet) — a mag tárolja, a shell `surfacePolicyFromEntry`-vel építi, a motor alkalmazza
+  (`--containerpolicytest`, `--partitiontest`, `--containertest`).
 - **Tároló** — **kész** (ADR-069/070, napló 96–97): mind a négy store **SQLite-sorok** (`antikolt.sqlite3`,
   `user_version=4`, WAL) — kártyák, konténerek, munkaterületek, munkamenetek; a négy `*.json` **export** (átvételkor,
   leálláskor, `db_status(sync)`-ra); a kapcsoló előtti profil store-onként egyszer átvételre kerül (`meta` jelölők),
