@@ -21,6 +21,7 @@
 
 class QLabel;
 class QTimer;
+class QStackedLayout;
 class QDockWidget;
 class QTableWidget;
 class QSpinBox;
@@ -423,12 +424,21 @@ private:
     /// A card's rectangle in the raster (CSS pixels), captured before the grid is rasterised (click mapping).
     struct RasterCard {
         QString id;
+        QString url;
+        QString title;
         qreal x = 0;
         qreal y = 0;
         qreal w = 0;
         qreal h = 0;
     };
     QList<RasterCard> raster_cards_;
+    /// The grid's viewport size in CSS pixels when the positions were captured (maps a raster click back to the
+    /// cards' coordinate space).
+    qreal raster_css_w_ = 0;
+    qreal raster_css_h_ = 0;
+    /// The stacked card area: the live card (page 0) or the raster home (page 1, the engine stopped).
+    QStackedLayout* card_stack_ = nullptr;
+    QLabel* raster_label_ = nullptr;
     /// The origin of the card in front, as the engine loaded it ("" when the grid is showing).
     QString live_origin_;
     /// ---- the background preview worker (ADR-041) ------------------------------------------------

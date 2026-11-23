@@ -3,6 +3,33 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-22 (száztizenkilencedik szelet) — a raszter megjelenítése + a kattintás-horog (F6)
+
+A raszter-kezdőlap utolsó, vizuális darabja: a motor leállításakor a rács raszterképe **látszik** a kártyaterületen,
+és a raszterre kattintva a motor felébred, sőt a kurzor alatti kártya közvetlenül megnyílik.
+
+### Mi változott
+
+- **A kártyaterület veremmé vált:** a `QStackedLayout` 0. lapja az élő kártya, az 1. a `raster_label_` (a raszter);
+  a `enterRasterMode` betölti a `home-raster.png`-t és átvált, a `wakeFromRaster` visszavált.
+- **A kattintás-horog:** a `raster_label_` kattintását az `eventFilter` a rács CSS-koordinátájára képezi, a
+  `raster_cards_` téglalapjaihoz méri, és a talált kártyát (url + cím + id) a `pending_*` mezőkbe teszi, mielőtt a
+  motor újraindul — így az `engineReady` üdvözlés rögtön a kártyát nyitja, nem a rácsot.
+- **`captureCardPositions`:** most már a viewport CSS-méretét (`vw`/`vh`) és a kártyák url-jét + címét is viszi.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 -SkipBuild → ALL SELF TESTS PASSED (54 önteszt + check-repo)
+--rasterhometest / --rasterautotest / --rasterclicktest → mind zöld
+cargo test                  → 155 zöld: 78 + 52 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A raszter **vizuális ellenőrzése** éles ablakban (a QLabel nyújtottan illeszt, a kattintás-leképezés lineáris);
+  a profil többi dimenziójának tényleges vezérlője (videófelbontás, `warn`/`hard`); az emberi kiadási tételek.
+
 ## 2026-11-22 (száztizennyolcadik szelet) — a felhasználói kezdőlap sandboxolása (3. tétel)
 
 A szerkeszthető kezdőlap biztonsági zárása: a felhasználói `home.html` a profil könyvtárából töltődik, tehát a

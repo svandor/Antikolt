@@ -29,6 +29,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStackedLayout>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QSystemTrayIcon>
@@ -515,6 +516,28 @@ void MainWindow::onIdleTimeout() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // A click on the raster home wakes the engine, and opens the card under the cursor when one is there.
+    if (watched == raster_label_ && event->type() == QEvent::MouseButtonPress && raster_mode_) {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::LeftButton && raster_label_->width() > 0 && raster_label_->height() > 0 &&
+            raster_css_w_ > 0 && raster_css_h_ > 0) {
+            const qreal x_css = mouse->position().x() / raster_label_->width() * raster_css_w_;
+            const qreal y_css = mouse->position().y() / raster_label_->height() * raster_css_h_;
+            for (const RasterCard& card : raster_cards_) {
+                if (x_css >= card.x && x_css < card.x + card.w && y_css >= card.y && y_css < card.y + card.h) {
+                    pending_url_ = card.url;
+                    pending_title_ = card.title;
+                    pending_card_id_ = card.id;
+                    current_card_id_ = card.id;
+                    pending_pinned_ = false;
+                    pending_container_.clear();
+                    break;
+                }
+            }
+        }
+        wakeFromRaster();
+        return QMainWindow::eventFilter(watched, event);
+    }
     switch (event->type()) {
         case QEvent::KeyPress:
         case QEvent::MouseButtonPress:
@@ -2814,6 +2837,17 @@ void MainWindow::enterRasterMode() {
                              if (card_->hasSurface()) {
                                  card_->detach();
                              }
+                             // Show the raster over the (now empty) card area, so the user sees the grid, not a
+                             // blank window.
+                             if (raster_label_ != nullptr) {
+                                 const QPixmap pixmap(target);
+                                 if (!pixmap.isNull()) {
+                                     raster_label_->setPixmap(pixmap);
+                                 }
+                             }
+                             if (card_stack_ != nullptr) {
+                                 card_stack_->setCurrentWidget(raster_label_);
+                             }
                              setStatus(QStringLiteral("raszter-kezdőlap (a motor leállítva)"));
                          });
     });
@@ -2824,6 +2858,9 @@ void MainWindow::wakeFromRaster() {
         return;
     }
     raster_mode_ = false;
+    if (card_stack_ != nullptr) {
+        card_stack_->setCurrentWidget(card_);
+    }
     if (!engine_->isRunning()) {
         engine_->start(engineExecutable(), engine_profile_, false, engine_profile_ + QStringLiteral("/previews"));
         engine_->handshake();
@@ -2853,22 +2890,29 @@ void MainWindow::captureCardPositions(std::function<void()> done) {
         }
         return;
     }
-    // Each visible `<antikolt-card>` reports its id and rectangle (CSS pixels, viewport-relative). The virtualised
-    // grid renders only what is on screen, which is exactly what the raster shows.
+    // Each visible `<antikolt-card>` reports its id, url, title and rectangle (CSS pixels, viewport-relative), and
+    // the viewport size comes along for the raster click mapping. The virtualised grid renders only what is on
+    // screen, which is exactly what the raster shows.
     engine_->evaluate(
         home_surface_,
         QStringLiteral(
-            "JSON.stringify([...document.querySelectorAll('antikolt-card')].map(function(el){"
-            "var r=el.getBoundingClientRect();"
-            "return {id:(el.card&&el.card.id)||'',x:r.left,y:r.top,w:r.width,h:r.height};}))"),
+            "JSON.stringify({vw:window.innerWidth,vh:window.innerHeight,cards:[...document.querySelectorAll("
+            "'antikolt-card')].map(function(el){var r=el.getBoundingClientRect();"
+            "return {id:(el.card&&el.card.id)||'',url:(el.card&&el.card.url)||'',"
+            "title:(el.card&&el.card.title)||'',x:r.left,y:r.top,w:r.width,h:r.height};})})"),
         [this, done](const QJsonObject& reply, const QString& error) {
             if (error.isEmpty()) {
-                const QJsonArray cards =
-                    QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8()).array();
+                const QJsonObject captured =
+                    QJsonDocument::fromJson(reply.value(QStringLiteral("value")).toString().toUtf8()).object();
+                raster_css_w_ = captured.value(QStringLiteral("vw")).toDouble();
+                raster_css_h_ = captured.value(QStringLiteral("vh")).toDouble();
+                const QJsonArray cards = captured.value(QStringLiteral("cards")).toArray();
                 for (const QJsonValue& value : cards) {
                     const QJsonObject rect = value.toObject();
                     RasterCard card;
                     card.id = rect.value(QStringLiteral("id")).toString();
+                    card.url = rect.value(QStringLiteral("url")).toString();
+                    card.title = rect.value(QStringLiteral("title")).toString();
                     card.x = rect.value(QStringLiteral("x")).toDouble();
                     card.y = rect.value(QStringLiteral("y")).toDouble();
                     card.w = rect.value(QStringLiteral("w")).toDouble();
@@ -3025,13 +3069,29 @@ void MainWindow::buildCardArea() {
     card_ = new LiveCard(root);
     card_->setObjectName(QStringLiteral("antikoltCard"));
 
+    // The raster home: a plain image of the grid, shown while the engine is stopped (F6). It shares a stack
+    // with the live card, so the shell swaps one for the other; the click is mapped back to a card below.
+    raster_label_ = new QLabel(root);
+    raster_label_->setObjectName(QStringLiteral("antikoltRaster"));
+    raster_label_->setAlignment(Qt::AlignCenter);
+    raster_label_->setScaledContents(true);
+    raster_label_->setCursor(Qt::PointingHandCursor);
+    raster_label_->installEventFilter(this);
+
+    card_stack_ = new QStackedLayout;
+    card_stack_->setContentsMargins(0, 0, 0, 0);
+    card_stack_->addWidget(card_);
+    card_stack_->addWidget(raster_label_);
+    auto* stack_host = new QWidget(root);
+    stack_host->setLayout(card_stack_);
+
     auto* hint = new QLabel(root);
     hint->setObjectName(QStringLiteral("antikoltHint"));
     hint->setText(QStringLiteral(
         "A motor külön folyamatban fut; a kártya natív ablaka ebbe az ablakba van ágyazva, így a "
         "kép és a bemenet az operációs rendszeren megy át, nem a protokollon."));
 
-    layout->addWidget(card_, 1);
+    layout->addWidget(stack_host, 1);
     layout->addWidget(hint, 0);
 
     setCentralWidget(root);
