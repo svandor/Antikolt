@@ -98,7 +98,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 ### M7 — „Béta" (F7 vége)
 - [ ] Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás. — a **zoom** kész (`--scrollzoomtest`), a **nyomtatás** „mentés PDF-be" útja kész (`--printtest`, 129. szelet), a **Ctrl+F** kész (`--findtest`, 130. szelet), a **letöltés** kész (`--downloadtest`, 131. szelet), a **PDF** kész (`--pdftest`, 134. szelet), a **PiP** nyitott
 - [x] Összeomlás utáni helyreállítás. — kész: a shell az összeomlott felületet automatikusan újratölti (`--crashtest`, 132–133. szelet)
-- [ ] Billentyűzetes navigáció, képernyőolvasó-támogatás.
+- [ ] Billentyűzetes navigáció, képernyőolvasó-támogatás. — a **nevesített vezérlők + Ctrl+F** kész (`--accessibilitytest`, 135. szelet), a teljes képernyőolvasó-illesztés nyitott
 - [ ] HU/EN felület; jelszó- és könyvjelző-import.
 
 ### M8 — „1.0" (F8 vége)

@@ -43,6 +43,10 @@
 #include <QTextStream>
 #include <QTimer>
 #include <QToolButton>
+#include <QComboBox>
+#include <QKeySequence>
+#include <QLineEdit>
+#include <QShortcut>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -3007,6 +3011,62 @@ int runPdfCheck(const QString& enginePath) {
     const bool ok = home_surface != 0 && pdf_loaded && !pdf_downloaded;
     out << "pdf=" << (ok ? "ok" : "FAILED") << '\n';
     QFile::remove(pdf_path);
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
+int runAccessibilityCheck(const QString&) {
+    QTextStream out(stdout);
+    MainWindow window;
+    window.show();
+
+    int total = 0;
+    int missing = 0;
+    // Interactive controls must be announceable by a screen reader (F7 "akadálymentesség"): a button announces its
+    // text or its accessible name; a line edit and a combo need an explicit accessible name (a placeholder is a hint,
+    // not a label).
+    for (auto* button : window.findChildren<QToolButton*>()) {
+        // Qt's own chrome — the toolbar overflow button and the line-edit clear button — is not the product's UI
+        // and is not ours to name.
+        if (button->objectName() == QStringLiteral("qt_toolbar_ext_button") ||
+            qobject_cast<QLineEdit*>(button->parent()) != nullptr) {
+            continue;
+        }
+        total++;
+        if (button->accessibleName().isEmpty() && button->text().isEmpty()) {
+            missing++;
+            out << "a11y_missing_button=" << button->objectName() << '\n';
+        }
+    }
+    for (auto* edit : window.findChildren<QLineEdit*>()) {
+        total++;
+        if (edit->accessibleName().isEmpty()) {
+            missing++;
+            out << "a11y_missing_edit=" << edit->objectName() << '\n';
+        }
+    }
+    for (auto* box : window.findChildren<QComboBox*>()) {
+        total++;
+        if (box->accessibleName().isEmpty()) {
+            missing++;
+            out << "a11y_missing_combo=" << box->objectName() << '\n';
+        }
+    }
+
+    // Keyboard navigation: the Ctrl+F find-in-page shortcut must be registered.
+    bool ctrl_f = false;
+    for (auto* shortcut : window.findChildren<QShortcut*>()) {
+        if (shortcut->key() == QKeySequence(Qt::CTRL | Qt::Key_F)) {
+            ctrl_f = true;
+        }
+    }
+
+    out << "a11y_controls=" << total << '\n';
+    out << "a11y_missing=" << missing << '\n';
+    out << "a11y_ctrl_f=" << (ctrl_f ? "true" : "false") << '\n';
+    const bool ok = total > 0 && missing == 0 && ctrl_f;
+    out << "accessibility=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();
     return ok ? 0 : 1;
@@ -9754,6 +9814,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("pdftest"),
         QStringLiteral("Prove a PDF renders in the viewer, not as a download (F7), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption accessibilitytest(
+        QStringLiteral("accessibilitytest"),
+        QStringLiteral("Prove the UI controls are keyboard- and screen-reader-accessible (F7), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9845,6 +9909,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(downloadtest);
     parser.addOption(crashtest);
     parser.addOption(pdftest);
+    parser.addOption(accessibilitytest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -10067,6 +10132,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(pdftest)) {
         return runPdfCheck(parser.value(pdftest));
+    }
+
+    if (parser.isSet(accessibilitytest)) {
+        return runAccessibilityCheck(parser.value(accessibilitytest));
     }
 
     if (parser.isSet(enginerestarttest)) {

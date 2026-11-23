@@ -3304,13 +3304,16 @@ void MainWindow::buildCardArea() {
     find_layout->setSpacing(6);
     find_edit_ = new QLineEdit(find_bar_);
     find_edit_->setObjectName(QStringLiteral("antikoltFindEdit"));
+    find_edit_->setAccessibleName(QStringLiteral("Keresés az oldalon"));
     find_edit_->setPlaceholderText(QStringLiteral("Keresés az oldalon…"));
     find_edit_->setClearButtonEnabled(true);
     find_status_ = new QLabel(find_bar_);
     find_status_->setObjectName(QStringLiteral("antikoltFindStatus"));
+    find_status_->setAccessibleName(QStringLiteral("Találatok száma"));
     auto* find_close = new QToolButton(find_bar_);
     find_close->setObjectName(QStringLiteral("antikoltFindClose"));
     find_close->setText(QStringLiteral("✕"));
+    find_close->setAccessibleName(QStringLiteral("Keresés bezárása"));
     find_close->setAutoRaise(true);
     find_close->setCursor(Qt::PointingHandCursor);
     connect(find_close, &QToolButton::clicked, this, &MainWindow::closeFind);

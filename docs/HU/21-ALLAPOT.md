@@ -62,6 +62,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Letöltés | `--downloadtest` | a motor `StartDownload`/`CefDownloadHandler` útján tölti le a fájlt, és a kész állapotot (útvonal + siker) `download_finished` eseménnyel jelenti |
 | Összeomlás utáni helyreállítás | `--crashtest` | a motor `renderer_terminated` eseménnyel jelenti a renderer kilépését; a shell az összeomlott felületet azonnal újratölti (a rács a kezdőlapra, a kártya a saját URL-jére tér vissza) |
 | PDF megtekintés | `--pdftest` | a PDF a CEF beépített PDFium-nézőjében nyílik (betöltés, nem letöltés) |
+| Akadálymentesség | `--accessibilitytest` | minden interaktív vezérlő bemondható (szöveg vagy accessible name), a Ctrl+F gyorsbillentyű regisztrálva |
 
 ## Ami nyitva van (tudatosan, nem elfelejtve)
 

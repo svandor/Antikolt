@@ -3,6 +3,33 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonharmincötödik szelet) — akadálymentesség: nevesített vezérlők + Ctrl+F (F7)
+
+Az F7 hatodik darabja: a **billentyűzetes navigáció és a képernyőolvasó-támogatás** első, mérhető része. A keresősáv
+vezérlői mostantól **nevesítve** vannak (a képernyőolvasó fel tudja olvasni őket), és egy önteszt ellenőrzi, hogy a
+felület minden interaktív eleme bemondható, a Ctrl+F gyorsbillentyű pedig regisztrálva van.
+
+### Mi változott
+
+- **`apps/desktop-shell` (main_window):** a keresősáv mezőjének, a találatszámlálónak és a bezáró gombnak explicit
+  `accessibleName`-je lett (a placeholder önmagában nem címke, a „✕" pedig nem mondható fel).
+- **`--accessibilitytest` (új):** végigmegy a felület gombjain, szövegmezőin és legördülőin, és ellenőrzi, hogy
+  mindegyik bemondható (szöveg vagy accessible name), valamint hogy a Ctrl+F gyorsbillentyű regisztrálva van. A Qt
+  saját „díszei" (az eszköztár túlcsordulás-gombja és a szövegmező törlőgombja) ki vannak zárva a vizsgálatból.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (65 ellenőrzés mind „ok", köztük az accessibilitytest és a check-repo)
+--accessibilitytest → a11y_controls=18 · a11y_missing=0 · a11y_ctrl_f=true · accessibility=ok
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (PiP, a teljes képernyőolvasó-illesztés, HU/EN); az F6 `video_max_height` kutatási tétele; az OAuth
+  összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonharmincnegyedik szelet) — a PDF megtekintése (F7)
 
 Az F7 ötödik darabja: a **PDF megjelenítése**. A CEF beépített PDFium-nézője már eddig is a helyén volt; most egy
