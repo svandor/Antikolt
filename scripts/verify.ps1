@@ -96,6 +96,8 @@ $engineChecks = @(
     @{ Name = 'webauthntest'; Args = @('--webauthntest'); Direct = $true },
     # ADR-053: the isolated-world spike — can the engine run JS invisibly to the page's main world?
     @{ Name = 'isolatedworldtest'; Args = @('--isolatedworldtest'); Direct = $true },
+    # ADR-053: the autofill spike — fill a login form in the isolated world without leaking the secret.
+    @{ Name = 'autofilltest'; Args = @('--autofilltest'); Direct = $true },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },

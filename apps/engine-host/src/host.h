@@ -59,6 +59,9 @@ struct HostConfig {
     /// Run the isolated-world spike: create a CDP isolated world and prove the main world cannot see
     /// into it (the foundation for autofill, ADR-053). Used by `--isolatedworldtest`.
     bool isolated_world_test = false;
+    /// Run the autofill spike: fill a login form in the isolated world and prove the credential never
+    /// reaches the page's main world (ADR-053). Used by `--autofilltest`.
+    bool autofill_test = false;
     /// Native window to embed the surface into; `nullptr` means the host creates a top-level window.
     ///
     /// This is how the one live card lives inside the Qt shell's window while the engine keeps its
@@ -106,6 +109,10 @@ struct HostState {
     std::atomic<bool> isolated_world_done{false};
     /// Whether the main world really could not see the isolated world's probe (drives the exit code).
     std::atomic<bool> isolated_world_ok{false};
+    /// The autofill spike's CDP answer has arrived.
+    std::atomic<bool> autofill_done{false};
+    /// Whether the form was filled in the isolated world and nothing leaked (drives the exit code).
+    std::atomic<bool> autofill_ok{false};
     int http_status = 0;
     std::string final_url;
     std::string title;
@@ -266,7 +273,7 @@ class EngineClient : public CefClient,
                      public CefMessageRouterBrowserSide::Handler {
 public:
     EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
-                 bool isolated_world_test,
+                 bool isolated_world_test, bool autofill_test,
                  std::map<std::string, std::string> permissions = {});
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -355,6 +362,7 @@ private:
     bool quit_on_first_load_;
     bool webauthn_test_;
     bool isolated_world_test_;
+    bool autofill_test_;
     CefRefPtr<CefMessageRouterBrowserSide> router_;
     CefRefPtr<PermissionPolicy> permission_;
 
@@ -365,6 +373,10 @@ private:
     /// set a probe in the isolated world → read it from the main world. The handler reports
     /// `isolated_world=ok|leaked|unsupported` and flips `isolated_world_done`.
     void StartIsolatedWorldProbe(CefRefPtr<CefBrowser> browser);
+    /// Submit the autofill spike (ADR-053): create an isolated world, fill a login form there, then
+    /// read the form from the main world and check the credential did not leak. Reports
+    /// `autofill=ok|FAILED|unsupported` and flips `autofill_done`.
+    void StartAutofillProbe(CefRefPtr<CefBrowser> browser);
 
     IMPLEMENT_REFCOUNTING(EngineClient);
     DISALLOW_COPY_AND_ASSIGN(EngineClient);

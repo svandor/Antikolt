@@ -228,7 +228,7 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
 
     CefRefPtr<EngineClient> client_handler(new EngineClient(
         state, config.quit_on_first_load, config.webauthn_test, config.isolated_world_test,
-        config.permissions));
+        config.autofill_test, config.permissions));
     CefBrowserSettings browser_settings;
     // The surface's request context: its own storage (cookies, cache, localStorage) and its container's proxy. Passing
     // nullptr here was the old behaviour — every card shared one global cookie jar and the `partition` key was a
@@ -1611,12 +1611,13 @@ bool EngineApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 }
 
 EngineClient::EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
-                           bool isolated_world_test,
+                           bool isolated_world_test, bool autofill_test,
                            std::map<std::string, std::string> permissions)
     : state_(state),
       quit_on_first_load_(quit_on_first_load),
       webauthn_test_(webauthn_test),
       isolated_world_test_(isolated_world_test),
+      autofill_test_(autofill_test),
       permission_(new PermissionPolicy(std::move(permissions))) {
     router_ = CefMessageRouterBrowserSide::Create(MessageRouterConfig());
     router_->AddHandler(this, /*first=*/false);
@@ -1948,6 +1949,9 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     if (isolated_world_test_) {
         StartIsolatedWorldProbe(browser);
     }
+    if (autofill_test_) {
+        StartAutofillProbe(browser);
+    }
 }
 
 void EngineClient::StartWebAuthnProbe(CefRefPtr<CefBrowser> browser) {
@@ -2084,6 +2088,114 @@ void EngineClient::StartIsolatedWorldProbe(CefRefPtr<CefBrowser> browser) {
                             }
                         }));
                     if (!set_probe->Start(browser)) {
+                        fail("Runtime.evaluate submit failed");
+                    }
+                }));
+            if (!create_world->Start(browser)) {
+                fail("Page.createIsolatedWorld submit failed");
+            }
+        }));
+    if (!get_frame_tree->Start(browser)) {
+        fail("Page.getFrameTree submit failed");
+    }
+}
+
+void EngineClient::StartAutofillProbe(CefRefPtr<CefBrowser> browser) {
+    // The fill script runs in the isolated world: it sets the username/password on the shared DOM with
+    // the native value setter (so React-style value tracking cannot swallow it) and marks the isolated
+    // world with a probe. The verification runs in the MAIN world: the fields must be filled, and the
+    // probe must be invisible — the credential must never appear as a page-visible variable.
+    static const char* const kFillScript =
+        "(function(){var u='alice';var p='hunter2';"
+        "var s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;"
+        "var pw=document.querySelector('input[type=password]');if(!pw)return 'no-password';"
+        "s.call(pw,p);pw.dispatchEvent(new Event('input',{bubbles:true}));"
+        "pw.dispatchEvent(new Event('change',{bubbles:true}));"
+        "var un=document.querySelector('input[name=username],input[autocomplete=username]');"
+        "if(!un){var ins=document.querySelectorAll('input');for(var i=0;i<ins.length;i++)"
+        "{if(ins[i]===pw&&i>0){un=ins[i-1];break;}}}"
+        "if(un){s.call(un,u);un.dispatchEvent(new Event('input',{bubbles:true}));"
+        "un.dispatchEvent(new Event('change',{bubbles:true}));}"
+        "window.__antikolt_fill_probe='filled';return 'filled';})()";
+    static const char* const kVerifyScript =
+        "(function(){var pw=document.querySelector('input[type=password]');"
+        "var un=document.querySelector('input[name=username]');"
+        "var filled=!!pw&&pw.value==='hunter2'&&!!un&&un.value==='alice';"
+        "var leak=typeof window.__antikolt_fill_probe!=='undefined';"
+        "return (filled&&!leak)?'ok':'FAILED';})()";
+
+    auto fail = [state = state_](const std::string& error) {
+        std::printf("autofill=unsupported error=%s\n", error.c_str());
+        std::fflush(stdout);
+        state->autofill_done.store(true);
+        state->autofill_ok.store(false);
+    };
+
+    CefRefPtr<DevToolsCall> get_frame_tree(new DevToolsCall(
+        "Page.getFrameTree", nullptr,
+        [state = state_, browser, fail](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+            if (!reply.ok()) {
+                fail(reply.error);
+                return;
+            }
+            CefRefPtr<CefDictionaryValue> frame_tree = reply.Dictionary("frameTree");
+            CefRefPtr<CefDictionaryValue> frame =
+                frame_tree ? frame_tree->GetDictionary("frame") : nullptr;
+            const std::string frame_id =
+                frame ? frame->GetString("id").ToString() : std::string();
+            if (frame_id.empty()) {
+                fail("Page.getFrameTree gave no main frame id");
+                return;
+            }
+            CefRefPtr<CefDictionaryValue> create_params = CefDictionaryValue::Create();
+            create_params->SetString("frameId", frame_id);
+            create_params->SetString("worldName", "antikolt-autofill");
+            CefRefPtr<DevToolsCall> create_world(new DevToolsCall(
+                "Page.createIsolatedWorld", create_params,
+                [state, browser, fail](CefRefPtr<CefBrowser>,
+                                       const DevToolsReply& create_reply) {
+                    if (!create_reply.ok()) {
+                        fail(create_reply.error);
+                        return;
+                    }
+                    const int context_id = create_reply.Int("executionContextId", 0);
+                    if (context_id == 0) {
+                        fail("Page.createIsolatedWorld gave no executionContextId");
+                        return;
+                    }
+                    CefRefPtr<CefDictionaryValue> fill_params = CefDictionaryValue::Create();
+                    fill_params->SetString("expression", kFillScript);
+                    fill_params->SetBool("returnByValue", true);
+                    fill_params->SetInt("contextId", context_id);
+                    CefRefPtr<DevToolsCall> fill(new DevToolsCall(
+                        "Runtime.evaluate", fill_params,
+                        [state, browser, fail](CefRefPtr<CefBrowser>,
+                                               const DevToolsReply& fill_reply) {
+                            if (!fill_reply.ok()) {
+                                fail(fill_reply.error);
+                                return;
+                            }
+                            CefRefPtr<CefDictionaryValue> verify_params =
+                                CefDictionaryValue::Create();
+                            verify_params->SetString("expression", kVerifyScript);
+                            verify_params->SetBool("returnByValue", true);
+                            CefRefPtr<DevToolsCall> verify(new DevToolsCall(
+                                "Runtime.evaluate", verify_params,
+                                [state](CefRefPtr<CefBrowser>,
+                                        const DevToolsReply& verify_reply) {
+                                    const std::string verdict = verify_reply.String("value");
+                                    const bool ok = verify_reply.ok() && verdict == "ok";
+                                    std::printf("autofill=%s verdict=%s\n",
+                                                ok ? "ok" : "FAILED", verdict.c_str());
+                                    std::fflush(stdout);
+                                    state->autofill_done.store(true);
+                                    state->autofill_ok.store(ok);
+                                }));
+                            if (!verify->Start(browser)) {
+                                fail("Runtime.evaluate submit failed");
+                            }
+                        }));
+                    if (!fill->Start(browser)) {
                         fail("Runtime.evaluate submit failed");
                     }
                 }));
@@ -2436,7 +2548,8 @@ int RunEngineHost(const HostConfig& config) {
         // before `webauthn_authenticator=…` is printed.
         while ((!state.load_finished.load() ||
                 (config.webauthn_test && !state.webauthn_done.load()) ||
-                (config.isolated_world_test && !state.isolated_world_done.load())) &&
+                (config.isolated_world_test && !state.isolated_world_done.load()) ||
+                (config.autofill_test && !state.autofill_done.load())) &&
                !state.load_failed.load() && !state.quit_requested.load()) {
             PumpWindowsMessages();
             CefDoMessageLoopWork();
@@ -2477,6 +2590,9 @@ int RunEngineHost(const HostConfig& config) {
     }
     if (config.isolated_world_test && !state.isolated_world_ok.load()) {
         return 1;  // the spike must not report a green when the isolation did not hold.
+    }
+    if (config.autofill_test && !state.autofill_ok.load()) {
+        return 1;  // the spike must not report a green when the form was not filled safely.
     }
     return (config.quit_on_first_load && !loaded) ? 1 : 0;
 }

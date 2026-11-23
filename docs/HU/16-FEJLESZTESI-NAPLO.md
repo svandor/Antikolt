@@ -3,6 +3,31 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvenkettedik szelet) — autofill izolált világban: spike (M7)
+
+A jelszó-kitöltés tényleges mechanizmusának de-kockáztató spike-ja: az izolált világban futó kitöltő
+szkript megtölti a bejelentkezési űrlapot, a lap fő világa a kitöltött értéket látja, de a titkot sosem.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `--autofilltest` flag + `EngineClient::StartAutofillProbe` (getFrameTree →
+  createIsolatedWorld → kitöltés a világban a natív value-setterrel → ellenőrzés a fő világban),
+  a `HostState.autofill_done/ok` és a kilépési kód.
+- **`scripts/verify.ps1`:** `autofilltest` kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--autofilltest → autofill=ok verdict=ok (exit 0)
+scripts/verify.ps1 → ALL CHECKS PASSED (75 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A shell↔core orchestráció (a hitelesítő lekérése origin-szerint + a `fill_credential` parancs); a
+  grafikus széf-panel; a teljes `navigator.credentials` passkey-folyamat; a PiP
+  (views-architektúra-váltás).
+
 ## 2026-11-23 (százötvenegyedik szelet) — kitöltés izolált világban: spike (M7)
 
 A jelszó-kitöltés biztonsági alapjának de-kockáztató spike-ja: működik-e az izolált világ a CEF 158-ban?

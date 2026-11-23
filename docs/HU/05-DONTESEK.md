@@ -3,6 +3,26 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-089 — A kitöltés izolált világban működik: az űrlap megtelik, a titok nem szivárog (2026-11-23)
+
+**Kontextus:** az ADR-088 spike bebizonyította, hogy a CDP izolált világ létrejön a CEF 158-ban. A
+következő kérdés: a jelszó-kitöltés tényleges mechanizmusa is működik-e — a hitelesítőt az izolált
+világ írja a megosztott DOM-ba, a lap fő világa a kitöltött értéket látja, de a titkot sosem.
+
+**Döntés (a spike eredménye):**
+
+1. **Az izolált világban fut a kitöltő szkript:** a `--autofilltest` (getFrameTree →
+   createIsolatedWorld → Runtime.evaluate a világban a kitöltő szkripttel → Runtime.evaluate a fő
+   világban az ellenőrző szkripttel) azt méri, hogy a jelszó/jelszó-mező a natív value-setterrel
+   megtelik, és a fő világból a próba-változó `undefined`.
+2. **A titok nem szivárog:** `autofill=ok verdict=ok` (exit 0) — a mezők megtelnek, a `typeof
+   window.__antikolt_fill_probe` a fő világban `undefined`.
+
+**Következmény:** (+) a biztonságos autofill mechanizmusa de-kockáztatva: az izolált világban a
+hitelesítő beírható, a lap nem látja; (+) a `--autofilltest` a kapuban méri; (−) a shell↔core
+orchestráció (a hitelesítő lekérése origin-szerint + a `fill_credential` parancs) és a grafikus panel
+még külön szeletek.
+
 ## ADR-088 — A kitöltés izolált világban: a CDP isolated world működik a CEF 158-ban (2026-11-23)
 
 **Kontextus:** a jelszó-kitöltés (autofill) biztonságos formája az izolált világ: a shell által beírt
