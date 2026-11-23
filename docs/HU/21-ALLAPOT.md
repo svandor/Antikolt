@@ -9,7 +9,7 @@
 ```
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
-77 ellenőrzés     ok        (74 önteszt + build + core service + check-repo; lásd alább, mit bizonyít mindegyik)
+78 ellenőrzés     ok        (75 önteszt + build + core service + check-repo; lásd alább, mit bizonyít mindegyik)
 check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 93+69+12+1+15 Rust-teszt)
 ```
 

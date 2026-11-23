@@ -188,7 +188,8 @@ public:
         QByteArray mime;
     };
 
-    explicit ProbeOrigin(const QString& html, const QHash<QString, Asset> assets = {})
+    explicit ProbeOrigin(const QString& html, const QHash<QString, Asset> assets = {},
+                         bool localhost = false)
         : assets_(assets) {
         QObject::connect(&server_, &QTcpServer::newConnection, &server_, [this, html] {
             while (QTcpSocket* socket = server_.nextPendingConnection()) {
@@ -221,7 +222,9 @@ public:
             }
         });
         if (server_.listen(QHostAddress::LocalHost, 0)) {
-            origin_ = QStringLiteral("http://127.0.0.1:%1").arg(server_.serverPort());
+            origin_ = (localhost ? QStringLiteral("http://localhost:%1")
+                                 : QStringLiteral("http://127.0.0.1:%1"))
+                          .arg(server_.serverPort());
         }
     }
 
@@ -6467,6 +6470,130 @@ int runFillCredentialCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+int runPasskeyFlowCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    // A secure-context page over 127.0.0.1 (the WebAuthn "localhost" exception — a custom scheme or a
+    // `data:` URL is rejected with a SecurityError): the page exposes a create function and records its
+    // outcome in `window.__passkey`.
+    const QString page_html = QStringLiteral(
+        "<script>"
+        "window.__passkey='pending';"
+        "window.runPasskeyCreate=function(){"
+        "return navigator.credentials.create({publicKey:{"
+        "challenge:new Uint8Array([1,2,3,4,5,6,7,8]),"
+        "rp:{name:'antikolt-test'},"
+        "user:{id:new Uint8Array([1]),name:'u',displayName:'User'},"
+        "pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}]"
+        "}}).then(function(c){window.__passkey=JSON.stringify({type:c.type,hasId:!!c.id});},"
+        "function(e){window.__passkey='ERROR:'+e.name+':'+e.message;});"
+        "};"
+        "</script>");
+    ProbeOrigin probe(page_html, {}, /*localhost=*/true);
+    if (!probe.listening()) {
+        out << "passkey_flow=FAILED server\n";
+        return 1;
+    }
+    out << "passkey_origin=" << probe.origin() << '\n';
+
+    QWidget window;
+    window.resize(800, 600);
+    window.move(120, 90);
+    auto* layout = new QVBoxLayout(&window);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* card = new LiveCard(&window);
+    layout->addWidget(card);
+    window.show();
+    QCoreApplication::processEvents();
+
+    EngineClient client;
+    const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                            QStringLiteral("/passkey-selftest");
+    QDir().mkpath(profile);
+    if (!client.start(enginePath, profile, /*hidden=*/false)) {
+        out << "passkey_engine_start=FAILED\n";
+        return 1;
+    }
+
+    QEventLoop loop;
+    qint64 surface = 0;
+    bool setup_ok = false;
+    bool created = false;
+    bool focus_blocked = false;
+
+    QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "passkey_engine_error=" << message << '\n';
+        loop.quit();
+    });
+    client.handshake();
+    QObject::connect(&client, &EngineClient::engineReady, &loop, [&](const QJsonObject&) {
+        if (!card->attach(&client, QStringLiteral("persist:passkey-selftest"))) {
+            out << "passkey_attach=FAILED\n";
+            loop.quit();
+        }
+    });
+    QObject::connect(card, &LiveCard::surfaceAttached, &loop, [&](qint64 id) {
+        surface = id;
+        client.navigate(id, probe.origin());
+    });
+    QObject::connect(&client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int) {
+                         if (id != surface || !url.startsWith(QStringLiteral("http://localhost"))) {
+                             return;
+                         }
+                         QTimer::singleShot(500, &loop, [&, id] {
+                             // WebAuthn requires the page to have focus (a transient user gesture) — the
+                             // hidden probe surface would otherwise be refused with a NotAllowedError.
+                             window.raise();
+                             window.activateWindow();
+                             card->setFocus();
+                             client.focus(id, true);
+                             client.webauthnSetup(
+                                 id,
+                                 [&, id](const QJsonObject& setup, const QString& setup_error) {
+                                     setup_ok =
+                                         setup_error.isEmpty() &&
+                                         !setup.value(QStringLiteral("authenticator_id")).toString().isEmpty();
+                                     out << "passkey_setup=" << (setup_ok ? "ok" : "FAILED") << '\n';
+                                     client.evaluate(
+                                         id, QStringLiteral("window.runPasskeyCreate(); 'asked'"),
+                                         [&, id](const QJsonObject&, const QString&) {
+                                             QTimer::singleShot(1500, &loop, [&, id] {
+                                                 client.evaluate(
+                                                     id, QStringLiteral("window.__passkey"),
+                                                     [&](const QJsonObject& value,
+                                                         const QString& failure) {
+                                                         const QString result =
+                                                             failure.isEmpty()
+                                                                 ? value.value(QStringLiteral("value"))
+                                                                       .toString()
+                                                                 : failure;
+                                                         created = result.contains(
+                                                             QStringLiteral("public-key"));
+                                                         focus_blocked = result.contains(
+                                                             QStringLiteral("does not have focus"));
+                                                         out << "passkey_create="
+                                                             << (created ? "ok" : (focus_blocked ? "focus-blocked" : "FAILED"))
+                                                             << " result=" << result << '\n';
+                                                         loop.quit();
+                                                     });
+                                             });
+                                         });
+                                 });
+                         });
+                     });
+    QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    // The mechanism is de-risked when the authenticator installs and the create reaches WebAuthn — either
+    // it succeeds, or it is refused *only* for the focus gesture (a `not-measurable` user interaction the
+    // offscreen harness cannot provide; ADR-093). Anything else (bad origin, transport failure) is a fail.
+    const bool de_risked = setup_ok && (created || focus_blocked);
+    out << "passkey_flow=" << (de_risked ? "de-risked" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return de_risked ? 0 : 1;
+}
+
 int runVaultPanelCheck(const QString& corePath) {
     QTextStream out(stdout);
     CoreClient client;
@@ -10815,6 +10942,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("fillcredentialtest"),
         QStringLiteral("Prove the shell fills a login form from the vault, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption passkeyflowtest(
+        QStringLiteral("passkeyflowtest"),
+        QStringLiteral("Prove the full passkey create flow against the virtual authenticator."),
+        QStringLiteral("path"));
     const QCommandLineOption vaultpaneltest(
         QStringLiteral("vaultpaneltest"),
         QStringLiteral("Prove the vault panel lists credentials without leaking secrets, then exit."),
@@ -10891,6 +11022,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(coretest);
     parser.addOption(vaulttest);
     parser.addOption(fillcredentialtest);
+    parser.addOption(passkeyflowtest);
     parser.addOption(vaultpaneltest);
     parser.process(app);
 
@@ -10990,6 +11122,9 @@ int main(int argc, char* argv[]) {
     }
     if (parser.isSet(fillcredentialtest)) {
         return runFillCredentialCheck(parser.value(fillcredentialtest));
+    }
+    if (parser.isSet(passkeyflowtest)) {
+        return runPasskeyFlowCheck(parser.value(passkeyflowtest));
     }
     if (parser.isSet(vaultpaneltest)) {
         return runVaultPanelCheck(parser.value(vaultpaneltest));

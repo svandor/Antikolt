@@ -3,6 +3,36 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvenhatodik szelet) — a passkey-folyamat de-kockáztatása (M7)
+
+A passkey most már parancsba adható, és a teljes folyamat korlátai mérve vannak.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `webauthn_setup` parancs (fókusz-emuláció + `WebAuthn.enable` +
+  `addVirtualAuthenticator`, `{authenticator_id}`).
+- **`apps/desktop-shell/src/`:** `EngineClient::webauthnSetup` + `--passkeyflowtest` (localhost
+  `ProbeOrigin` + `navigator.credentials.create`).
+- **`scripts/verify.ps1`:** `passkeyflowtest` kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--passkeyflowtest → passkey_flow=de-risked (exit 0):
+  passkey_setup=ok · passkey_create=focus-blocked (NotAllowedError: does not have focus)
+```
+
+### Ami kiderült (a de-kockáztatás lényege)
+
+- A custom `antikolt://` séma a WebAuthn-nak nem elég (`invalid domain`) — **localhost kell**.
+- A teljes `create` **fókusz-gesztust kíván**, amit az offscreen-harness nem tud adni → a teljes
+  `create`/`get` a valós felületen működik, a harnessben `not-measurable`.
+
+### Ami továbbra is nyitott
+
+- A teljes `navigator.credentials.create/get` a valós (fókuszált) felületen + a kulcs-export/import a
+  széfbe; a PiP (views-architektúra-váltás).
+
 ## 2026-11-23 (százötvenötödik szelet) — a széf panel: metadata-only lista (M7)
 
 A széf most már a shellben is látható: egy panel feloldja a széfet, és metadata-only listát mutat —

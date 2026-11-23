@@ -88,6 +88,9 @@ public:
     /// `{filled: true}` when the form was filled and the credential stayed out of the main world.
     void fillCredential(qint64 surface, const QString& username, const QString& password,
                         ReplyHandler handler = {});
+    /// Install a resident CDP virtual authenticator (ADR-023), so a secure-context page can create a
+    /// passkey. The reply carries `{authenticator_id: …}`.
+    void webauthnSetup(qint64 surface, ReplyHandler handler = {});
     /// Install the engine-side JS bridge (`window.antikoltNative`) on a surface.
     ///
     /// Only surfaces the shell enables this way may call back: the engine refuses everything else, so

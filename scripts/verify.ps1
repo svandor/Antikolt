@@ -98,6 +98,9 @@ $engineChecks = @(
     @{ Name = 'isolatedworldtest'; Args = @('--isolatedworldtest'); Direct = $true },
     # ADR-053: the autofill spike — fill a login form in the isolated world without leaking the secret.
     @{ Name = 'autofilltest'; Args = @('--autofilltest'); Direct = $true },
+    # ADR-023: the passkey flow — `navigator.credentials.create` against the CDP virtual authenticator,
+    # served from a 127.0.0.1 page (the WebAuthn "localhost" exception; a custom scheme is rejected).
+    @{ Name = 'passkeyflowtest'; Args = @('--passkeyflowtest') },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },

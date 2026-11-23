@@ -62,6 +62,9 @@ struct HostConfig {
     /// Run the autofill spike: fill a login form in the isolated world and prove the credential never
     /// reaches the page's main world (ADR-053). Used by `--autofilltest`.
     bool autofill_test = false;
+    /// Run the passkey flow: create a credential through `navigator.credentials.create` against the CDP
+    /// virtual authenticator (the full F0 flow, ADR-023). Used by `--passkeyflowtest`.
+    bool passkey_flow_test = false;
     /// Native window to embed the surface into; `nullptr` means the host creates a top-level window.
     ///
     /// This is how the one live card lives inside the Qt shell's window while the engine keeps its
@@ -113,6 +116,10 @@ struct HostState {
     std::atomic<bool> autofill_done{false};
     /// Whether the form was filled in the isolated world and nothing leaked (drives the exit code).
     std::atomic<bool> autofill_ok{false};
+    /// The passkey flow's CDP answer has arrived.
+    std::atomic<bool> passkey_flow_done{false};
+    /// Whether `navigator.credentials.create` produced a public-key credential (drives the exit code).
+    std::atomic<bool> passkey_flow_ok{false};
     int http_status = 0;
     std::string final_url;
     std::string title;
@@ -273,7 +280,7 @@ class EngineClient : public CefClient,
                      public CefMessageRouterBrowserSide::Handler {
 public:
     EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
-                 bool isolated_world_test, bool autofill_test,
+                 bool isolated_world_test, bool autofill_test, bool passkey_flow_test,
                  std::map<std::string, std::string> permissions = {});
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -363,6 +370,10 @@ private:
     bool webauthn_test_;
     bool isolated_world_test_;
     bool autofill_test_;
+    bool passkey_flow_test_;
+    /// The virtual authenticator's id, stored when the passkey flow enables it; the `create` step runs
+    /// in `OnLoadEnd`, once the page's execution context exists.
+    std::string passkey_authenticator_;
     CefRefPtr<CefMessageRouterBrowserSide> router_;
     CefRefPtr<PermissionPolicy> permission_;
 
@@ -377,6 +388,13 @@ private:
     /// read the form from the main world and check the credential did not leak. Reports
     /// `autofill=ok|FAILED|unsupported` and flips `autofill_done`.
     void StartAutofillProbe(CefRefPtr<CefBrowser> browser);
+    /// Submit the passkey flow (ADR-023): `WebAuthn.enable` → `addVirtualAuthenticator` → the page's
+    /// `navigator.credentials.create` through `Runtime.evaluate`. Reports
+    /// `passkey_flow=ok|FAILED|unsupported` and flips `passkey_flow_done`.
+    void StartPasskeyFlowProbe(CefRefPtr<CefBrowser> browser);
+    /// The second half of the passkey flow, run from `OnLoadEnd`: evaluate `navigator.credentials.create`
+    /// against the already-installed virtual authenticator.
+    void StartPasskeyCreate(CefRefPtr<CefBrowser> browser);
 
     IMPLEMENT_REFCOUNTING(EngineClient);
     DISALLOW_COPY_AND_ASSIGN(EngineClient);

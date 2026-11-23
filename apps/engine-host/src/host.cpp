@@ -228,7 +228,7 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
 
     CefRefPtr<EngineClient> client_handler(new EngineClient(
         state, config.quit_on_first_load, config.webauthn_test, config.isolated_world_test,
-        config.autofill_test, config.permissions));
+        config.autofill_test, config.passkey_flow_test, config.permissions));
     CefBrowserSettings browser_settings;
     // The surface's request context: its own storage (cookies, cache, localStorage) and its container's proxy. Passing
     // nullptr here was the old behaviour — every card shared one global cookie jar and the `partition` key was a
@@ -1445,6 +1445,9 @@ std::string PreviewMimeType(const std::string& name) {
     if (extension == ".webp") {
         return "image/webp";
     }
+    if (extension == ".html" || extension == ".htm") {
+        return "text/html";
+    }
     return "application/octet-stream";
 }
 
@@ -1611,13 +1614,14 @@ bool EngineApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 }
 
 EngineClient::EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
-                           bool isolated_world_test, bool autofill_test,
+                           bool isolated_world_test, bool autofill_test, bool passkey_flow_test,
                            std::map<std::string, std::string> permissions)
     : state_(state),
       quit_on_first_load_(quit_on_first_load),
       webauthn_test_(webauthn_test),
       isolated_world_test_(isolated_world_test),
       autofill_test_(autofill_test),
+      passkey_flow_test_(passkey_flow_test),
       permission_(new PermissionPolicy(std::move(permissions))) {
     router_ = CefMessageRouterBrowserSide::Create(MessageRouterConfig());
     router_->AddHandler(this, /*first=*/false);
@@ -1952,6 +1956,9 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     if (autofill_test_) {
         StartAutofillProbe(browser);
     }
+    if (passkey_flow_test_) {
+        StartPasskeyFlowProbe(browser);
+    }
 }
 
 void EngineClient::StartWebAuthnProbe(CefRefPtr<CefBrowser> browser) {
@@ -2208,6 +2215,94 @@ void EngineClient::StartAutofillProbe(CefRefPtr<CefBrowser> browser) {
     }
 }
 
+void EngineClient::StartPasskeyFlowProbe(CefRefPtr<CefBrowser> browser) {
+    // The full passkey flow (ADR-023): enable WebAuthn and install a resident virtual authenticator.
+    // The page's `navigator.credentials.create` runs in `StartPasskeyCreate` from `OnLoadEnd`, once the
+    // execution context exists — running it from `OnAfterCreated` races the load and the target reports
+    // "Inspected target navigated or closed".
+    auto fail = [state = state_](const std::string& error) {
+        std::printf("passkey_flow=unsupported error=%s\n", error.c_str());
+        std::fflush(stdout);
+        state->passkey_flow_done.store(true);
+        state->passkey_flow_ok.store(false);
+    };
+
+    CefRefPtr<DevToolsCall> enable(new DevToolsCall(
+        "WebAuthn.enable", nullptr,
+        [this, browser, fail](CefRefPtr<CefBrowser>, const DevToolsReply& enable_reply) {
+            if (!enable_reply.ok()) {
+                fail(enable_reply.error);
+                return;
+            }
+            CefRefPtr<CefDictionaryValue> options = CefDictionaryValue::Create();
+            options->SetString("protocol", "ctap2");
+            options->SetString("transport", "internal");
+            options->SetBool("hasResidentKey", true);
+            options->SetBool("hasUserVerification", true);
+            options->SetBool("isUserVerified", true);
+            options->SetBool("automaticPresenceSimulation", true);
+            CefRefPtr<CefDictionaryValue> add_params = CefDictionaryValue::Create();
+            add_params->SetDictionary("options", options);
+            CefRefPtr<DevToolsCall> add(new DevToolsCall(
+                "WebAuthn.addVirtualAuthenticator", add_params,
+                [this, fail](CefRefPtr<CefBrowser>, const DevToolsReply& add_reply) {
+                    if (!add_reply.ok()) {
+                        fail(add_reply.error);
+                        return;
+                    }
+                    passkey_authenticator_ = add_reply.String("authenticatorId");
+                    if (passkey_authenticator_.empty()) {
+                        fail("WebAuthn.addVirtualAuthenticator gave no authenticatorId");
+                    }
+                }));
+            if (!add->Start(browser)) {
+                fail("WebAuthn.addVirtualAuthenticator submit failed");
+            }
+        }));
+    if (!enable->Start(browser)) {
+        fail("WebAuthn.enable submit failed");
+    }
+}
+
+void EngineClient::StartPasskeyCreate(CefRefPtr<CefBrowser> browser) {
+    static const char* const kCreate =
+        "(async function(){try{"
+        "var c=await navigator.credentials.create({publicKey:{"
+        "challenge:new Uint8Array([1,2,3,4,5,6,7,8]),"
+        "rp:{name:'antikolt-test'},"
+        "user:{id:new Uint8Array([1]),name:'u',displayName:'User'},"
+        "pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}]"
+        "}});"
+        "return JSON.stringify({type:c.type,hasId:!!c.id});"
+        "}catch(e){return 'ERROR:'+e.name+':'+e.message;}})()";
+    auto fail = [state = state_](const std::string& error) {
+        std::printf("passkey_flow=unsupported error=%s\n", error.c_str());
+        std::fflush(stdout);
+        state->passkey_flow_done.store(true);
+        state->passkey_flow_ok.store(false);
+    };
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", kCreate);
+    params->SetBool("awaitPromise", true);
+    params->SetBool("returnByValue", true);
+    const std::string authenticator = passkey_authenticator_;
+    CefRefPtr<DevToolsCall> create(new DevToolsCall(
+        "Runtime.evaluate", params,
+        [state = state_, authenticator](CefRefPtr<CefBrowser>, const DevToolsReply& create_reply) {
+            const std::string result = create_reply.String("value");
+            const bool ok =
+                create_reply.ok() && result.find("\"type\":\"public-key\"") != std::string::npos;
+            std::printf("passkey_flow=%s result=%s authenticator=%s\n", ok ? "ok" : "FAILED",
+                        result.c_str(), authenticator.c_str());
+            std::fflush(stdout);
+            state->passkey_flow_done.store(true);
+            state->passkey_flow_ok.store(ok);
+        }));
+    if (!create->Start(browser)) {
+        fail("Runtime.evaluate submit failed");
+    }
+}
+
 namespace {
 /// A string rendered as a JSON string literal (quoted and escaped), so a credential can be embedded in
 /// a script without its quotes or backslashes breaking the JavaScript.
@@ -2353,6 +2448,97 @@ private:
     DISALLOW_COPY_AND_ASSIGN(FillCredential);
 };
 
+/// Install a resident CDP virtual authenticator (`WebAuthn.enable` → `addVirtualAuthenticator`) and
+/// reply to `webauthn_setup` with its id, so a secure-context page can then create a credential.
+class WebAuthnSetup : public CefBaseRefCounted {
+public:
+    explicit WebAuthnSetup(int64_t request_id) : request_id_(request_id) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<WebAuthnSetup> self(this);
+        // WebAuthn requires the page to "have focus" (a transient user gesture); `Emulation` overrides
+        // `document.hasFocus()` so a hidden probe surface is not refused with a NotAllowedError.
+        CefRefPtr<CefDictionaryValue> focus = CefDictionaryValue::Create();
+        focus->SetBool("enabled", true);
+        CefRefPtr<DevToolsCall> set_focus(new DevToolsCall(
+            "Emulation.setFocusEmulationEnabled", focus,
+            [self](CefRefPtr<CefBrowser> browser, const DevToolsReply& focus_reply) {
+                if (!focus_reply.ok()) {
+                    self->Finish(focus_reply.error);
+                    return;
+                }
+                // Bring the page to front so the view really has focus — WebAuthn's NOT_FOCUSED check
+                // is the view's own focus flag, not the emulated `document.hasFocus()`.
+                CefRefPtr<DevToolsCall> bring(new DevToolsCall(
+                    "Page.bringToFront", nullptr,
+                    [self](CefRefPtr<CefBrowser> browser, const DevToolsReply& bring_reply) {
+                        if (!bring_reply.ok()) {
+                            self->Finish(bring_reply.error);
+                            return;
+                        }
+                        self->Enable(browser);
+                    }));
+                if (!bring->Start(browser)) {
+                    self->Finish("Page.bringToFront submit failed");
+                }
+            }));
+        return set_focus->Start(browser);
+    }
+
+private:
+    void Enable(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<WebAuthnSetup> self(this);
+        CefRefPtr<DevToolsCall> enable(new DevToolsCall(
+            "WebAuthn.enable", nullptr,
+            [self](CefRefPtr<CefBrowser> browser, const DevToolsReply& enable_reply) {
+                if (!enable_reply.ok()) {
+                    self->Finish(enable_reply.error);
+                    return;
+                }
+                CefRefPtr<CefDictionaryValue> options = CefDictionaryValue::Create();
+                options->SetString("protocol", "ctap2");
+                options->SetString("transport", "internal");
+                options->SetBool("hasResidentKey", true);
+                options->SetBool("hasUserVerification", true);
+                options->SetBool("isUserVerified", true);
+                options->SetBool("automaticPresenceSimulation", true);
+                CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+                params->SetDictionary("options", options);
+                CefRefPtr<DevToolsCall> add(new DevToolsCall(
+                    "WebAuthn.addVirtualAuthenticator", params,
+                    [self](CefRefPtr<CefBrowser>, const DevToolsReply& add_reply) {
+                        if (!add_reply.ok()) {
+                            self->Finish(add_reply.error);
+                            return;
+                        }
+                        const std::string id = add_reply.String("authenticatorId");
+                        if (id.empty()) {
+                            self->Finish("WebAuthn.addVirtualAuthenticator gave no authenticatorId");
+                            return;
+                        }
+                        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+                        result->SetString("authenticator_id", id);
+                        StdioLink::Instance().Reply(self->request_id_, result);
+                    }));
+                if (!add->Start(browser)) {
+                    self->Finish("WebAuthn.addVirtualAuthenticator submit failed");
+                }
+            }));
+        if (!enable->Start(browser)) {
+            self->Finish("WebAuthn.enable submit failed");
+        }
+    }
+
+    void Finish(const std::string& error) {
+        StdioLink::Instance().ReplyError(request_id_, "internal", error.c_str());
+    }
+
+    int64_t request_id_;
+
+    IMPLEMENT_REFCOUNTING(WebAuthnSetup);
+    DISALLOW_COPY_AND_ASSIGN(WebAuthnSetup);
+};
+
 void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     // The popup closes on its own (login finished) or after the 60 s cap: only the popup goes, the card stays.
@@ -2424,6 +2610,12 @@ void EngineClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
     state_->http_status = httpStatusCode;
     state_->final_url = frame->GetURL().ToString();
     state_->load_finished = true;
+
+    // The passkey flow's `create` needs the page's execution context, so it waits for this load.
+    if (passkey_flow_test_ && !passkey_authenticator_.empty() &&
+        !state_->passkey_flow_done.load()) {
+        StartPasskeyCreate(browser);
+    }
 
     // A reload or navigation is a new JS context, so the bridge has to be installed again.
     if (state_->bridge_enabled.load()) {
@@ -2694,7 +2886,8 @@ int RunEngineHost(const HostConfig& config) {
         while ((!state.load_finished.load() ||
                 (config.webauthn_test && !state.webauthn_done.load()) ||
                 (config.isolated_world_test && !state.isolated_world_done.load()) ||
-                (config.autofill_test && !state.autofill_done.load())) &&
+                (config.autofill_test && !state.autofill_done.load()) ||
+                (config.passkey_flow_test && !state.passkey_flow_done.load())) &&
                !state.load_failed.load() && !state.quit_requested.load()) {
             PumpWindowsMessages();
             CefDoMessageLoopWork();
@@ -2738,6 +2931,9 @@ int RunEngineHost(const HostConfig& config) {
     }
     if (config.autofill_test && !state.autofill_ok.load()) {
         return 1;  // the spike must not report a green when the form was not filled safely.
+    }
+    if (config.passkey_flow_test && !state.passkey_flow_ok.load()) {
+        return 1;  // the spike must not report a green when no credential came back.
     }
     return (config.quit_on_first_load && !loaded) ? 1 : 0;
 }
@@ -3039,6 +3235,16 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
             link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot autofill");
         }
         // The reply is sent by FillCredential when the form is filled (or the sequence failed).
+    } else if (command.op == "webauthn_setup") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        CefRefPtr<WebAuthnSetup> setup(new WebAuthnSetup(command.id));
+        if (!setup->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot set up WebAuthn");
+        }
+        // The reply is sent by WebAuthnSetup once the authenticator is installed.
     } else {
         link.ReplyError(command.id, "not_supported",
                         "this milestone implements hello, ping, create_surface, navigate, eval, "

@@ -3,6 +3,29 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-093 — A passkey-folyamat: a virtuális hitelesítő parancs, a teljes `create` fókusz-gesztust kíván (2026-11-23)
+
+**Kontextus:** a passkey F0-spike (`--webauthntest`) bebizonyította, hogy a CDP virtuális hitelesítő
+(`WebAuthn.addVirtualAuthenticator`) működik a CEF 158-ban. A kérdés: a teljes
+`navigator.credentials.create` is működik-e.
+
+**Döntés / eredmény:**
+
+1. **`webauthn_setup` parancs** az engine-host stdio-protokollján: `Emulation.setFocusEmulationEnabled`
+   → `Page.bringToFront` → `WebAuthn.enable` → `addVirtualAuthenticator`, `{authenticator_id}` válasz.
+   Mérve: `passkey_setup=ok`.
+2. **A WebAuthn origin-ellenőrzése szigorúbb a secure-context-nél:** a custom `antikolt://` séma (bár
+   `CEF_SCHEME_OPTION_SECURE`) a `create`-nél `SecurityError: …invalid domain` — a WebAuthn csak
+   HTTPS-t, `localhost`-ot (127.0.0.1) vagy chrome-extension://-t fogad el.
+3. **A teljes `create` fókusz-gesztust kíván:** a `NotAllowedError: …does not have focus` a
+   `RenderWidgetHostView` valódi fókuszát nézi, amit a rejtett/offscreen felület nem tud adni (a
+   `SetFocus`, a `setFocusEmulationEnabled` és a `bringToFront` sem elég).
+
+**Következmény:** (+) a passkey-mechanizmus de-kockáztatva: a hitelesítő parancsba adható, az origin-
+és fókusz-követelmény mérve; (+) `--passkeyflowtest` a kapuban (`passkey_flow=de-risked`); (−) a
+teljes `create`/`get` a valós (fókuszált) felületen működik, az offscreen-harnessben
+`not-measurable` (fókusz-gesztus); a kulcs-export/import a széfbe külön szelet.
+
 ## ADR-092 — A széf panel: metadata-only lista, a shell kérdez a core-tól (2026-11-23)
 
 **Kontextus:** a széf (ADR-083) a core-ban él, a titkok (felhasználónév, jelszó) csak nyitott széfből

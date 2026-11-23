@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "host.h"
@@ -34,6 +35,20 @@ constexpr const char* kAutofillTestUrl =
     "data:text/html,%3Ctitle%3Eautofill%3C/title%3E"
     "%3Cinput%20name=username%20autocomplete=username%3E"
     "%3Cinput%20type=password%20name=password%3E";
+
+/// The passkey flow runs on a `antikolt://blob/…` page: the scheme is registered SECURE (host.cpp), so
+/// `navigator.credentials` is available. A minimal HTML file is written to the preview directory first.
+constexpr const char* kPasskeyTestName = "passkey-test.html";
+
+void WritePasskeyTestPage(const std::string& previews_dir) {
+    std::error_code error;
+    std::filesystem::create_directories(previews_dir, error);
+    if (error) {
+        return;
+    }
+    std::ofstream stream(previews_dir + "\\" + kPasskeyTestName, std::ios::binary);
+    stream << "<!doctype html><title>passkey</title><h1>passkey</h1>";
+}
 
 std::string Utf8FromWide(const std::wstring& wide) {
 #ifdef _WIN32
@@ -166,6 +181,7 @@ int main(int argc, char* argv[]) {
     bool webauthn_test = false;
     bool isolated_world_test = false;
     bool autofill_test = false;
+    bool passkey_flow_test = false;
     bool stdio_mode = false;
     bool user_data_explicit = false;
 
@@ -181,6 +197,8 @@ int main(int argc, char* argv[]) {
             isolated_world_test = true;
         } else if (std::strcmp(arg, "--autofilltest") == 0) {
             autofill_test = true;
+        } else if (std::strcmp(arg, "--passkeyflowtest") == 0) {
+            passkey_flow_test = true;
         } else if (std::strcmp(arg, "--stdio") == 0) {
             stdio_mode = true;
         } else if (std::strcmp(arg, "--version") == 0) {
@@ -222,13 +240,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (selftest || partition_test || webauthn_test || isolated_world_test || autofill_test) {
+    if (selftest || partition_test || webauthn_test || isolated_world_test || autofill_test ||
+        passkey_flow_test) {
         config.hidden = true;
         config.quit_on_first_load = true;
-        config.start_url = autofill_test ? kAutofillTestUrl : kSelftestUrl;
+        config.start_url = passkey_flow_test ? "antikolt://blob/passkey-test.html"
+                                             : (autofill_test ? kAutofillTestUrl : kSelftestUrl);
         config.webauthn_test = webauthn_test;
         config.isolated_world_test = isolated_world_test;
         config.autofill_test = autofill_test;
+        config.passkey_flow_test = passkey_flow_test;
         if (!user_data_explicit) {
             // A selftest must be hermetic: its own cache directory, removed afterwards. Otherwise a
             // leftover instance or a previous run fights over Chromium's cache locks and the result
@@ -240,8 +261,11 @@ int main(int argc, char* argv[]) {
                                             ? "antikolt-webauthn-"
                                             : (isolated_world_test
                                                    ? "antikolt-isolatedworld-"
-                                                   : (autofill_test ? "antikolt-autofill-"
-                                                                    : "antikolt-selftest-")));
+                                                   : (autofill_test
+                                                          ? "antikolt-autofill-"
+                                                          : (passkey_flow_test
+                                                                 ? "antikolt-passkey-"
+                                                                 : "antikolt-selftest-"))));
             config.user_data_path =
                 (std::filesystem::temp_directory_path() /
                  (prefix + std::to_string(static_cast<long long>(stamp))))
@@ -269,6 +293,11 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
+    // The passkey page lives in the preview directory, served over the (secure) `antikolt://` scheme.
+    if (passkey_flow_test) {
+        WritePasskeyTestPage(config.user_data_path + "\\previews");
+    }
+
     std::error_code error;
     std::filesystem::create_directories(config.user_data_path, error);
     if (error) {
@@ -276,7 +305,7 @@ int main(int argc, char* argv[]) {
                      config.user_data_path.c_str(), error.message().c_str());
         return 1;
     }
-    if (selftest || webauthn_test || isolated_world_test || autofill_test) {
+    if (selftest || webauthn_test || isolated_world_test || autofill_test || passkey_flow_test) {
         std::printf("user_data=%s\n", config.user_data_path.c_str());
         std::fflush(stdout);
     }
@@ -287,7 +316,8 @@ int main(int argc, char* argv[]) {
     const int exit_code =
         stdio_mode ? antikolt::RunEngineHostServer(config) : antikolt::RunEngineHost(config);
 
-    if ((selftest || webauthn_test || isolated_world_test || autofill_test) && !user_data_explicit) {
+    if ((selftest || webauthn_test || isolated_world_test || autofill_test || passkey_flow_test) &&
+        !user_data_explicit) {
         std::error_code cleanup_error;
         std::filesystem::remove_all(config.user_data_path, cleanup_error);
     }
