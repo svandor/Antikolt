@@ -57,6 +57,148 @@ inline QString uiText(const QString& hu, const QString& lang) {
         // Find bar.
         map.insert(QStringLiteral("Keresés az oldalon"), QStringLiteral("Find in page"));
         map.insert(QStringLiteral("Keresés az oldalon…"), QStringLiteral("Find in page…"));
+        // Status bar (the `setStatus` sources). Format placeholders are preserved verbatim.
+        map.insert(QStringLiteral("kártya felület: %1 · %2"), QStringLiteral("card surface: %1 · %2"));
+        map.insert(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva"),
+                   QStringLiteral("card #%1 saved to disk · memory freed"));
+        map.insert(QStringLiteral("motor: nincs elindítva · kártyák: 0"),
+                   QStringLiteral("engine: not started · cards: 0"));
+        map.insert(QStringLiteral("a tálcán fut · megnyitás: a tálcaikon"),
+                   QStringLiteral("running in the tray · open: the tray icon"));
+        map.insert(QStringLiteral("előhozva a tálcáról"), QStringLiteral("restored from the tray"));
+        map.insert(QStringLiteral("kitűzött kártya — a hibernálás kimarad"),
+                   QStringLiteral("pinned card — hibernation skipped"));
+        map.insert(QStringLiteral("bejelentkezés folyamatban — a hibernálás vár"),
+                   QStringLiteral("sign-in in progress — hibernation waits"));
+        map.insert(QStringLiteral("a kártya médiát játszik — a hibernálás vár"),
+                   QStringLiteral("the card is playing media — hibernation waits"));
+        map.insert(QStringLiteral("tétlenség: a kártya lemezre megy"),
+                   QStringLiteral("idle: the card goes to disk"));
+        map.insert(QStringLiteral("memória-nyomás: a kemény sáv fölött"),
+                   QStringLiteral("memory pressure: above the hard band"));
+        map.insert(QStringLiteral("memória-nyomás: a figyelmeztető sáv fölött — a preview szünetel"),
+                   QStringLiteral("memory pressure: above the warn band — preview paused"));
+        map.insert(QStringLiteral("motor hiba: %1"), QStringLiteral("engine error: %1"));
+        map.insert(QStringLiteral("az oldal összeomlott (#%1) — újratöltés (állapot %2, kód %3)"),
+                   QStringLiteral("the page crashed (#%1) — reloading (status %2, code %3)"));
+        map.insert(QStringLiteral("motor: %1 %2 · képességek: %3"),
+                   QStringLiteral("engine: %1 %2 · capabilities: %3"));
+        map.insert(QStringLiteral("betöltve (#%1, %2): %3"), QStringLiteral("loaded (#%1, %2): %3"));
+        map.insert(QStringLiteral("takarítás hiba (%1): %2"), QStringLiteral("cleanup error (%1): %2"));
+        map.insert(QStringLiteral("betöltési hiba (#%1): %2 — %3"),
+                   QStringLiteral("load error (#%1): %2 — %3"));
+        map.insert(QStringLiteral("bejelentkezési ablak nyitva: %1"),
+                   QStringLiteral("sign-in window open: %1"));
+        map.insert(QStringLiteral("elutasított felugró ablak: %1"),
+                   QStringLiteral("popup refused: %1"));
+        map.insert(QStringLiteral("a bejelentkezési ablak bezárult"),
+                   QStringLiteral("the sign-in window closed"));
+        map.insert(QStringLiteral("konténer-motor indítva: %1"),
+                   QStringLiteral("container engine started: %1"));
+        map.insert(QStringLiteral("nem találom a motorházat (állítsd be az ANTIKOLT_ENGINE változót)"),
+                   QStringLiteral("cannot find the engine host (set ANTIKOLT_ENGINE)"));
+        map.insert(QStringLiteral("motor indítása: %1"), QStringLiteral("starting engine: %1"));
+        map.insert(QStringLiteral("mag hiba: %1"), QStringLiteral("core error: %1"));
+        map.insert(QStringLiteral("mag: %1 %2"), QStringLiteral("core: %1 %2"));
+        map.insert(QStringLiteral("a mag nem található (ANTIKOLT_CORE) — a rács egyelőre mintaadatot mutat"),
+                   QStringLiteral("core not found (ANTIKOLT_CORE) — the grid shows sample data for now"));
+        map.insert(QStringLiteral("az előző kártya mentése nem sikerült: %1"),
+                   QStringLiteral("saving the previous card failed: %1"));
+        map.insert(QStringLiteral("a kártya nem tudott felületet kérni a motortól"),
+                   QStringLiteral("the card could not ask the engine for a surface"));
+        map.insert(QStringLiteral("a kártyának nincs címe"), QStringLiteral("the card has no title"));
+        map.insert(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot"),
+                   QStringLiteral("the engine is not running — press the “Start engine” button"));
+        map.insert(QStringLiteral("előző kártya mentve (%1 bájt) · váltás: %2"),
+                   QStringLiteral("previous card saved (%1 bytes) · switching: %2"));
+        map.insert(QStringLiteral("a lap kérése nem kapott választ időben (#%1)"),
+                   QStringLiteral("the page request timed out (#%1)"));
+        map.insert(QStringLiteral("a kezdőlap cím nélküli kártyát kért megnyitni (#%1)"),
+                   QStringLiteral("the home page asked to open an untitled card (#%1)"));
+        map.insert(QStringLiteral("ismeretlen híd-hívás: %1"), QStringLiteral("unknown bridge call: %1"));
+        map.insert(QStringLiteral("a kártyalista nem érkezett meg: %1 — a rács a mintákat mutatja"),
+                   QStringLiteral("the card list did not arrive: %1 — the grid shows the samples"));
+        map.insert(QStringLiteral("a kártyalista nem ment át a lapra: %1"),
+                   QStringLiteral("the card list did not reach the page: %1"));
+        map.insert(QStringLiteral("kártyalista a magtól: %1 kártya"),
+                   QStringLiteral("card list from the core: %1 cards"));
+        map.insert(QStringLiteral("a konténer-tábla nem érkezett meg: %1"),
+                   QStringLiteral("the container table did not arrive: %1"));
+        map.insert(QStringLiteral("nincs mit fagyasztani"), QStringLiteral("nothing to freeze"));
+        map.insert(QStringLiteral("fagyasztás hiba: %1"), QStringLiteral("freeze error: %1"));
+        map.insert(QStringLiteral("pillanatkép: %1 bájt · állapot %2 bájt · motor leállítása"),
+                   QStringLiteral("snapshot: %1 bytes · state %2 bytes · stopping engine"));
+        map.insert(QStringLiteral("a mag nem fut, a szabályok nem menthetők"),
+                   QStringLiteral("the core is not running, the rules cannot be saved"));
+        map.insert(QStringLiteral("a szabályok nem mentődtek: %1"),
+                   QStringLiteral("the rules did not save: %1"));
+        map.insert(QStringLiteral("munkamenet-szabályok: %1 óra%2"),
+                   QStringLiteral("session rules: %1 hour%2"));
+        map.insert(QStringLiteral("nagyítás: %1% (nincs élő felület)"),
+                   QStringLiteral("zoom: %1% (no live surface)"));
+        map.insert(QStringLiteral("oldal-téma: %1 (nincs élő felület)"),
+                   QStringLiteral("page theme: %1 (no live surface)"));
+        map.insert(QStringLiteral("sötét oldalak: %1 (nincs élő felület)"),
+                   QStringLiteral("dark pages: %1 (no live surface)"));
+        map.insert(QStringLiteral("az előnézet neve nem mentődött: %1"),
+                   QStringLiteral("the preview name did not save: %1"));
+        map.insert(QStringLiteral("előnézet kész: %1"), QStringLiteral("preview ready: %1"));
+        map.insert(QStringLiteral("az előnézet nem olvasható: %1"),
+                   QStringLiteral("the preview cannot be read: %1"));
+        map.insert(QStringLiteral("az előnézet nem került a profilba: %1"),
+                   QStringLiteral("the preview did not reach the profile: %1"));
+        map.insert(QStringLiteral("háttér-előnézet kész: %1"),
+                   QStringLiteral("background preview ready: %1"));
+        map.insert(QStringLiteral("háttér-előnézet kimaradt: %1"),
+                   QStringLiteral("background preview skipped: %1"));
+        map.insert(QStringLiteral("%1 árva előnézet törölve"),
+                   QStringLiteral("%1 orphan previews removed"));
+        map.insert(QStringLiteral("a munkamenet-naplóhoz előbb indítsd el a magot"),
+                   QStringLiteral("start the core first for the session ledger"));
+        map.insert(QStringLiteral("a munkamenet-napló nem érkezett meg: %1"),
+                   QStringLiteral("the session ledger did not arrive: %1"));
+        map.insert(QStringLiteral("munkamenet-napló: %1 sor, ebből %2 lejárt"),
+                   QStringLiteral("session ledger: %1 rows, %2 expired"));
+        map.insert(QStringLiteral("a takarításhoz előbb indítsd el a magot"),
+                   QStringLiteral("start the core first for cleanup"));
+        map.insert(QStringLiteral("a takarítási terv nem érkezett meg: %1"),
+                   QStringLiteral("the cleanup plan did not arrive: %1"));
+        map.insert(QStringLiteral("takarítás: %1 azonnal, %2 a kártya következő megnyitásakor"),
+                   QStringLiteral("cleanup: %1 now, %2 when the card next opens"));
+        map.insert(QStringLiteral("takarítás: a kártya médiát játszik — az élő munkamenet megmarad"),
+                   QStringLiteral("cleanup: the card is playing media — the live session stays"));
+        map.insert(QStringLiteral("a mag nem fut — nincs mit menteni"),
+                   QStringLiteral("the core is not running — nothing to save"));
+        map.insert(QStringLiteral("profil mentése nem sikerült: %1"),
+                   QStringLiteral("saving the profile failed: %1"));
+        map.insert(QStringLiteral("profil mentve: %1 (%2 kártya, %3 konténer)"),
+                   QStringLiteral("profile saved: %1 (%2 cards, %3 containers)"));
+        map.insert(QStringLiteral("nincs élő kártya — nincs mit menteni"),
+                   QStringLiteral("no live card — nothing to save"));
+        map.insert(QStringLiteral("a PDF mentése nem sikerült: %1"),
+                   QStringLiteral("saving the PDF failed: %1"));
+        map.insert(QStringLiteral("PDF mentve: %1"), QStringLiteral("PDF saved: %1"));
+        map.insert(QStringLiteral("a mag nem fut — nincs hová betölteni"),
+                   QStringLiteral("the core is not running — nowhere to load into"));
+        map.insert(QStringLiteral("profil betöltése nem sikerült: %1"),
+                   QStringLiteral("loading the profile failed: %1"));
+        map.insert(QStringLiteral("profil betöltve: %1 (%2 kártya, %3 konténer)"),
+                   QStringLiteral("profile loaded: %1 (%2 cards, %3 containers)"));
+        map.insert(QStringLiteral("a mag nem fut, a beállítások nem menthetők"),
+                   QStringLiteral("the core is not running, the settings cannot be saved"));
+        map.insert(QStringLiteral("a beállítások nem mentődtek: %1"),
+                   QStringLiteral("the settings did not save: %1"));
+        map.insert(QStringLiteral("beállítások mentve"), QStringLiteral("settings saved"));
+        map.insert(QStringLiteral("az egyéni kezdőlap visszaállítva"),
+                   QStringLiteral("the custom home page restored"));
+        map.insert(QStringLiteral("nincs mit raszterizálni"), QStringLiteral("nothing to rasterise"));
+        map.insert(QStringLiteral("a rács raszterizálása nem sikerült: %1"),
+                   QStringLiteral("rasterising the grid failed: %1"));
+        map.insert(QStringLiteral("a raszter nem került a profilba: %1"),
+                   QStringLiteral("the raster did not reach the profile: %1"));
+        map.insert(QStringLiteral("raszter kész: %1"), QStringLiteral("raster ready: %1"));
+        map.insert(QStringLiteral("raszter-kezdőlap (a motor leállítva)"),
+                   QStringLiteral("raster home (engine stopped)"));
         return map;
     }();
     return en.value(hu, hu);

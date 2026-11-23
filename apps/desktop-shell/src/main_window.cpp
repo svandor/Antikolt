@@ -310,7 +310,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         pending_url_.clear();
         pending_title_.clear();
 
-        setStatus(QStringLiteral("kártya felület: %1 · %2")
+        setStatus(t(QStringLiteral("kártya felület: %1 · %2"))
                       .arg(surface)
                       .arg(title.isEmpty() ? target : title));
         live_card_url_ = opening_home ? QString() : target;
@@ -334,7 +334,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         home_surface_ = 0;
         live_card_pinned_ = false;
         live_card_url_.clear();
-        setStatus(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva").arg(surface));
+        setStatus(t(QStringLiteral("kártya #%1 lemezre mentve · memória felszabadítva")).arg(surface));
         // A card went back to disk: the engine is now idle, so the raster home's clock starts (T2). Skipped while
         // already in the raster home (enterRasterMode detaches too, and must not re-arm itself).
         if (!raster_mode_) {
@@ -919,7 +919,7 @@ QString MainWindow::coreExecutable() {
 
 void MainWindow::wireEngine(EngineClient* engine) {
     connect(engine, &EngineClient::failed, this, [this](const QString& message) {
-        setStatus(QStringLiteral("motor hiba: %1").arg(message));
+        setStatus(t(QStringLiteral("motor hiba: %1")).arg(message));
     });
     // Find-in-page results (F7 "Ctrl+F") come from whichever engine owns the live surface.
     connect(engine, &EngineClient::findResult, this, &MainWindow::onFindResult);
@@ -928,7 +928,7 @@ void MainWindow::wireEngine(EngineClient* engine) {
     connect(engine, &EngineClient::rendererTerminated, this,
             [this, engine](qint64 surface, int status, int code) {
                 const QString url = (surface == home_surface_) ? homePageUrl() : live_card_url_;
-                setStatus(QStringLiteral("az oldal összeomlott (#%1) — újratöltés (állapot %2, kód %3)")
+                setStatus(t(QStringLiteral("az oldal összeomlott (#%1) — újratöltés (állapot %2, kód %3)"))
                               .arg(surface)
                               .arg(status)
                               .arg(code));
@@ -937,7 +937,7 @@ void MainWindow::wireEngine(EngineClient* engine) {
                 }
             });
     connect(engine, &EngineClient::engineReady, this, [this, engine](const QJsonObject& info) {
-        setStatus(QStringLiteral("motor: %1 %2 · képességek: %3")
+        setStatus(t(QStringLiteral("motor: %1 %2 · képességek: %3"))
                       .arg(info.value(QStringLiteral("name")).toString(),
                            info.value(QStringLiteral("version")).toString())
                       .arg(info.value(QStringLiteral("capabilities")).toArray().size()));
@@ -957,7 +957,7 @@ void MainWindow::wireEngine(EngineClient* engine) {
                     onPreviewWorkerLoaded();
                     return;
                 }
-                setStatus(QStringLiteral("betöltve (#%1, %2): %3")
+                setStatus(t(QStringLiteral("betöltve (#%1, %2): %3"))
                               .arg(surface)
                               .arg(httpStatus)
                               .arg(url));
@@ -1032,7 +1032,7 @@ void MainWindow::wireEngine(EngineClient* engine) {
                     [this, origin, container = pending.container](const QJsonObject&,
                                                                   const QString& error) {
                         if (!error.isEmpty()) {
-                            setStatus(QStringLiteral("takarítás hiba (%1): %2")
+                            setStatus(t(QStringLiteral("takarítás hiba (%1): %2"))
                                           .arg(origin, error));
                             return;
                         }
@@ -1051,7 +1051,7 @@ void MainWindow::wireEngine(EngineClient* engine) {
             });
     connect(engine, &EngineClient::loadFailed, this,
             [this](qint64 surface, const QString& url, const QString& reason) {
-                setStatus(QStringLiteral("betöltési hiba (#%1): %2 — %3").arg(surface).arg(url, reason));
+                setStatus(t(QStringLiteral("betöltési hiba (#%1): %2 — %3")).arg(surface).arg(url, reason));
             });
     // The login popup (docs/HU/02 §8.5): while it is open the card must not hibernate, or the SSO flow
     // would lose its window and cookies. The engine enforces the 60 s cap; the shell only reacts.
@@ -1059,10 +1059,10 @@ void MainWindow::wireEngine(EngineClient* engine) {
             [this](qint64, const QString& url, const QString& disposition) {
                 if (disposition == QStringLiteral("authenticated_window")) {
                     popup_open_ = true;
-                    setStatus(QStringLiteral("bejelentkezési ablak nyitva: %1").arg(url));
+                    setStatus(t(QStringLiteral("bejelentkezési ablak nyitva: %1")).arg(url));
                     armIdleTimer();
                 } else {
-                    setStatus(QStringLiteral("elutasított felugró ablak: %1").arg(url));
+                    setStatus(t(QStringLiteral("elutasított felugró ablak: %1")).arg(url));
                 }
             });
     connect(engine, &EngineClient::popupClosed, this, [this](qint64) {
@@ -1100,7 +1100,7 @@ EngineClient* MainWindow::engineFor(const QString& container) {
     }
     client->handshake();
     container_engines_.insert(container, client);
-    setStatus(QStringLiteral("konténer-motor indítva: %1").arg(container));
+    setStatus(t(QStringLiteral("konténer-motor indítva: %1")).arg(container));
     return client;
 }
 
@@ -1169,7 +1169,7 @@ void MainWindow::startEngine() {
     if (!engine_->start(enginePath, profile, /*hidden=*/false, profile + QStringLiteral("/previews"))) {
         return;
     }
-    setStatus(QStringLiteral("motor indítása: %1").arg(enginePath));
+    setStatus(t(QStringLiteral("motor indítása: %1")).arg(enginePath));
     engine_->handshake();
 
     // The core owns the data. A missing core must not stop the browser from working: it only means the
@@ -1177,10 +1177,10 @@ void MainWindow::startEngine() {
     if (core_ == nullptr) {
         core_ = new CoreClient(this);
         connect(core_, &CoreClient::failed, this, [this](const QString& message) {
-            setStatus(QStringLiteral("mag hiba: %1").arg(message));
+            setStatus(t(QStringLiteral("mag hiba: %1")).arg(message));
         });
         connect(core_, &CoreClient::ready, this, [this](const QJsonObject& info) {
-            setStatus(QStringLiteral("mag: %1 %2")
+            setStatus(t(QStringLiteral("mag: %1 %2"))
                           .arg(info.value(QStringLiteral("name")).toString(),
                                info.value(QStringLiteral("version")).toString()));
             // The memory budget (F6) is a profile setting: cache it once the core is there to answer.
@@ -1230,7 +1230,7 @@ void MainWindow::ensureSurface() {
         previous_engine->snapshot(
             previous, [this, previous, previous_engine](const QJsonObject&, const QString& error) {
                 if (!error.isEmpty()) {
-                    setStatus(QStringLiteral("az előző kártya mentése nem sikerült: %1").arg(error));
+                    setStatus(t(QStringLiteral("az előző kártya mentése nem sikerült: %1")).arg(error));
                 }
                 card_->detach();
                 previous_engine->destroySurface(previous,
@@ -1291,11 +1291,11 @@ void MainWindow::openCard(const QString& url, const QString& title) {
     live_engine_->snapshot(previous, [this, previous, title](const QJsonObject& result,
                                                              const QString& error) {
         if (error.isEmpty()) {
-            setStatus(QStringLiteral("előző kártya mentve (%1 bájt) · váltás: %2")
+            setStatus(t(QStringLiteral("előző kártya mentve (%1 bájt) · váltás: %2"))
                           .arg(result.value(QStringLiteral("bytes")).toInt())
                           .arg(title.isEmpty() ? pending_url_ : title));
         } else {
-            setStatus(QStringLiteral("az előző kártya mentése nem sikerült: %1").arg(error));
+            setStatus(t(QStringLiteral("az előző kártya mentése nem sikerült: %1")).arg(error));
         }
         card_->detach();
         live_engine_->destroySurface(previous, [this](const QJsonObject&, const QString&) {
@@ -1313,7 +1313,7 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
         awaiting_page_reply_.insert(request);
         QTimer::singleShot(kPageAnswerMs, this, [this, request] {
             if (awaiting_page_reply_.contains(request)) {
-                setStatus(QStringLiteral("a lap kérése nem kapott választ időben (#%1)").arg(request));
+                setStatus(t(QStringLiteral("a lap kérése nem kapott választ időben (#%1)")).arg(request));
                 replyToPage(request, {}, QStringLiteral("a shell nem válaszolt időben"));
             }
         });
@@ -1322,7 +1322,7 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
         const QString url = args.value(QStringLiteral("url")).toString();
         const QString title = args.value(QStringLiteral("title")).toString();
         if (url.isEmpty()) {
-            setStatus(QStringLiteral("a kezdőlap cím nélküli kártyát kért megnyitni (#%1)")
+            setStatus(t(QStringLiteral("a kezdőlap cím nélküli kártyát kért megnyitni (#%1)"))
                           .arg(surface));
             replyToPage(request, {}, QStringLiteral("a kártyának nincs címe"));
             return;
@@ -1657,7 +1657,7 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
         return;
     }
     // An unknown method is a version mismatch, not a crash: say so and keep the surface alive.
-    setStatus(QStringLiteral("ismeretlen híd-hívás: %1").arg(method));
+    setStatus(t(QStringLiteral("ismeretlen híd-hívás: %1")).arg(method));
 }
 
 void MainWindow::replyToPage(qint64 request, const QJsonObject& json, const QString& error) {
@@ -1678,7 +1678,7 @@ void MainWindow::pushCardsToGrid(qint64 surface) {
     }
     core_->cardsList([this, surface](const QJsonObject& reply, const QString& error) {
         if (!error.isEmpty()) {
-            setStatus(QStringLiteral("a kártyalista nem érkezett meg: %1 — a rács a mintákat mutatja")
+            setStatus(t(QStringLiteral("a kártyalista nem érkezett meg: %1 — a rács a mintákat mutatja"))
                           .arg(error));
             return;
         }
@@ -1693,10 +1693,10 @@ void MainWindow::pushCardsToGrid(qint64 surface) {
         engine_->evaluate(surface, script, [this, count = cards.size()](const QJsonObject&,
                                                                        const QString& eval_error) {
             if (!eval_error.isEmpty()) {
-                setStatus(QStringLiteral("a kártyalista nem ment át a lapra: %1").arg(eval_error));
+                setStatus(t(QStringLiteral("a kártyalista nem ment át a lapra: %1")).arg(eval_error));
                 return;
             }
-            setStatus(QStringLiteral("kártyalista a magtól: %1 kártya").arg(count));
+            setStatus(t(QStringLiteral("kártyalista a magtól: %1 kártya")).arg(count));
         });
     });
         // The container table travels with the cards, not on the page's own request: the bridge script is installed
@@ -1705,7 +1705,7 @@ void MainWindow::pushCardsToGrid(qint64 surface) {
         // five). A push has no such race (ADR-052).
         core_->containersList([this, surface](const QJsonObject& table_reply, const QString& table_error) {
             if (!table_error.isEmpty()) {
-                setStatus(QStringLiteral("a konténer-tábla nem érkezett meg: %1").arg(table_error));
+                setStatus(t(QStringLiteral("a konténer-tábla nem érkezett meg: %1")).arg(table_error));
                 return;
             }
             QJsonObject table_payload;
@@ -1807,10 +1807,10 @@ void MainWindow::freezeCard() {
     live_engine_->snapshot(surface, [this, surface](const QJsonObject& result, const QString& error) {
         if (!error.isEmpty()) {
             return_to_grid_ = false;
-            setStatus(QStringLiteral("fagyasztás hiba: %1").arg(error));
+            setStatus(t(QStringLiteral("fagyasztás hiba: %1")).arg(error));
             return;
         }
-        setStatus(QStringLiteral("pillanatkép: %1 bájt · állapot %2 bájt · motor leállítása")
+        setStatus(t(QStringLiteral("pillanatkép: %1 bájt · állapot %2 bájt · motor leállítása"))
                       .arg(result.value(QStringLiteral("bytes")).toInt())
                       .arg(result.value(QStringLiteral("state_bytes")).toInt()));
         // Order matters: the state is on disk before the surface goes away.
@@ -1888,11 +1888,11 @@ void MainWindow::saveSessionRules() {
     rules.insert(QStringLiteral("container_default"), session_policy_);
     core_->sessionRules(rules, [this](const QJsonObject& saved, const QString& error) {
         if (!error.isEmpty()) {
-            setStatus(QStringLiteral("a szabályok nem mentődtek: %1").arg(error));
+            setStatus(t(QStringLiteral("a szabályok nem mentődtek: %1")).arg(error));
             return;
         }
         const QJsonObject stored = saved.value(QStringLiteral("rules")).toObject();
-        setStatus(QStringLiteral("munkamenet-szabályok: %1 óra%2")
+        setStatus(t(QStringLiteral("munkamenet-szabályok: %1 óra%2"))
                       .arg(static_cast<qint64>(stored.value(QStringLiteral("ttl_ms")).toDouble() /
                                                3600000.0))
                       .arg(stored.value(QStringLiteral("wipe_on_app_lock")).toBool()
@@ -1909,7 +1909,7 @@ void MainWindow::setZoomPercent(int percent) {
         zoom_label_->setText(QStringLiteral("🔍 %1%").arg(clamped));
     }
     if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
-        setStatus(QStringLiteral("nagyítás: %1% (nincs élő felület)").arg(clamped));
+        setStatus(t(QStringLiteral("nagyítás: %1% (nincs élő felület)")).arg(clamped));
         return;
     }
     live_engine_->setZoom(surface_, clamped, [this, clamped](const QJsonObject&, const QString& error) {
@@ -1925,7 +1925,7 @@ void MainWindow::setPageMedia(const QString& media) {
     }
     page_media_ = media;
     if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
-        setStatus(QStringLiteral("oldal-téma: %1 (nincs élő felület)").arg(media));
+        setStatus(t(QStringLiteral("oldal-téma: %1 (nincs élő felület)")).arg(media));
         return;
     }
     live_engine_->setMedia(surface_, media, [this, media](const QJsonObject&, const QString& error) {
@@ -1969,7 +1969,7 @@ void MainWindow::setPageDarkMode(const QString& mode) {
         }
     }
     if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
-        setStatus(QStringLiteral("sötét oldalak: %1 (nincs élő felület)")
+        setStatus(t(QStringLiteral("sötét oldalak: %1 (nincs élő felület)"))
                       .arg(pageDarkModeLabel(page_dark_mode_)));
         return;
     }
@@ -2069,12 +2069,12 @@ void MainWindow::producePreview(qint64 surface) {
             core_->cardUpsert(updated, [this, name](const QJsonObject&, const QString& upsert_error) {
                 if (!upsert_error.isEmpty()) {
                     qInfo("[shell] preview: upsert failed: %s", qUtf8Printable(upsert_error));
-                    setStatus(QStringLiteral("az előnézet neve nem mentődött: %1").arg(upsert_error));
+                    setStatus(t(QStringLiteral("az előnézet neve nem mentődött: %1")).arg(upsert_error));
                     return;
                 }
                 ++previews_made_;
                 qInfo("[shell] preview: record updated for %s", qUtf8Printable(name));
-                setStatus(QStringLiteral("előnézet kész: %1").arg(name));
+                setStatus(t(QStringLiteral("előnézet kész: %1")).arg(name));
             });
         };
         // A capture can stall behind a GPU hiccup (measured: `Page.captureScreenshot` sometimes answers only
@@ -2104,7 +2104,7 @@ void MainWindow::producePreview(qint64 surface) {
                     QFile shot_file(written);
                     if (!shot_file.open(QIODevice::ReadOnly)) {
                         qInfo("[shell] preview: cannot read the capture %s", qUtf8Printable(written));
-                        setStatus(QStringLiteral("az előnézet nem olvasható: %1").arg(written));
+                        setStatus(t(QStringLiteral("az előnézet nem olvasható: %1")).arg(written));
                         return;
                     }
                     const QByteArray bytes = shot_file.readAll();
@@ -2116,7 +2116,7 @@ void MainWindow::producePreview(qint64 surface) {
                         // content name, so the engine's scheme handler finds it.
                         if (!QFile::copy(written, target)) {
                             qInfo("[shell] preview: copy failed to %s", qUtf8Printable(target));
-                            setStatus(QStringLiteral("az előnézet nem került a profilba: %1").arg(target));
+                            setStatus(t(QStringLiteral("az előnézet nem került a profilba: %1")).arg(target));
                             return;
                         }
                         qInfo("[shell] preview: copied to %s", qUtf8Printable(target));
@@ -2308,7 +2308,7 @@ void MainWindow::onPreviewWorkerLoaded() {
                         return;
                     }
                     ++previews_made_;
-                    setStatus(QStringLiteral("háttér-előnézet kész: %1").arg(worker_preview_name_));
+                    setStatus(t(QStringLiteral("háttér-előnézet kész: %1")).arg(worker_preview_name_));
                     finishPreviewWorker(true, QString());
                 });
             });
@@ -2337,7 +2337,7 @@ void MainWindow::finishPreviewWorker(bool produced, const QString& reason) {
     if (!produced) {
         qInfo("[shell] preview worker: leállítva (%s)", qUtf8Printable(reason));
         if (!reason.isEmpty()) {
-            setStatus(QStringLiteral("háttér-előnézet kimaradt: %1").arg(reason));
+            setStatus(t(QStringLiteral("háttér-előnézet kimaradt: %1")).arg(reason));
         }
     }
     emit previewWorkerFinished(card_id, produced);
@@ -2416,7 +2416,7 @@ void MainWindow::cleanupPreviews() {
             engine_profile_ + QStringLiteral("/previews"), live_names);
         if (!removed.isEmpty()) {
             qInfo("[shell] preview: %lld orphan file(s) removed", static_cast<long long>(removed.size()));
-            setStatus(QStringLiteral("%1 árva előnézet törölve").arg(removed.size()));
+            setStatus(t(QStringLiteral("%1 árva előnézet törölve")).arg(removed.size()));
         }
     });
 }
@@ -2432,7 +2432,7 @@ void MainWindow::refreshSessions() {
     }
     core_->sessionList([this](const QJsonObject& listed, const QString& error) {
         if (!error.isEmpty()) {
-            setStatus(QStringLiteral("a munkamenet-napló nem érkezett meg: %1").arg(error));
+            setStatus(t(QStringLiteral("a munkamenet-napló nem érkezett meg: %1")).arg(error));
             return;
         }
         // The editors show what the core holds, not what the shell remembers: the panel is a view of the
@@ -2528,7 +2528,7 @@ void MainWindow::refreshSessions() {
                     ++row;
                 }
                 sessions_table_->resizeColumnsToContents();
-                setStatus(QStringLiteral("munkamenet-napló: %1 sor, ebből %2 lejárt")
+                setStatus(t(QStringLiteral("munkamenet-napló: %1 sor, ebből %2 lejárt"))
                               .arg(rows.size())
                               .arg(due_origins.size()));
             });
@@ -2579,7 +2579,7 @@ void MainWindow::cleanupSessions() {
         QDateTime::currentMSecsSinceEpoch(), false,
         [this](const QJsonObject& due, const QString& error) {
             if (!error.isEmpty()) {
-                setStatus(QStringLiteral("a takarítási terv nem érkezett meg: %1").arg(error));
+                setStatus(t(QStringLiteral("a takarítási terv nem érkezett meg: %1")).arg(error));
                 return;
             }
             const QJsonArray rows = due.value(QStringLiteral("due")).toArray();
@@ -2620,7 +2620,7 @@ void MainWindow::cleanupSessions() {
             }
 
             const auto report = [this, queued](int immediate) {
-                setStatus(QStringLiteral("takarítás: %1 azonnal, %2 a kártya következő megnyitásakor")
+                setStatus(t(QStringLiteral("takarítás: %1 azonnal, %2 a kártya következő megnyitásakor"))
                               .arg(immediate)
                               .arg(queued));
                 if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
@@ -2655,7 +2655,7 @@ void MainWindow::cleanupSessions() {
                         [this, live_origin, container = live_pending.container, report](
                             const QJsonObject&, const QString& failure) {
                             if (!failure.isEmpty()) {
-                                setStatus(QStringLiteral("takarítás hiba (%1): %2")
+                                setStatus(t(QStringLiteral("takarítás hiba (%1): %2"))
                                               .arg(live_origin, failure));
                                 return;
                             }
@@ -2684,10 +2684,10 @@ void MainWindow::exportProfile() {
     }
     core_->profileExport(path, [this, path](const QJsonObject& reply, const QString& error) {
         if (!error.isEmpty()) {
-            setStatus(QStringLiteral("profil mentése nem sikerült: %1").arg(error));
+            setStatus(t(QStringLiteral("profil mentése nem sikerült: %1")).arg(error));
             return;
         }
-        setStatus(QStringLiteral("profil mentve: %1 (%2 kártya, %3 konténer)")
+        setStatus(t(QStringLiteral("profil mentve: %1 (%2 kártya, %3 konténer)"))
                       .arg(path)
                       .arg(reply.value(QStringLiteral("cards")).toInt())
                       .arg(reply.value(QStringLiteral("containers")).toInt()));
@@ -2712,11 +2712,11 @@ void MainWindow::printToPdf() {
     }
     live_engine_->printPdf(surface_, path, [this, path](const QJsonObject& reply, const QString& error) {
         if (!error.isEmpty() || !reply.value(QStringLiteral("ok")).toBool()) {
-            setStatus(QStringLiteral("a PDF mentése nem sikerült: %1")
+            setStatus(t(QStringLiteral("a PDF mentése nem sikerült: %1"))
                           .arg(error.isEmpty() ? QStringLiteral("ismeretlen hiba") : error));
             return;
         }
-        setStatus(QStringLiteral("PDF mentve: %1").arg(path));
+        setStatus(t(QStringLiteral("PDF mentve: %1")).arg(path));
     });
 }
 
@@ -2793,10 +2793,10 @@ void MainWindow::importProfile() {
     }
     core_->profileImport(path, [this, path](const QJsonObject& reply, const QString& error) {
         if (!error.isEmpty()) {
-            setStatus(QStringLiteral("profil betöltése nem sikerült: %1").arg(error));
+            setStatus(t(QStringLiteral("profil betöltése nem sikerült: %1")).arg(error));
             return;
         }
-        setStatus(QStringLiteral("profil betöltve: %1 (%2 kártya, %3 konténer)")
+        setStatus(t(QStringLiteral("profil betöltve: %1 (%2 kártya, %3 konténer)"))
                       .arg(path)
                       .arg(reply.value(QStringLiteral("cards")).toInt())
                       .arg(reply.value(QStringLiteral("containers")).toInt()));
@@ -3051,7 +3051,7 @@ void MainWindow::saveUserPrefs() {
                                            : QStringLiteral("balanced"));
     core_->userPrefsSet(prefs, [this](const QJsonObject&, const QString& error) {
         if (!error.isEmpty()) {
-            setStatus(QStringLiteral("a beállítások nem mentődtek: %1").arg(error));
+            setStatus(t(QStringLiteral("a beállítások nem mentődtek: %1")).arg(error));
             return;
         }
         setStatus(QStringLiteral("beállítások mentve"));
@@ -3153,7 +3153,7 @@ void MainWindow::captureGrid() {
                      [this](const QJsonObject& shot, const QString& error) {
                          const QString written = shot.value(QStringLiteral("path")).toString();
                          if (!error.isEmpty() || written.isEmpty()) {
-                             setStatus(QStringLiteral("a rács raszterizálása nem sikerült: %1")
+                             setStatus(t(QStringLiteral("a rács raszterizálása nem sikerült: %1"))
                                            .arg(error.isEmpty() ? QStringLiteral("nincs path a válaszban")
                                                                 : error));
                              return;
@@ -3161,10 +3161,10 @@ void MainWindow::captureGrid() {
                          const QString target = engine_profile_ + QStringLiteral("/home-raster.png");
                          QFile::remove(target);
                          if (!QFile::copy(written, target)) {
-                             setStatus(QStringLiteral("a raszter nem került a profilba: %1").arg(target));
+                             setStatus(t(QStringLiteral("a raszter nem került a profilba: %1")).arg(target));
                              return;
                          }
-                         setStatus(QStringLiteral("raszter kész: %1").arg(target));
+                         setStatus(t(QStringLiteral("raszter kész: %1")).arg(target));
                      });
 }
 
@@ -3519,8 +3519,11 @@ void MainWindow::buildCardArea() {
 }
 
 void MainWindow::setStatus(const QString& text) {
+    // Status strings are Hungarian sources; `t()` maps them to the shell's language (i18n, ADR-078). Call sites
+    // that format through `t(...).arg(...)` arrive already in the target language, which `t()` passes through.
+    const QString shown = t(text);
     if (status_ != nullptr) {
-        status_->setText(text);
+        status_->setText(shown);
     }
-    statusBar()->showMessage(text);
+    statusBar()->showMessage(shown);
 }

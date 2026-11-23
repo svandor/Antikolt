@@ -34,7 +34,7 @@ git status                  →  tiszta munkafa, minden pusholva (origin/main)
 | OAuth összekötés | `main_window.cpp` (popup, 02-ARCH §8.5) | a mechanizmus kész, a bejelentkezési gesztus-út a harnessben nem kattintható | `not-measurable` gesztus; a kész mechanizmus már mért |
 | `sha256` blobtár | **kész** (ADR-077, 137. szelet) | a preview-név a tartalom hash-e (`previewContentName`, Qt `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből | `--previewhashtest` (publikus vektorok), `--previewgentest`/`--previewworkertest` (`preview_content_addressed=ok`) |
 | PiP | motor (CEF 158) | a CEF 158 PiP-je **views-alapú** (`CefBrowserViewDelegate`), a shell ablakos (nem views) API-t használ — valószínűleg architektúra-váltás kell, előbb döntés | — |
-| HU/EN felület | **chrome + rács + kártya + statikus címkék kész** (ADR-078/079, 138–140. szelet), a státuszüzenetek nyitottak | `ui/language` + `i18n.h` `uiText` + `setLanguage` (chrome); `data-language` + `pushLanguageToGrid` + `home/app.js` `t()` (rács); `antikolt-card.js` `t()` (kártya); a shell `setStatus` üzenetei a következő szelet | `--languagetest` + `--gridlangtest`: a chrome és a rács HU/EN vált |
+| HU/EN felület | **kész** (ADR-078/079, 138–141. szelet) | `ui/language` + `i18n.h` `uiText` + `setLanguage` (chrome); `data-language` + `pushLanguageToGrid` + `home/app.js` `t()` (rács); `antikolt-card.js` `t()` (kártya); `setStatus` → `t()` (státuszüzenetek) | `--languagetest` + `--gridlangtest`: a chrome és a rács HU/EN vált |
 | Teljes képernyőolvasó-illesztés | külső | képernyőolvasóval (NVDA) manuális | emberi lépés |
 | Kiadás | SignPath, Store | emberi lépés (Partner Center, tanúsítvány) | — |
 

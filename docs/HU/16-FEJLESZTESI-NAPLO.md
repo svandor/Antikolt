@@ -3,6 +3,31 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvenegyedik szelet) — a shell státuszüzenetei is válthatók (M7, i18n)
+
+A HU/EN felület utolsó tétele: a shell státuszsor-üzenetei (a `setStatus` hívások) eddig magyarok voltak. Ez a
+szelet magát a `setStatus`-ot teszi nyelvkövetővé, így mind a ~80 üzenet vált, újraindítás nélkül.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/main_window.cpp`:** a `setStatus` a magyar forrást `t()`-tel fordítja; a
+  formátum-helyettesítőket (`%1`/`%2`/`%3`) hordozó üzeneteknél a `t()` a **sablonra** kerül, a `.arg()` **elé**
+  (a helyettesítés előtt kell fordítani, különben a kitöltött számok nem találnak a térképben).
+- **`apps/desktop-shell/src/i18n.h`:** a teljes státusz-térkép — motor/mag életciklus, kártya-fagyasztás,
+  előnézet, munkamenet-takarítás, profil, PDF, beállítások, raszter — HU→EN.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (69 ellenőrzés mind „ok", a check-repo továbbra is zöld)
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A PiP (architektúra-döntés); a teljes képernyőolvasó-illesztés (NVDA); az OAuth összekötése; a jelszó- és
+  könyvjelző-import; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (száznegyvenedik szelet) — a kártya inline címkéi és a rács statikus címkéi is válthatók (M7, i18n)
 
 Az ADR-079 a rács fő karakterláncait tette válthatóvá; ez a szelet a maradék rács-oldalt zárja: a kártya
