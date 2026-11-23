@@ -2756,6 +2756,77 @@ int runPrintCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+int runFindCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    qint64 home_surface = 0;
+    int find_count = -1;
+    int find_active = -1;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::findResult, &loop,
+                         [&](qint64 surface, int count, int active) {
+                             (void)surface;
+                             find_count = count;
+                             find_active = active;
+                             loop.quit();
+                         });
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             home_surface = id;
+                             // One beat, then add a known probe with exactly three occurrences.
+                             QTimer::singleShot(500, &loop, [&, id] {
+                                 window.engine()->evaluate(
+                                     id,
+                                     QStringLiteral(
+                                         "(function(){var el=document.createElement('div');"
+                                         "el.id='find-probe';"
+                                         "el.textContent='findprobe findprobe findprobe';"
+                                         "document.body.appendChild(el);return 'added';})()"),
+                                     [&, id](const QJsonObject& reply, const QString& error) {
+                                         const bool added = error.isEmpty() &&
+                                             reply.value(QStringLiteral("value")).toString() ==
+                                                 QStringLiteral("added");
+                                         out << "find_probe_added=" << (added ? "true" : "false") << '\n';
+                                         // Give the renderer a beat to commit the probe, then search. The find
+                                         // result is async; a second attempt a beat later guards against a slow
+                                         // renderer commit (measured flake: count=-1 in the full gate).
+                                         QTimer::singleShot(400, &loop, [&, id] {
+                                             window.engine()->find(id, QStringLiteral("findprobe"));
+                                         });
+                                         QTimer::singleShot(3000, &loop, [&, id] {
+                                             if (find_count < 0) {
+                                                 window.engine()->find(id, QStringLiteral("findprobe"));
+                                             }
+                                         });
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "find_home_surface=" << home_surface << '\n';
+    out << "find_count=" << find_count << '\n';
+    out << "find_active=" << find_active << '\n';
+    // The count is the proof; the first notification reports it with active=0 (the selection follows in a
+    // later notification).
+    const bool ok = home_surface != 0 && find_count == 3;
+    out << "find=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -9482,6 +9553,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("printtest"),
         QStringLiteral("Prove the page saves to PDF (F7), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption findtest(
+        QStringLiteral("findtest"),
+        QStringLiteral("Prove find-in-page reports matches (F7), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9569,6 +9644,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(memoryhibernatetest);
     parser.addOption(memorywarnpausetest);
     parser.addOption(printtest);
+    parser.addOption(findtest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9775,6 +9851,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(printtest)) {
         return runPrintCheck(parser.value(printtest));
+    }
+
+    if (parser.isSet(findtest)) {
+        return runFindCheck(parser.value(findtest));
     }
 
     if (parser.isSet(enginerestarttest)) {

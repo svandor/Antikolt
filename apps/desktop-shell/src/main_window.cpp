@@ -21,13 +21,16 @@
 #include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
 #include <QSet>
 #include <QSettings>
+#include <QShortcut>
 #include <QSpinBox>
 #include <QStackedLayout>
 #include <QStandardPaths>
@@ -815,6 +818,8 @@ void MainWindow::wireEngine(EngineClient* engine) {
     connect(engine, &EngineClient::failed, this, [this](const QString& message) {
         setStatus(QStringLiteral("motor hiba: %1").arg(message));
     });
+    // Find-in-page results (F7 "Ctrl+F") come from whichever engine owns the live surface.
+    connect(engine, &EngineClient::findResult, this, &MainWindow::onFindResult);
     connect(engine, &EngineClient::engineReady, this, [this, engine](const QJsonObject& info) {
         setStatus(QStringLiteral("motor: %1 %2 · képességek: %3")
                       .arg(info.value(QStringLiteral("name")).toString(),
@@ -2553,6 +2558,65 @@ void MainWindow::printToPdf() {
     });
 }
 
+void MainWindow::openFind() {
+    if (find_bar_ == nullptr) {
+        return;
+    }
+    find_bar_->setVisible(true);
+    find_edit_->setFocus();
+    find_edit_->selectAll();
+}
+
+void MainWindow::closeFind() {
+    if (find_bar_ != nullptr) {
+        find_bar_->setVisible(false);
+    }
+    if (live_engine_ != nullptr && surface_ != 0) {
+        live_engine_->stopFind(surface_);
+    }
+    find_last_text_.clear();
+    find_last_count_ = 0;
+}
+
+void MainWindow::findNext() {
+    if (find_edit_ == nullptr || live_engine_ == nullptr || surface_ == 0) {
+        return;
+    }
+    const QString text = find_edit_->text();
+    if (text.isEmpty()) {
+        return;
+    }
+    // Same query again → advance; a changed query → a fresh search.
+    const bool fresh = text != find_last_text_;
+    find_last_text_ = text;
+    live_engine_->find(surface_, text, /*find_next=*/!fresh, /*forward=*/true);
+}
+
+void MainWindow::findPrevious() {
+    if (find_edit_ == nullptr || live_engine_ == nullptr || surface_ == 0) {
+        return;
+    }
+    const QString text = find_edit_->text();
+    if (text.isEmpty()) {
+        return;
+    }
+    const bool fresh = text != find_last_text_;
+    find_last_text_ = text;
+    live_engine_->find(surface_, text, /*find_next=*/!fresh, /*forward=*/false);
+}
+
+void MainWindow::onFindResult(qint64 surface, int count, int active) {
+    // Only the surface the user is looking at drives the counter.
+    if (surface != surface_) {
+        return;
+    }
+    find_last_count_ = count;
+    if (find_status_ != nullptr) {
+        find_status_->setText(count == 0 ? QStringLiteral("nincs találat")
+                                         : QStringLiteral("%1 / %2").arg(active).arg(count));
+    }
+}
+
 void MainWindow::importProfile() {
     if (core_ == nullptr || !core_->isRunning()) {
         setStatus(QStringLiteral("a mag nem fut — nincs hová betölteni"));
@@ -3215,6 +3279,38 @@ void MainWindow::buildCardArea() {
         "A motor külön folyamatban fut; a kártya natív ablaka ebbe az ablakba van ágyazva, így a "
         "kép és a bemenet az operációs rendszeren megy át, nem a protokollon."));
 
+    // Find bar (F7 "Ctrl+F"): hidden until the user asks; Enter = next, Shift+Enter = previous, Esc = close.
+    find_bar_ = new QWidget(root);
+    find_bar_->setObjectName(QStringLiteral("antikoltFindBar"));
+    find_bar_->setVisible(false);
+    auto* find_layout = new QHBoxLayout(find_bar_);
+    find_layout->setContentsMargins(0, 0, 0, 0);
+    find_layout->setSpacing(6);
+    find_edit_ = new QLineEdit(find_bar_);
+    find_edit_->setObjectName(QStringLiteral("antikoltFindEdit"));
+    find_edit_->setPlaceholderText(QStringLiteral("Keresés az oldalon…"));
+    find_edit_->setClearButtonEnabled(true);
+    find_status_ = new QLabel(find_bar_);
+    find_status_->setObjectName(QStringLiteral("antikoltFindStatus"));
+    auto* find_close = new QToolButton(find_bar_);
+    find_close->setObjectName(QStringLiteral("antikoltFindClose"));
+    find_close->setText(QStringLiteral("✕"));
+    find_close->setAutoRaise(true);
+    find_close->setCursor(Qt::PointingHandCursor);
+    connect(find_close, &QToolButton::clicked, this, &MainWindow::closeFind);
+    find_layout->addWidget(find_edit_, 1);
+    find_layout->addWidget(find_status_, 0);
+    find_layout->addWidget(find_close, 0);
+    connect(find_edit_, &QLineEdit::returnPressed, this, &MainWindow::findNext);
+    auto* find_prev = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Return), find_edit_);
+    connect(find_prev, &QShortcut::activated, this, &MainWindow::findPrevious);
+    auto* find_esc = new QShortcut(QKeySequence(Qt::Key_Escape), find_edit_);
+    connect(find_esc, &QShortcut::activated, this, &MainWindow::closeFind);
+    auto* find_ctrl_f = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    find_ctrl_f->setContext(Qt::WindowShortcut);
+    connect(find_ctrl_f, &QShortcut::activated, this, &MainWindow::openFind);
+
+    layout->addWidget(find_bar_, 0);
     layout->addWidget(stack_host, 1);
     layout->addWidget(hint, 0);
 

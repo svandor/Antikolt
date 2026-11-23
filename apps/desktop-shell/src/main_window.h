@@ -21,6 +21,7 @@
 #include "previews.h"
 
 class QLabel;
+class QLineEdit;
 class QTimer;
 class QStackedLayout;
 class QDockWidget;
@@ -244,6 +245,13 @@ public slots:
     /// Save the live card as a PDF (F7 "nyomtatás"): a native file dialog picks the path, the engine writes it.
     /// The dialog cannot be clicked by the harness; the `print_pdf` path is measured by `--printtest`.
     void printToPdf();
+    /// Find-in-page (F7 "Ctrl+F"): show the find bar, hide it, or drive the engine's `find` op (next/previous).
+    void openFind();
+    void closeFind();
+    void findNext();
+    void findPrevious();
+    /// A `find_result` event arrived from one of the engines (home or a card's container engine).
+    void onFindResult(qint64 surface, int count, int active);
 
 protected:
     /// The close button hides the window to the tray instead of ending the browser (ADR-043); without a
@@ -429,6 +437,12 @@ private:
     /// Until what epoch (ms) the background preview worker is paused after warn/hard pressure (F6, ADR-020 "warn =
     /// free background resources"). Zero when not paused; `startPreviewWorker` refuses while `now` is below it.
     qint64 preview_paused_until_ms_ = 0;
+    /// The find bar (F7 "Ctrl+F"): a line edit + match counter shown while searching a page.
+    QWidget* find_bar_ = nullptr;
+    QLineEdit* find_edit_ = nullptr;
+    QLabel* find_status_ = nullptr;
+    QString find_last_text_;
+    int find_last_count_ = 0;
     /// The idle-hibernation window in ms, cached from `user_prefs.idle_hibernate_ms` (ADR-072). The factory
     /// 10 minutes until the first `refreshUserPrefs` answers; `ANTIKOLT_HIBERNATE_MS` still overrides for the
     /// self test.

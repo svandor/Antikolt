@@ -338,6 +338,22 @@ void EngineClient::printPdf(qint64 surface, const QString& path, ReplyHandler ha
     send(QStringLiteral("print_pdf"), fields, std::move(handler));
 }
 
+void EngineClient::find(qint64 surface, const QString& text, bool findNext, bool forward,
+                        ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("text"), text);
+    fields.insert(QStringLiteral("find_next"), findNext);
+    fields.insert(QStringLiteral("forward"), forward);
+    send(QStringLiteral("find"), fields, std::move(handler));
+}
+
+void EngineClient::stopFind(qint64 surface, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    send(QStringLiteral("stop_find"), fields, std::move(handler));
+}
+
 void EngineClient::bridgeReply(qint64 request, const QJsonObject& json, const QString& error) {
     QJsonObject fields;
     fields.insert(QStringLiteral("request"), static_cast<double>(request));
@@ -440,6 +456,9 @@ void EngineClient::handleEvent(const QJsonObject& event) {
         emit bridgeCall(surface, event.value(QStringLiteral("method")).toString(),
                         event.value(QStringLiteral("args")).toObject(),
                         static_cast<qint64>(event.value(QStringLiteral("request")).toDouble()));
+    } else if (type == QStringLiteral("find_result")) {
+        emit findResult(surface, event.value(QStringLiteral("count")).toInt(),
+                        event.value(QStringLiteral("active")).toInt());
     }
 }
 

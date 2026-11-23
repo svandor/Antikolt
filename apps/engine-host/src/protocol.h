@@ -99,6 +99,11 @@ struct Command {
     std::string error;
     /// Output file path (`print_pdf`): where the PDF is written (F7 "nyomtatás").
     std::string path;
+    /// Find-in-page (`find`, F7 "Ctrl+F"): the text to search for, whether this call advances to the next
+    /// match instead of starting a new search, and the search direction.
+    std::string find_text;
+    bool find_next = false;
+    bool find_forward = true;
 };
 
 /// Upper bound for one frame. Mirrors antikolt_ipc::MAX_FRAME_BYTES.

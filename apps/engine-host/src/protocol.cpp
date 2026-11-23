@@ -111,6 +111,17 @@ bool ParseCommand(const std::string& payload, Command* out) {
     out->json = GetString(message, "json");
     out->error = GetString(message, "error");
     out->path = GetString(message, "path");
+    out->find_text = GetString(message, "text");
+    if (CefRefPtr<CefValue> find_next = message->GetValue("find_next")) {
+        if (find_next->GetType() == VTYPE_BOOL) {
+            out->find_next = find_next->GetBool();
+        }
+    }
+    if (CefRefPtr<CefValue> forward = message->GetValue("forward")) {
+        if (forward->GetType() == VTYPE_BOOL) {
+            out->find_forward = forward->GetBool();
+        }
+    }
     // Site theme emulation (`set_media`): auto | dark | light.
     const std::string media = GetString(message, "media");
     if (!media.empty()) {

@@ -247,6 +247,7 @@ class EngineClient : public CefClient,
                      public CefLoadHandler,
                      public CefDisplayHandler,
                      public CefRequestHandler,
+                     public CefFindHandler,
                      public CefMessageRouterBrowserSide::Handler {
 public:
     EngineClient(HostState* state, bool quit_on_first_load,
@@ -257,6 +258,7 @@ public:
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return permission_; }
+    CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
@@ -299,6 +301,14 @@ public:
                                    TerminationStatus status,
                                    int error_code,
                                    const CefString& error_string) override;
+    /// Find-in-page result (F7 "Ctrl+F"): the total match count and the active (highlighted) match, sent as a
+    /// `find_result` event so the shell can show "2 / 7".
+    void OnFindResult(CefRefPtr<CefBrowser> browser,
+                      int identifier,
+                      int count,
+                      const CefRect& selectionRect,
+                      int activeMatchOrdinal,
+                      bool finalUpdate) override;
 
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                   CefRefPtr<CefFrame> frame,

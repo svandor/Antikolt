@@ -124,6 +124,12 @@ public:
     /// Save the live page as a PDF (`print_pdf`, F7 "nyomtatás"). The reply carries `{ok, path}` once the
     /// engine's compositor has written the file.
     void printPdf(qint64 surface, const QString& path, ReplyHandler handler);
+    /// Find text in the live page (`find`, F7 "Ctrl+F"). The result arrives as `findResult`, not a reply,
+    /// because CEF reports it asynchronously.
+    void find(qint64 surface, const QString& text, bool findNext = false, bool forward = true,
+              ReplyHandler handler = {});
+    /// Clear the find-in-page highlight (`stop_find`).
+    void stopFind(qint64 surface, ReplyHandler handler = {});
     void destroySurface(qint64 surface, ReplyHandler handler = {});
     /// Answer a page request (`request > 0`) the engine is holding open.
     ///
@@ -145,6 +151,8 @@ signals:
     void popupRequested(qint64 surface, const QString& url, const QString& disposition);
     /// A login popup closed (the flow finished, or the engine's 60 s cap fired).
     void popupClosed(qint64 surface);
+    /// A find-in-page result arrived (F7 "Ctrl+F"): `count` total matches, `active` the highlighted one (1-based).
+    void findResult(qint64 surface, int count, int active);
     /// The home page asked for something through the bridge (`open_card`, `freeze_card`, …).
     ///
     /// `request` is 0 for a one-way call (the page does not wait) and the engine's request number for a

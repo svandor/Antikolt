@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszadik-harmincadik szelet) — keresés az oldalon (F7 Ctrl+F)
+
+Az F7 második darabja: a **keresés az oldalon**. A motor a CEF `Find`/`CefFindHandler` útján keresi a szöveget, és a
+találatok számát egy `find_result` eseménnyel küldi vissza; a shell egy Ctrl+F keresősávot mutat (Enter = következő,
+Shift+Enter = előző, Esc = bezárás).
+
+### Mi változott
+
+- **`apps/engine-host` (protocol.h/.cpp, host.h/.cpp):** `find`/`stop_find` opok; a `Command` `text`/`find_next`/
+  `forward` mezői; az `EngineClient` most `CefFindHandler` (a `find_result` esemény: `surface` + `count` + `active`).
+- **`apps/desktop-shell` (engine_client, main_window):** `EngineClient::find`/`stopFind` + `findResult` jel (a
+  `wireEngine` minden motorra beköti); a Ctrl+F keresősáv (`antikoltFindBar`) Enter/Shift+Enter/Esc billentyűkkel.
+- **`--findtest` (új):** a rácsba egy 3× ismételt `findprobe` próbát illeszt, és ellenőrzi, hogy a találatszám 3.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL SELF TESTS PASSED (61 ellenőrzés mind „ok", köztük a findtest és a check-repo)
+--findtest        → find_probe_added=true · find_count=3 · find_active=0 · find=ok
+cargo test        → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+Közben két CEF-158 API-eltérést is javítottam (a `Find` 4, nem 5 paramétert vár; az első `OnFindResult` a találatszámot
+`active=0`-val jelenti, a kijelölés csak a következő értesítésben jön), és egy full-gate flakét is kizártam (a keresés
+előtt egy rövid szünet + újrapróbálkozás, mert a renderer a DOM-módosítást néha később látja).
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (letöltés, PiP, teljes nyomtatás-dialógus, crash-recovery, akadálymentesség, HU/EN); az F6
+  `video_max_height` kutatási tétele; az OAuth összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonkilencedik szelet) — az oldal mentése PDF-be (F7 nyitány)
 
 Az F6 memória-governor kész (a `warn`/`hard` sávok műveletei 127–128. szelet); a maradék F6 a `video_max_height`

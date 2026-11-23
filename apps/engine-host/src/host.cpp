@@ -2022,6 +2022,24 @@ void EngineClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
         static_cast<int>(status), error_code, error_string.ToString().c_str());
 }
 
+void EngineClient::OnFindResult(CefRefPtr<CefBrowser> browser,
+                                int identifier,
+                                int count,
+                                const CefRect& selectionRect,
+                                int activeMatchOrdinal,
+                                bool finalUpdate) {
+    CEF_REQUIRE_UI_THREAD();
+    (void)browser;
+    (void)identifier;
+    (void)selectionRect;
+    (void)finalUpdate;
+    CefRefPtr<CefDictionaryValue> payload = CefDictionaryValue::Create();
+    payload->SetInt("surface", static_cast<int>(state_->surface_id));
+    payload->SetInt("count", count);
+    payload->SetInt("active", activeMatchOrdinal);
+    StdioLink::Instance().Event("find_result", payload);
+}
+
 bool EngineClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                             CefRefPtr<CefFrame> frame,
                                             CefProcessId source_process,
@@ -2363,6 +2381,28 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
         CefRefPtr<PdfPrint> print(new PdfPrint(command.id, command.path));
         print->Start(state.browser);
         // The reply is sent by the callback when the PDF is on disk.
+    } else if (command.op == "find") {
+        // Find-in-page (F7 "Ctrl+F"): start a search or advance to the next match. The result — the total match
+        // count and the active one — comes back as a `find_result` event, not a reply, because CEF reports it
+        // asynchronously.
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.find_text.empty()) {
+            link.ReplyError(command.id, "invalid_argument", "text is required");
+            return;
+        }
+        state.browser->GetHost()->Find(CefString(command.find_text), command.find_forward,
+                                       /*match_case=*/false, command.find_next);
+        link.Reply(command.id);
+    } else if (command.op == "stop_find") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        state.browser->GetHost()->StopFinding(true);
+        link.Reply(command.id);
     } else if (command.op == "capture") {
         if (!state.browser || !state.browser->GetMainFrame()) {
             link.ReplyError(command.id, "surface_not_found", "no live surface");
@@ -2446,7 +2486,7 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
     } else {
         link.ReplyError(command.id, "not_supported",
                         "this milestone implements hello, ping, create_surface, navigate, eval, "
-                        "capture, snapshot, print_pdf, set_bounds, focus, install_bridge, bridge_reply, "
+                        "capture, snapshot, print_pdf, find, set_bounds, focus, install_bridge, bridge_reply, "
                         "destroy_surface and shutdown");
     }
 }
