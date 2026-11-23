@@ -2208,6 +2208,151 @@ void EngineClient::StartAutofillProbe(CefRefPtr<CefBrowser> browser) {
     }
 }
 
+namespace {
+/// A string rendered as a JSON string literal (quoted and escaped), so a credential can be embedded in
+/// a script without its quotes or backslashes breaking the JavaScript.
+std::string JsonQuote(const std::string& value) {
+    CefRefPtr<CefValue> boxed = CefValue::Create();
+    boxed->SetString(value);
+    return CefWriteJSON(boxed, JSON_WRITER_DEFAULT).ToString();
+}
+}  // namespace
+
+/// Fills a login form with a credential in the isolated world (ADR-053) and replies to `fill_credential`.
+class FillCredential : public CefBaseRefCounted {
+public:
+    FillCredential(int64_t request_id, std::string username, std::string password)
+        : request_id_(request_id), username_(std::move(username)), password_(std::move(password)) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<FillCredential> self(this);
+        return Submit(browser, "Page.getFrameTree", nullptr,
+                      [self](CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+                          self->OnFrameTree(browser, reply);
+                      });
+    }
+
+private:
+    bool Submit(CefRefPtr<CefBrowser> browser, const char* method,
+                CefRefPtr<CefDictionaryValue> params, DevToolsCall::Handler handler) {
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(method, params, std::move(handler)));
+        return call->Start(browser);
+    }
+
+    std::string FillScript() const {
+        return std::string("(function(){var u=") + JsonQuote(username_) + ";var p=" +
+               JsonQuote(password_) +
+               ";var s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;"
+               "var pw=document.querySelector('input[type=password]');if(!pw)return 'no-password';"
+               "s.call(pw,p);pw.dispatchEvent(new Event('input',{bubbles:true}));"
+               "pw.dispatchEvent(new Event('change',{bubbles:true}));"
+               "var un=document.querySelector('input[name=username],input[autocomplete=username]');"
+               "if(!un){var ins=document.querySelectorAll('input');for(var i=0;i<ins.length;i++)"
+               "{if(ins[i]===pw&&i>0){un=ins[i-1];break;}}}"
+               "if(un){s.call(un,u);un.dispatchEvent(new Event('input',{bubbles:true}));"
+               "un.dispatchEvent(new Event('change',{bubbles:true}));}"
+               "window.__antikolt_fill_probe='filled';return 'filled';})()";
+    }
+
+    std::string VerifyScript() const {
+        return std::string("(function(){var pw=document.querySelector('input[type=password]');"
+                           "var un=document.querySelector('input[name=username]');"
+                           "var filled=!!pw&&pw.value===") +
+               JsonQuote(password_) + "&&!!un&&un.value===" + JsonQuote(username_) +
+               ";var leak=typeof window.__antikolt_fill_probe!=='undefined';"
+               "return (filled&&!leak)?'ok':'FAILED';})()";
+    }
+
+    void OnFrameTree(CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            Finish(reply.error);
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> frame_tree = reply.Dictionary("frameTree");
+        CefRefPtr<CefDictionaryValue> frame =
+            frame_tree ? frame_tree->GetDictionary("frame") : nullptr;
+        frame_id_ = frame ? frame->GetString("id").ToString() : std::string();
+        if (frame_id_.empty()) {
+            Finish("Page.getFrameTree gave no main frame id");
+            return;
+        }
+        CefRefPtr<FillCredential> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("frameId", frame_id_);
+        params->SetString("worldName", "antikolt-autofill");
+        if (!Submit(browser, "Page.createIsolatedWorld", params,
+                    [self](CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+                        self->OnWorldCreated(browser, reply);
+                    })) {
+            Finish("could not submit Page.createIsolatedWorld");
+        }
+    }
+
+    void OnWorldCreated(CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            Finish(reply.error);
+            return;
+        }
+        const int context_id = reply.Int("executionContextId", 0);
+        if (context_id == 0) {
+            Finish("Page.createIsolatedWorld gave no executionContextId");
+            return;
+        }
+        CefRefPtr<FillCredential> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", FillScript());
+        params->SetBool("returnByValue", true);
+        params->SetInt("contextId", context_id);
+        if (!Submit(browser, "Runtime.evaluate", params,
+                    [self](CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+                        self->OnFilled(browser, reply);
+                    })) {
+            Finish("could not submit the fill");
+        }
+    }
+
+    void OnFilled(CefRefPtr<CefBrowser> browser, const DevToolsReply& reply) {
+        if (!reply.ok()) {
+            Finish(reply.error);
+            return;
+        }
+        CefRefPtr<FillCredential> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("expression", VerifyScript());
+        params->SetBool("returnByValue", true);
+        if (!Submit(browser, "Runtime.evaluate", params,
+                    [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+                        self->OnVerified(reply);
+                    })) {
+            Finish("could not submit the verification");
+        }
+    }
+
+    void OnVerified(const DevToolsReply& reply) {
+        const std::string verdict = reply.String("value");
+        if (!reply.ok() || verdict != "ok") {
+            Finish(verdict.empty() ? "autofill failed" : verdict);
+            return;
+        }
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("filled", true);
+        StdioLink::Instance().Reply(request_id_, result);
+        Log("[engine-host] fill_credential filled the form in the isolated world\n");
+    }
+
+    void Finish(const std::string& error) {
+        StdioLink::Instance().ReplyError(request_id_, "internal", error.c_str());
+    }
+
+    int64_t request_id_;
+    std::string username_;
+    std::string password_;
+    std::string frame_id_;
+
+    IMPLEMENT_REFCOUNTING(FillCredential);
+    DISALLOW_COPY_AND_ASSIGN(FillCredential);
+};
+
 void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     // The popup closes on its own (login finished) or after the 60 s cap: only the popup goes, the card stays.
@@ -2879,11 +3024,26 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
             link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot evaluate");
         }
         // The reply is sent by EvalCapture when the value arrives.
+    } else if (command.op == "fill_credential") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.password.empty()) {
+            link.ReplyError(command.id, "invalid_argument", "fill_credential needs a password");
+            return;
+        }
+        CefRefPtr<FillCredential> fill(
+            new FillCredential(command.id, command.username, command.password));
+        if (!fill->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot autofill");
+        }
+        // The reply is sent by FillCredential when the form is filled (or the sequence failed).
     } else {
         link.ReplyError(command.id, "not_supported",
                         "this milestone implements hello, ping, create_surface, navigate, eval, "
-                        "capture, snapshot, print_pdf, find, download, set_bounds, focus, install_bridge, "
-                        "bridge_reply, destroy_surface and shutdown");
+                        "fill_credential, capture, snapshot, print_pdf, find, download, set_bounds, "
+                        "focus, install_bridge, bridge_reply, destroy_surface and shutdown");
     }
 }
 

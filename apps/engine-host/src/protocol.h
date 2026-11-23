@@ -40,6 +40,10 @@ struct Command {
     std::string url;
     /// JavaScript to evaluate (`eval`), executed in the page's main world.
     std::string script;
+    /// Autofill (`fill_credential`): the credential to write into the page's login form, in the
+    /// isolated world (ADR-053). The page's main world never sees these as JS values.
+    std::string username;
+    std::string password;
     std::string partition;
     /// The container the surface belongs to (ADR-071) and the policy that comes with it: the proxy the container
     /// reaches the network through, and the permissions its pages may ask for. The engine keeps the partition as the

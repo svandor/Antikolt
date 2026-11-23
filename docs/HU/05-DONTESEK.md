@@ -3,6 +3,27 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-091 — A kitöltés parancsként: `fill_credential` az engine-hostban (2026-11-23)
+
+**Kontextus:** az ADR-089/090 spike-ok bebizonyították, hogy az izolált világban a kitöltés működik, és
+az origin-szerinti lookup is. A hiányzó darab: a shell ténylegesen parancsba tudja adni a motornak egy
+tetszőleges hitelesítő kitöltését.
+
+**Döntés:**
+
+1. **`fill_credential {username, password}` parancs** az engine-host stdio-protokollján: a motor az
+   izolált világban írja a hitelesítőt a bejelentkezési űrlapba (getFrameTree → createIsolatedWorld →
+   kitöltés natív value-setterrel → ellenőrzés a fő világból), és `{filled: true}`-vel válaszol.
+2. **A hitelesítő JSON-idézettel kerül a szkriptbe** (`CefWriteJSON`), így a `"` és `\` karakterek nem
+   törhetik meg a JavaScriptet.
+3. **`--fillcredentialtest`** a shellben: data:-URL űrlap → `fill_credential` → a fő világ olvassa a
+   kitöltött értéket, és méri, hogy a titok nem szivárgott.
+
+**Következmény:** (+) az autofill a shellből end-to-end parancsolható (`fill_credential=ok`, exit 0);
+(+) a parancs a `CoreClient::vault_get_for_origin`-nel összekötve a teljes „nyisd meg az oldalt, töltsd
+ki" folyamatot adja; (−) a grafikus széf-panel, a teljes `navigator.credentials` folyamat és a PiP még
+külön szeletek.
+
 ## ADR-090 — Az autofill-lookup origin-szerinti, pontos- majd aldomain-egyezéssel (2026-11-23)
 
 **Kontextus:** az autofillnek (ADR-089) a lap originje alapján kell megtalálnia a széfben a hitelesítőt.

@@ -6373,6 +6373,99 @@ int runVaultCheck(const QString& corePath) {
     return ok ? 0 : 1;
 }
 
+int runFillCredentialCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+
+    QWidget window;
+    window.resize(800, 600);
+    window.move(120, 90);
+    auto* layout = new QVBoxLayout(&window);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* card = new LiveCard(&window);
+    layout->addWidget(card);
+    window.show();
+    QCoreApplication::processEvents();
+
+    EngineClient client;
+    const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                            QStringLiteral("/fill-selftest");
+    QDir().mkpath(profile);
+    if (!client.start(enginePath, profile, /*hidden=*/true)) {
+        out << "fill_engine_start=FAILED\n";
+        return 1;
+    }
+    out << "fill_engine_start=ok\n";
+
+    QEventLoop loop;
+    qint64 surface = 0;
+    bool filled = false;
+    bool no_leak = false;
+
+    QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "fill_engine_error=" << message << '\n';
+        loop.quit();
+    });
+    client.handshake();
+    QObject::connect(&client, &EngineClient::engineReady, &loop, [&](const QJsonObject&) {
+        if (!card->attach(&client, QStringLiteral("persist:fill-selftest"))) {
+            out << "attach=FAILED\n";
+            loop.quit();
+        }
+    });
+    QObject::connect(card, &LiveCard::surfaceAttached, &loop, [&](qint64 id) {
+        surface = id;
+        client.navigate(id, QStringLiteral("data:text/html,%3Ctitle%3Eautofill%3C/title%3E"
+                                            "%3Cinput%20name=username%20autocomplete=username%3E"
+                                            "%3Cinput%20type=password%20name=password%3E"));
+    });
+    QObject::connect(&client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int) {
+                         if (id != surface || !url.startsWith(QStringLiteral("data:"))) {
+                             return;
+                         }
+                         QTimer::singleShot(700, &loop, [&, id] {
+                             client.fillCredential(
+                                 id, QStringLiteral("alice"), QStringLiteral("hunter2"),
+                                 [&, id](const QJsonObject& reply, const QString& error) {
+                                     out << "fill_reply="
+                                         << (error.isEmpty() && reply.value("filled").toBool()
+                                                 ? "ok"
+                                                 : "FAILED")
+                                         << '\n';
+                                     client.evaluate(
+                                         id,
+                                         QStringLiteral(
+                                             "(function(){var pw=document.querySelector('input[type=password]');"
+                                             "var un=document.querySelector('input[name=username]');"
+                                             "var f=!!pw&&pw.value==='hunter2'&&!!un&&un.value==='alice';"
+                                             "var l=typeof window.__antikolt_fill_probe!=='undefined';"
+                                             "return JSON.stringify({filled:f,leak:l});})()"),
+                                         [&](const QJsonObject& value, const QString& failure) {
+                                             const QString json =
+                                                 failure.isEmpty()
+                                                     ? value.value(QStringLiteral("value")).toString()
+                                                     : failure;
+                                             const QJsonObject result =
+                                                 QJsonDocument::fromJson(json.toUtf8()).object();
+                                             filled = result.value(QStringLiteral("filled")).toBool();
+                                             no_leak = !result.value(QStringLiteral("leak")).toBool();
+                                             loop.quit();
+                                         });
+                                 });
+                         });
+                     });
+    QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    out << "fill_form=" << (filled ? "ok" : "FAILED") << '\n';
+    out << "fill_no_leak=" << (no_leak ? "ok" : "FAILED") << '\n';
+    const bool ok = filled && no_leak;
+    out << "fill_credential=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runSelfTest(bool with_engine, const QString& enginePath) {
     QTextStream out(stdout);
     out << "antikolt-shell " << ANTIKOLT_VERSION << '\n';
@@ -10632,6 +10725,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("vaulttest"),
         QStringLiteral("Prove the shell drives the password vault end to end, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption fillcredentialtest(
+        QStringLiteral("fillcredentialtest"),
+        QStringLiteral("Prove the shell fills a login form from the vault, then exit."),
+        QStringLiteral("path"));
     parser.addOption(selftest);
     parser.addOption(engine);
     parser.addOption(embedtest);
@@ -10703,6 +10800,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(scrollrestore);
     parser.addOption(coretest);
     parser.addOption(vaulttest);
+    parser.addOption(fillcredentialtest);
     parser.process(app);
 
     // Every self test measures one thing, and a self test always *names itself* on the command line; the plain
@@ -10798,6 +10896,9 @@ int main(int argc, char* argv[]) {
     }
     if (parser.isSet(vaulttest)) {
         return runVaultCheck(parser.value(vaulttest));
+    }
+    if (parser.isSet(fillcredentialtest)) {
+        return runFillCredentialCheck(parser.value(fillcredentialtest));
     }
 
     if (parser.isSet(scrollzoomtest)) {

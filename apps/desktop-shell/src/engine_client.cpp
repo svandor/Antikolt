@@ -248,6 +248,15 @@ void EngineClient::evaluate(qint64 surface, const QString& script, ReplyHandler 
     send(QStringLiteral("eval"), fields, std::move(handler));
 }
 
+void EngineClient::fillCredential(qint64 surface, const QString& username, const QString& password,
+                                  ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("username"), username);
+    fields.insert(QStringLiteral("password"), password);
+    send(QStringLiteral("fill_credential"), fields, std::move(handler));
+}
+
 void EngineClient::installBridge(qint64 surface, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));

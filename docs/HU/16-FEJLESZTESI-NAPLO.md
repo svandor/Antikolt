@@ -3,6 +3,30 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvennegyedik szelet) — autofill parancsként: `fill_credential` (M7)
+
+Az autofill most már parancsként is megy: a shell `fill_credential`-t küld, a motor az izolált világban
+megtölti az űrlapot, és a titok nem szivárog.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `fill_credential` parancs (protocol) + `FillCredential` osztály (a
+  hitelesítő JSON-idézettel a szkriptbe, 4 lépéses CDP-szekvencia, `{filled: true}` válasz).
+- **`apps/desktop-shell/src/`:** `EngineClient::fillCredential` + `--fillcredentialtest` önteszt.
+- **`scripts/verify.ps1`:** `fillcredentialtest` kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--fillcredentialtest → fill_credential=ok (exit 0): fill_reply/fill_form/fill_no_leak mind ok
+scripts/verify.ps1 → ALL CHECKS PASSED (76 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A grafikus széf-panel; a teljes `navigator.credentials` passkey-folyamat; a PiP
+  (views-architektúra-váltás).
+
 ## 2026-11-23 (százötvenharmadik szelet) — autofill-lookup origin-szerint (M7)
 
 A jelszó-kitöltés első fele: a core megtalálja a lap originjéhez illő hitelesítőt.

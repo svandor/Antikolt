@@ -105,6 +105,7 @@ $engineChecks = @(
     @{ Name = 'lifecycletest'; Args = @('--lifecycletest') },
     @{ Name = 'opentest'; Args = @('--opentest') },
     @{ Name = 'embedtest'; Args = @('--embedtest') },
+    @{ Name = 'fillcredentialtest'; Args = @('--fillcredentialtest') },
     @{ Name = 'capturetest'; Args = @('--capturetest') },
     @{ Name = 'wipetest'; Args = @('--wipetest') },
     @{ Name = 'cleanuptest'; Args = @('--cleanuptest') },

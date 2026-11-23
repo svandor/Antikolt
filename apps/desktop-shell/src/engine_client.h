@@ -84,6 +84,10 @@ public:
     void focus(qint64 surface, bool focused, ReplyHandler handler = {});
     /// Evaluate JavaScript in the page's main world. The reply carries the value as a string.
     void evaluate(qint64 surface, const QString& script, ReplyHandler handler);
+    /// Fill the page's login form with a credential, in the isolated world (ADR-053). The reply carries
+    /// `{filled: true}` when the form was filled and the credential stayed out of the main world.
+    void fillCredential(qint64 surface, const QString& username, const QString& password,
+                        ReplyHandler handler = {});
     /// Install the engine-side JS bridge (`window.antikoltNative`) on a surface.
     ///
     /// Only surfaces the shell enables this way may call back: the engine refuses everything else, so
