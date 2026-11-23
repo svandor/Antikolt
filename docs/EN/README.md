@@ -20,7 +20,7 @@ The authoritative plan, the decision log (ADR-001…ADR-081) and the development
 | Cards | `--addcardtest`: add a card with the `＋` form, rename the title and the URL in place, delete — each read back from the core |
 | Portable profile | `--profiletest`: export the profile to one versioned JSON bundle and import it into a fresh profile, from the page itself |
 | Storage | Rust tests + `db_status`: all four stores are SQLite rows (`user_version = 11`, WAL) — cards, containers, workspaces, sessions, plus a single-row `user_prefs` table for user preferences — and the four `*.json` documents are derived exports; the report proves every export agrees with the rows, and a pre-switch profile is adopted once per store (ADR-069/070/072) |
-| Gate | `scripts/verify.ps1`: **69 self tests** + `check-repo` (SPDX, links, JS parse, release files, `cargo fmt`, `clippy -D warnings`, 93 + 67 + 11 + 1 + 15 Rust tests) |
+| Gate | `scripts/verify.ps1`: **70 self tests** + `check-repo` (SPDX, links, JS parse, release files, `cargo fmt`, `clippy -D warnings`, 93 + 67 + 11 + 1 + 15 Rust tests) |
 
 ## The idea
 

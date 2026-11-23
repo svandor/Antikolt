@@ -3,6 +3,30 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvenedik szelet) — a széf a shellből: CoreClient vault-módszerek + `--vaulttest` (M7)
+
+A széf most már a shellből is vezérelhető — nem csak a core Rust-tesztjeiből.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/core_client.{h,cpp}`:** `vault_status`/`vault_unlock`/`vault_lock`/
+  `vault_list`/`vault_create`/`vault_get`/`vault_delete` a core-protokollra.
+- **`apps/desktop-shell/src/main.cpp`:** `runVaultCheck` + `--vaulttest` flag (feloldás → létrehozás →
+  lista titok nélkül → get → lock → a zárt széf visszautasít).
+- **`scripts/verify.ps1`:** `vaulttest` kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--vaulttest → vault_check=ok (exit 0): locked_before/unlock/create/list/get/locked_after/refuses mind ok
+scripts/verify.ps1 → ALL CHECKS PASSED (73 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A grafikus széf-panel + az izolált világú autofill; a teljes `navigator.credentials` passkey-folyamat;
+  a PiP (views-architektúra-váltás).
+
 ## 2026-11-23 (száznegyvenkilencedik szelet) — passkey F0 spike: a CDP virtuális hitelesítő működik (M7)
 
 A passkey „B" útjának de-kockáztató spike-ja (12-PASSKEY.md): működik-e a

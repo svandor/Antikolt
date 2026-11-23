@@ -81,6 +81,15 @@ public:
     /// built-in kind and returns its params, so the shell does not re-derive ADR-020's table itself.
     void resolveProfile(bool onAcPower, const QString& pressure, ReplyHandler handler = {});
     void sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler = {});
+    /// The password vault (M7, ADR-082/083/084/085). `vaultList` is metadata only; `vaultGet` returns
+    /// plaintext and therefore needs the vault open. The core is the one writer and the only cipher.
+    void vaultStatus(ReplyHandler handler = {});
+    void vaultUnlock(const QString& password, ReplyHandler handler = {});
+    void vaultLock(ReplyHandler handler = {});
+    void vaultList(ReplyHandler handler = {});
+    void vaultCreate(const QJsonObject& credential, ReplyHandler handler = {});
+    void vaultGet(const QString& credentialId, ReplyHandler handler = {});
+    void vaultDelete(const QString& credentialId, ReplyHandler handler = {});
     void shutdown();
 
 signals:

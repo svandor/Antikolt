@@ -136,6 +136,42 @@ void CoreClient::sessionClose(const QString& containerId, const QString& origin,
     send(QStringLiteral("session_close"), fields, std::move(handler));
 }
 
+void CoreClient::vaultStatus(ReplyHandler handler) {
+    send(QStringLiteral("vault_status"), {}, std::move(handler));
+}
+
+void CoreClient::vaultUnlock(const QString& password, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("password"), password);
+    send(QStringLiteral("vault_unlock"), fields, std::move(handler));
+}
+
+void CoreClient::vaultLock(ReplyHandler handler) {
+    send(QStringLiteral("vault_lock"), {}, std::move(handler));
+}
+
+void CoreClient::vaultList(ReplyHandler handler) {
+    send(QStringLiteral("vault_list"), {}, std::move(handler));
+}
+
+void CoreClient::vaultCreate(const QJsonObject& credential, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("credential"), credential);
+    send(QStringLiteral("vault_create"), fields, std::move(handler));
+}
+
+void CoreClient::vaultGet(const QString& credentialId, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("id_of_credential"), credentialId);
+    send(QStringLiteral("vault_get"), fields, std::move(handler));
+}
+
+void CoreClient::vaultDelete(const QString& credentialId, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("id_of_credential"), credentialId);
+    send(QStringLiteral("vault_delete"), fields, std::move(handler));
+}
+
 void CoreClient::cardUpsert(const QJsonObject& card, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("card"), card);

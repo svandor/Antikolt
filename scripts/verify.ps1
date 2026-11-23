@@ -180,6 +180,14 @@ if (-not $shell -or -not $core) {
     Add-Result 'coretest' ($LASTEXITCODE -eq 0)
 }
 
+Write-Host '=== vaulttest ===' -ForegroundColor Cyan
+if (-not $shell -or -not $core) {
+    Add-Result 'vaulttest' $false 'missing antikolt-shell.exe or antikolt-core-service.exe'
+} else {
+    & $shell --vaulttest $core
+    Add-Result 'vaulttest' ($LASTEXITCODE -eq 0)
+}
+
 Write-Host '=== sessionpanel ===' -ForegroundColor Cyan
 if (-not $shell -or -not $engine -or -not $core) {
     Add-Result 'sessionpanel' $false 'missing shell, engine or core service'

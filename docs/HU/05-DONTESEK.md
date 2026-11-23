@@ -3,6 +3,26 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-087 — A széf a shellből is elérhető: CoreClient vault-módszerek + `--vaulttest` (2026-11-23)
+
+**Kontextus:** a széf a core-ban él (ADR-083/084/085), de a shell eddig nem tudta vezérelni — csak a
+core Rust-tesztjei és a service-integrációs tesztek mérhették. A shell-felület (széf-panel, kitöltés)
+előfeltétele, hogy a shell a maggal beszéljen.
+
+**Döntés:**
+
+1. **A `CoreClient` viszi a `vault_*` műveleteket** (`vault_status`/`unlock`/`lock`/`list`/`create`/
+   `get`/`delete`), ugyanazzal a length-prefix JSON-transzporttal, mint a kártyák/session-ök.
+2. **A `--vaulttest` önteszt a kapuban:** a shell elindítja a magot, feloldja a széfet (mesterjelszó),
+   létrehoz egy hitelesítőt, kilistázza (titok nélkül), kinyeri, lezárja, és méri, hogy a zárt széf
+   visszautasítja a get-et — a `vault_locked` hibáig.
+3. **Hermetikusan:** a teszt törli a `vault-selftest` könyvtárat induláskor, így egy korábbi (összeomlott)
+   futás nem hagy hátra beleszámolt hitelesítőt.
+
+**Következmény:** (+) a széf a shellből end-to-end mérve (`vault_check=ok`, exit 0); (+) a `CoreClient`
+vault-módszerei a jövőbeli széf-panel és kitöltés alapja; (−) a grafikus széf-panel és az izolált
+világú autofill még külön szeletek.
+
 ## ADR-086 — A passkey F0 spike: a CDP virtuális hitelesítő működik a CEF 158-ban (2026-11-23)
 
 **Kontextus:** a 12-PASSKEY.md szerint a szoftveres passkey „B" útja a CDP

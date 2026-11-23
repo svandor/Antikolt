@@ -6198,6 +6198,181 @@ int runCoreCheck(const QString& corePath) {
     return failures == 0 ? 0 : 1;
 }
 
+int runVaultCheck(const QString& corePath) {
+    QTextStream out(stdout);
+    CoreClient client;
+    const QString data_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                             QStringLiteral("/vault-selftest");
+    // Hermetic: a previous (crashed) run must not leave credentials behind to count.
+    QDir(data_dir).removeRecursively();
+    QDir().mkpath(data_dir);
+    if (!client.start(corePath, data_dir)) {
+        out << "vault_start=FAILED\n";
+        return 1;
+    }
+    out << "vault_start=ok\n";
+
+    QEventLoop loop;
+    bool unlocked = false;
+    bool created = false;
+    bool listed = false;
+    bool list_no_secret = false;
+    bool got = false;
+    bool locked_after = false;
+    bool locked_refuses = false;
+    // The credential id is hoisted to the function scope because the later async callbacks reference
+    // it long after the `vaultCreate` callback (its original owner) has returned.
+    QString id;
+
+    QObject::connect(&client, &CoreClient::failed, &loop, [&](const QString& message) {
+        out << "vault_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(&client, &CoreClient::ready, &loop, [&](const QJsonObject&) {
+        client.vaultStatus([&](const QJsonObject& status, const QString& status_error) {
+            if (!status_error.isEmpty()) {
+                out << "vault_status=FAILED " << status_error << '\n';
+                loop.quit();
+                return;
+            }
+            const QJsonObject st = status.value(QStringLiteral("status")).toObject();
+            const bool locked_before = !st.value(QStringLiteral("unlocked")).toBool();
+            out << "vault_locked_before=" << (locked_before ? "ok" : "FAILED") << '\n';
+
+            client.vaultUnlock(QStringLiteral("correct horse"),
+                               [&](const QJsonObject& unlock, const QString& unlock_error) {
+                                   if (!unlock_error.isEmpty()) {
+                                       out << "vault_unlock=FAILED " << unlock_error << '\n';
+                                       loop.quit();
+                                       return;
+                                   }
+                                   unlocked = unlock.value(QStringLiteral("unlocked")).toBool();
+                                   out << "vault_unlock=" << (unlocked ? "ok" : "FAILED") << '\n';
+
+                                   QJsonObject credential;
+                                   credential.insert(QStringLiteral("origin"),
+                                                    QStringLiteral("https://pelda.hu"));
+                                   credential.insert(QStringLiteral("kind"),
+                                                    QStringLiteral("password"));
+                                   credential.insert(QStringLiteral("username"),
+                                                    QStringLiteral("felhasznalo"));
+                                   credential.insert(QStringLiteral("password"),
+                                                    QStringLiteral("hunter2"));
+                                   client.vaultCreate(
+                                       credential,
+                                       [&](const QJsonObject& create, const QString& create_error) {
+                                           if (!create_error.isEmpty()) {
+                                               out << "vault_create=FAILED " << create_error << '\n';
+                                               loop.quit();
+                                               return;
+                                           }
+                                           const QJsonObject meta =
+                                               create.value(QStringLiteral("credential")).toObject();
+                                           id = meta.value(QStringLiteral("id")).toString();
+                                           created = !id.isEmpty();
+                                           out << "vault_create=" << (created ? "ok" : "FAILED")
+                                               << '\n';
+
+                                           client.vaultList(
+                                               [&](const QJsonObject& list,
+                                                   const QString& list_error) {
+                                                   if (!list_error.isEmpty()) {
+                                                       out << "vault_list=FAILED " << list_error
+                                                           << '\n';
+                                                       loop.quit();
+                                                       return;
+                                                   }
+                                                   const QJsonArray credentials =
+                                                       list.value(QStringLiteral("credentials"))
+                                                           .toArray();
+                                                   listed = credentials.size() == 1;
+                                                   list_no_secret =
+                                                       !QJsonDocument(list).toJson().contains(
+                                                           "hunter2");
+                                                   out << "vault_list=" << (listed ? "ok" : "FAILED")
+                                                       << '\n';
+                                                   out << "vault_list_no_secret="
+                                                       << (list_no_secret ? "ok" : "FAILED")
+                                                       << '\n';
+
+                                                   client.vaultGet(
+                                                       id,
+                                                       [&](const QJsonObject& get,
+                                                           const QString& get_error) {
+                                                           if (!get_error.isEmpty()) {
+                                                               out << "vault_get=FAILED "
+                                                                   << get_error << '\n';
+                                                               loop.quit();
+                                                               return;
+                                                           }
+                                                           const QJsonObject cred =
+                                                               get.value(QStringLiteral("credential"))
+                                                                   .toObject();
+                                                           got = cred.value(QStringLiteral("password"))
+                                                                     .toString() ==
+                                                                 QStringLiteral("hunter2");
+                                                           out << "vault_get=" << (got ? "ok" : "FAILED")
+                                                               << '\n';
+
+                                                           client.vaultLock(
+                                                               [&](const QJsonObject&,
+                                                                   const QString&) {
+                                                                   client.vaultStatus(
+                                                                       [&](const QJsonObject& after,
+                                                                           const QString& after_error) {
+                                                                           if (after_error.isEmpty()) {
+                                                                               locked_after =
+                                                                                   !after
+                                                                                        .value(QStringLiteral(
+                                                                                            "status"))
+                                                                                        .toObject()
+                                                                                        .value(QStringLiteral(
+                                                                                            "unlocked"))
+                                                                                        .toBool();
+                                                                           }
+                                                                           out << "vault_locked_after="
+                                                                               << (locked_after ? "ok"
+                                                                                                : "FAILED")
+                                                                               << '\n';
+                                                                           // A locked vault refuses a get: the
+                                                                           // core answers `vault_locked`.
+                                                                           client.vaultGet(
+                                                                               id,
+                                                                               [&](const QJsonObject&,
+                                                                                   const QString&
+                                                                                       locked_error) {
+                                                                                   locked_refuses =
+                                                                                       !locked_error
+                                                                                            .isEmpty();
+                                                                                   out
+                                                                                       << "vault_locked_refuses="
+                                                                                       << (locked_refuses
+                                                                                               ? "ok"
+                                                                                               : "FAILED")
+                                                                                       << '\n';
+                                                                                   loop.quit();
+                                                                               });
+                                                                       });
+                                                               });
+                                                       });
+                                               });
+                                       });
+                               });
+        });
+    });
+
+    client.handshake();
+    QTimer::singleShot(20000, &loop, &QEventLoop::quit);
+    loop.exec();
+    client.shutdown();
+
+    const bool ok = unlocked && created && listed && list_no_secret && got && locked_after &&
+                    locked_refuses;
+    out << "vault_check=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runSelfTest(bool with_engine, const QString& enginePath) {
     QTextStream out(stdout);
     out << "antikolt-shell " << ANTIKOLT_VERSION << '\n';
@@ -10453,6 +10628,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("coretest"),
         QStringLiteral("Prove the shell talks to the core service, then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption vaulttest(
+        QStringLiteral("vaulttest"),
+        QStringLiteral("Prove the shell drives the password vault end to end, then exit."),
+        QStringLiteral("path"));
     parser.addOption(selftest);
     parser.addOption(engine);
     parser.addOption(embedtest);
@@ -10523,6 +10702,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(scrollbook);
     parser.addOption(scrollrestore);
     parser.addOption(coretest);
+    parser.addOption(vaulttest);
     parser.process(app);
 
     // Every self test measures one thing, and a self test always *names itself* on the command line; the plain
@@ -10615,6 +10795,9 @@ int main(int argc, char* argv[]) {
     }
     if (parser.isSet(coretest)) {
         return runCoreCheck(parser.value(coretest));
+    }
+    if (parser.isSet(vaulttest)) {
+        return runVaultCheck(parser.value(vaulttest));
     }
 
     if (parser.isSet(scrollzoomtest)) {
