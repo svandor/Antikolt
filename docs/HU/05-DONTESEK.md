@@ -3,6 +3,33 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-083 — A széf tárolója SQLite-only: a titkoknak nincs JSON-exportja (2026-11-23)
+
+**Kontextus:** az ADR-082 bekötötte a titkosítást (AES-256-GCM + Argon2id + DPAPI), de a széf még nem
+tárolt semmit. Az ADR-069/070 szabálya szerint minden store egy íróval (SQLite) működik, a `*.json`
+dokumentumok pedig származtatott exportok — egy titok (jelszó, TOTP-kulcs, passkey) azonban soha nem
+kerülhet egy exportba, mert az hordozható, másolható és nem titkosított.
+
+**Döntés:**
+
+1. **A széf SQLite-only:** a `credential` tábla (séma 0011) tartja a titkos mezőket `*_ct` oszlopokban
+   (AES-256-GCM, AAD = origin + id), és **nincs** `vault.json` export — a `db_status`-szinkron sem ír ki
+   titkot semmilyen származtatott dokumentumba.
+2. **A kulcs DEK/KEK** (ADR-010): a `vault_meta` egysoros tábla a módot (`master` | `dpapi`), a sót és a
+   becsomagolt adatkulcsot tartja; az első feloldás rögzíti a módot, a továbbiak csak olvassák.
+3. **A lista meta, a get titok:** `vault_list` csak metaadatot ad (id, origin, kind, label, last_used_at),
+   akár zárt állapotban is; `vault_get` a nyílt szöveget csak nyitott széffel adja vissza; a rossz jelszó,
+   a hamisított rekord és a másik originre átjátszott blob egyaránt `vault_locked`.
+4. **Az 5 perces idle auto-lock a szolgáltatás-hurokban:** minden kérés `tick`-eli a széfet, a titkos
+   műveletek (`get`/`create`/`delete`) pedig `touch`-olják — így a használaton kívüli széf magától zár
+   (ADR-010), nem csak kézi `vault_lock`-ra.
+
+**Következmény:** (+) a jelszavak, TOTP-kulcsok és passkey-k most már tárolhatók és visszaolvashatók,
+mérve (`cargo test` **174** zöld: a 7 credentials-egységteszt + az end-to-end
+`the_vault_seals_serves_and_persists_credentials`); (+) a titkok soha nem érnek JSON-exportot; (−) a
+TOTP-kódgenerálás, a passkey (WebAuthn) és a Chrome/Firefox CSV-import még külön szeletek; (−) a
+profil-köteg (`profile_export`) sem viheti a széfet, amíg a titkosítás nincs hozzá rögzítve.
+
 ## ADR-082 — A széf titkosítása: AES-256-GCM + Argon2id + Windows DPAPI (2026-11-23)
 
 **Kontextus:** az ADR-031 a széf alakját elkészítette, de a titkosítást `UnavailableSecrets` mögé

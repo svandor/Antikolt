@@ -25,6 +25,7 @@ use antikolt_core::session::{LoginState, SessionLedgerEntry, SessionPolicy, Sess
 use serde::{Deserialize, Serialize};
 
 use crate::containers::Container;
+use crate::credentials::{Credential, VaultMeta};
 use crate::store::Card;
 use crate::workspaces::Workspace;
 
@@ -35,8 +36,9 @@ pub const DB_FILE_NAME: &str = "antikolt.sqlite3";
 /// `tags` and `workspace`, `0003` is the card-store switch (ADR-069), `0004` the other three stores' switch (ADR-070),
 /// `0005` the per-container proxy and permission policy (ADR-071), `0006` the one row of user preferences (ADR-072),
 /// `0007` the memory budget column (F6), `0008` the per-card `memory_bytes` (F6), `0009` the resource profile (F6),
-/// `0010` the resource profile values renamed to ADR-020's snake_case names.
-pub const SCHEMA_VERSION: i64 = 10;
+/// `0010` the resource profile values renamed to ADR-020's snake_case names, `0011` the password vault
+/// (`credential` + `vault_meta`, M7).
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// The schema version that means "the cards are SQLite-first" (ADR-069). A file at least this version already has the
 /// cards' adoption behind it, which the `0004` migration records in `meta` (the per-store adoption markers live there,
@@ -401,6 +403,38 @@ impl Db {
                  UPDATE user_prefs SET resource_profile = 'saver' WHERE resource_profile = 'takarekos';
                  UPDATE user_prefs SET resource_profile = 'manual' WHERE resource_profile = 'kezi';
                  PRAGMA user_version = 10;
+                 COMMIT;",
+            )?;
+        }
+        if self.opened_at_version < 11 {
+            // 0011: the password vault (M7). The `credential` table holds the sealed secret blobs
+            // (AES-256-GCM, AAD = origin + id, ADR-010/082); `vault_meta` holds the wrapped data key.
+            self.connection.execute_batch(
+                "BEGIN;
+                 CREATE TABLE IF NOT EXISTS credential (
+                     id                TEXT PRIMARY KEY,
+                     container_id      TEXT,
+                     origin            TEXT NOT NULL,
+                     kind              TEXT NOT NULL DEFAULT 'password',
+                     label             TEXT,
+                     username_ct       BLOB,
+                     password_ct       BLOB,
+                     totp_secret_ct    BLOB,
+                     totp_params_json  TEXT,
+                     passkey_ct        BLOB,
+                     last_used_at      INTEGER,
+                     created_at        INTEGER NOT NULL,
+                     updated_at        INTEGER NOT NULL,
+                     CHECK (kind IN ('password', 'totp', 'passkey'))
+                 );
+                 CREATE INDEX IF NOT EXISTS credential_origin ON credential (origin, container_id);
+                 CREATE TABLE IF NOT EXISTS vault_meta (
+                     id    INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                     mode  TEXT NOT NULL DEFAULT '',
+                     salt  TEXT NOT NULL DEFAULT '',
+                     dek   BLOB
+                 );
+                 PRAGMA user_version = 11;
                  COMMIT;",
             )?;
         }
@@ -927,6 +961,152 @@ impl Db {
             one("SELECT COUNT(*) FROM workspaces")?,
             one("SELECT COUNT(*) FROM sessions")?,
         ))
+    }
+
+    /// Every credential row, ordered by origin — the vault's stable order. The `*_ct` fields are ciphertext:
+    /// this is the store's own view, never sent to the shell as-is.
+    pub fn all_credentials(&self) -> Result<Vec<Credential>, DbError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, container_id, origin, kind, label, username_ct, password_ct,
+                    totp_secret_ct, totp_params_json, passkey_ct, last_used_at, created_at, updated_at
+             FROM credential ORDER BY origin",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(Credential {
+                id: row.get(0)?,
+                container_id: row.get(1)?,
+                origin: row.get(2)?,
+                kind: row.get(3)?,
+                label: row.get(4)?,
+                username_ct: row.get(5)?,
+                password_ct: row.get(6)?,
+                totp_secret_ct: row.get(7)?,
+                totp_params_json: row.get(8)?,
+                passkey_ct: row.get(9)?,
+                last_used_at: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        })?;
+        let mut credentials = Vec::new();
+        for credential in rows {
+            credentials.push(credential?);
+        }
+        Ok(credentials)
+    }
+
+    /// One credential by id.
+    pub fn credential(&self, id: &str) -> Result<Option<Credential>, DbError> {
+        self.connection
+            .query_row(
+                "SELECT id, container_id, origin, kind, label, username_ct, password_ct,
+                        totp_secret_ct, totp_params_json, passkey_ct, last_used_at, created_at, updated_at
+                 FROM credential WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(Credential {
+                        id: row.get(0)?,
+                        container_id: row.get(1)?,
+                        origin: row.get(2)?,
+                        kind: row.get(3)?,
+                        label: row.get(4)?,
+                        username_ct: row.get(5)?,
+                        password_ct: row.get(6)?,
+                        totp_secret_ct: row.get(7)?,
+                        totp_params_json: row.get(8)?,
+                        passkey_ct: row.get(9)?,
+                        last_used_at: row.get(10)?,
+                        created_at: row.get(11)?,
+                        updated_at: row.get(12)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(DbError::from)
+    }
+
+    /// Write one credential, replacing the row with the same id.
+    pub fn upsert_credential(&self, credential: &Credential) -> Result<(), DbError> {
+        self.connection.execute(
+            "INSERT INTO credential (id, container_id, origin, kind, label, username_ct, password_ct,
+                                     totp_secret_ct, totp_params_json, passkey_ct, last_used_at,
+                                     created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT (id) DO UPDATE SET
+                 container_id = excluded.container_id, origin = excluded.origin, kind = excluded.kind,
+                 label = excluded.label, username_ct = excluded.username_ct,
+                 password_ct = excluded.password_ct, totp_secret_ct = excluded.totp_secret_ct,
+                 totp_params_json = excluded.totp_params_json, passkey_ct = excluded.passkey_ct,
+                 last_used_at = excluded.last_used_at, updated_at = excluded.updated_at",
+            params![
+                credential.id,
+                credential.container_id,
+                credential.origin,
+                credential.kind,
+                credential.label,
+                credential.username_ct,
+                credential.password_ct,
+                credential.totp_secret_ct,
+                credential.totp_params_json,
+                credential.passkey_ct,
+                credential.last_used_at,
+                credential.created_at,
+                credential.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Record that a credential was used now — a single-column write, so a read never rewrites a secret.
+    pub fn touch_credential(&self, id: &str, now_ms: i64) -> Result<(), DbError> {
+        self.connection.execute(
+            "UPDATE credential SET last_used_at = ?2 WHERE id = ?1",
+            params![id, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Drop one credential.
+    pub fn delete_credential(&self, id: &str) -> Result<bool, DbError> {
+        let removed = self
+            .connection
+            .execute("DELETE FROM credential WHERE id = ?1", params![id])?;
+        Ok(removed > 0)
+    }
+
+    /// How many credential rows the vault holds.
+    pub fn count_credentials(&self) -> Result<i64, DbError> {
+        Ok(self
+            .connection
+            .query_row("SELECT COUNT(*) FROM credential", [], |row| row.get(0))?)
+    }
+
+    /// The wrapped data key, or `None` while the vault has never been unlocked.
+    pub fn vault_meta(&self) -> Result<Option<VaultMeta>, DbError> {
+        self.connection
+            .query_row(
+                "SELECT mode, salt, dek FROM vault_meta WHERE id = 1",
+                [],
+                |row| {
+                    Ok(VaultMeta {
+                        mode: row.get(0)?,
+                        salt: row.get(1)?,
+                        dek: row.get::<_, Option<Vec<u8>>>(2)?.unwrap_or_default(),
+                    })
+                },
+            )
+            .optional()
+            .map_err(DbError::from)
+    }
+
+    /// Replace the wrapped data key (on the first unlock).
+    pub fn set_vault_meta(&self, meta: &VaultMeta) -> Result<(), DbError> {
+        self.connection.execute(
+            "INSERT INTO vault_meta (id, mode, salt, dek) VALUES (1, ?1, ?2, ?3)
+             ON CONFLICT (id) DO UPDATE SET mode = excluded.mode, salt = excluded.salt, dek = excluded.dek",
+            params![meta.mode, meta.salt, meta.dek],
+        )?;
+        Ok(())
     }
 }
 

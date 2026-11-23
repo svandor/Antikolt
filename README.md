@@ -20,7 +20,7 @@
 > Rust core owns the data: cards, containers (isolated cookie partitions), workspaces, the session ledger and the
 > portable profile bundle. Leaving a card **hibernates** it to disk (MHTML snapshot + scroll/anchor/form state) and
 > destroys the engine view; returning restores it offline in seconds. Measured on the current build: `verify.ps1`
-> runs **68 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **88 + 53 + 9 +
+> runs **68 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **88 + 60 + 10 +
 > 1 + 15 Rust tests**), and `dist.ps1 -Release` produces a 446 MB portable build. Start with
 > [`docs/EN/README.md`](docs/EN/README.md); the authoritative plan and the decision log are Hungarian
 > ([`docs/HU/`](docs/HU/)). Licence: [`LICENSE`](LICENSE) (MPL-2.0) · authors: [`AUTHORS`](AUTHORS) ·
@@ -90,7 +90,7 @@ pwsh -File scripts/build.ps1
 pwsh -File scripts/build.ps1 -CheckOnly      # csak az eszközlánc
 
 # Rust mag
-cargo test --all          # 166 teszt
+cargo test --all          # 174 teszt
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 

@@ -18,6 +18,7 @@
 
 mod bundle;
 mod containers;
+mod credentials;
 mod persist;
 mod sessions;
 mod sqlite_store;
@@ -34,6 +35,7 @@ use serde_json::{json, Value};
 
 use bundle::Bundle;
 use containers::{Container, ContainerStore};
+use credentials::{CredentialStore, NewCredential};
 use sessions::SessionStore;
 use sqlite_store::UserPrefs;
 use store::{Card, CardStore};
@@ -81,6 +83,10 @@ fn run() -> Result<(), String> {
             data_dir.display()
         )
     })?;
+    // The vault is SQLite-only: its rows are sealed ciphertext and must never reach a JSON export
+    // (ADR-082). It shares the same database file, so it opens like the other stores.
+    let mut vault = CredentialStore::open(&data_dir)
+        .map_err(|error| format!("cannot open the vault in {}: {error}", data_dir.display()))?;
     // Every store adopted its pre-switch JSON document (if there was one) and recorded that in the database, so a failed
     // adoption anywhere above leaves the question open and the next start retries it (ADR-069/070).
     let card_count = store
@@ -127,6 +133,7 @@ fn run() -> Result<(), String> {
                         &mut sessions,
                         &mut containers,
                         &mut workspaces,
+                        &mut vault,
                     );
                     write_frame(&mut output, &reply)?;
                     if !keep_serving {
@@ -191,7 +198,11 @@ fn handle(
     sessions: &mut SessionStore,
     containers: &mut ContainerStore,
     workspaces: &mut WorkspaceStore,
+    vault: &mut CredentialStore,
 ) -> (Value, bool) {
+    // Drive the vault's 5-minute idle auto-lock (ADR-010): every request is the clock that tells the
+    // vault whether it is still in use.
+    vault.tick(now_ms());
     let id = request.get("id").and_then(Value::as_u64).unwrap_or(0);
     let version = request
         .get("version")
@@ -932,6 +943,109 @@ fn handle(
                 ),
                 true,
             )
+        }
+        // ---- the vault (M7, ADR-082) -----------------------------------------------------------
+        // Credentials are sealed with AES-256-GCM (AAD = origin + id) and live only in SQLite: there is no
+        // `*.json` export, because a secret must never reach a derived document. `vault_list` is metadata only;
+        // `vault_get` returns plaintext and therefore needs the vault open.
+        "vault_status" => {
+            let status = vault.status(now_ms());
+            (
+                ok_reply(
+                    id,
+                    json!({
+                        "status": {
+                            "unlocked": status.unlocked,
+                            "idle_ms": status.idle_ms,
+                            "record_count": status.record_count,
+                            "can_store": status.can_store,
+                            "unavailable_reason": status.unavailable_reason,
+                        }
+                    }),
+                ),
+                true,
+            )
+        }
+        "vault_unlock" => {
+            let password = request.get("password").and_then(Value::as_str);
+            match vault.unlock(password, now_ms()) {
+                Ok(status) => (
+                    ok_reply(
+                        id,
+                        json!({
+                            "unlocked": status.unlocked,
+                            "record_count": status.record_count,
+                        }),
+                    ),
+                    true,
+                ),
+                Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
+            }
+        }
+        "vault_lock" => {
+            vault.lock();
+            let status = vault.status(now_ms());
+            (ok_reply(id, json!({ "unlocked": status.unlocked })), true)
+        }
+        "vault_list" => match vault.list() {
+            Ok(credentials) => (ok_reply(id, json!({ "credentials": credentials })), true),
+            Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
+        },
+        "vault_create" => {
+            let Some(credential) = request.get("credential") else {
+                return (
+                    error_reply(id, "invalid_argument", "vault_create needs credential"),
+                    true,
+                );
+            };
+            match serde_json::from_value::<NewCredential>(credential.clone()) {
+                Ok(credential) => match vault.upsert(credential, now_ms()) {
+                    Ok(meta) => (ok_reply(id, json!({ "credential": meta })), true),
+                    Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
+                },
+                Err(error) => (
+                    error_reply(id, "invalid_argument", &error.to_string()),
+                    true,
+                ),
+            }
+        }
+        "vault_get" => {
+            let Some(credential_id) = request.get("id_of_credential").and_then(Value::as_str)
+            else {
+                return (
+                    error_reply(id, "invalid_argument", "vault_get needs id_of_credential"),
+                    true,
+                );
+            };
+            match vault.get(credential_id, now_ms()) {
+                Ok(Some(credential)) => (ok_reply(id, json!({ "credential": credential })), true),
+                Ok(None) => (
+                    error_reply(id, "not_found", "no credential with that id"),
+                    true,
+                ),
+                Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
+            }
+        }
+        "vault_delete" => {
+            let Some(credential_id) = request.get("id_of_credential").and_then(Value::as_str)
+            else {
+                return (
+                    error_reply(
+                        id,
+                        "invalid_argument",
+                        "vault_delete needs id_of_credential",
+                    ),
+                    true,
+                );
+            };
+            match vault.delete(credential_id, now_ms()) {
+                Ok(true) => (ok_reply(id, json!({ "removed": true })), true),
+                Ok(false) => (
+                    error_reply(id, "not_found", "no credential with that id"),
+                    true,
+                ),
+                Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
+            }
         }
         "shutdown" => {
             // One last export of all four documents, so the readable copies next to the database are never older than

@@ -51,6 +51,15 @@ pub fn generate_salt() -> String {
     salt.as_str().to_string()
 }
 
+/// A fresh random 256-bit data key (the DEK, ADR-010). Drawn from the OS CSPRNG, never from the
+/// non-cryptographic identifier generator (`ids.rs` is explicit that it is not for secrets).
+pub fn random_dek() -> [u8; 32] {
+    use aes_gcm::aead::rand_core::RngCore;
+    let mut key = [0u8; 32];
+    OsRng.fill_bytes(&mut key);
+    key
+}
+
 /// AES-256-GCM over a derived or injected 256-bit key.
 pub struct AesGcmSecrets {
     key: zeroize::Zeroizing<[u8; 32]>,

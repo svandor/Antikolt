@@ -175,7 +175,7 @@ fn the_database_is_the_store_and_the_report_proves_the_export() {
 
     let status = service.request("db_status", json!({ "sync": true }));
     assert_eq!(status["ok"], true, "db_status answered: {status}");
-    assert_eq!(status["data"]["schema"], json!(10));
+    assert_eq!(status["data"]["schema"], json!(11));
     assert_eq!(status["data"]["verified"], true);
     // Three cards, four containers, three workspaces and the rules of an empty ledger: every store's export is checked.
     assert_eq!(status["data"]["checked"], json!(11), "every row is checked");
@@ -516,5 +516,80 @@ fn user_prefs_carry_the_derived_profile_params() {
     );
 
     service.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_vault_seals_serves_and_persists_credentials() {
+    let dir = temp_dir("vault");
+    let mut service = Service::start(&dir);
+
+    // A fresh vault is locked and can store, but refuses reads until unlocked.
+    let status = service.request("vault_status", json!({}));
+    assert_eq!(status["ok"], true);
+    assert_eq!(status["data"]["status"]["unlocked"], false);
+    assert_eq!(status["data"]["status"]["can_store"], true);
+
+    let locked = service.request("vault_list", json!({}));
+    assert_eq!(
+        locked["ok"], true,
+        "the list is metadata, allowed while locked"
+    );
+    assert_eq!(locked["data"]["credentials"], json!([]));
+
+    // Unlock with a master password, then create one credential.
+    let unlock = service.request("vault_unlock", json!({ "password": "correct horse" }));
+    assert_eq!(unlock["ok"], true);
+    assert_eq!(unlock["data"]["unlocked"], true);
+
+    let created = service.request(
+        "vault_create",
+        json!({ "credential": {
+            "origin": "https://pelda.hu", "kind": "password",
+            "username": "felhasznalo", "password": "hunter2"
+        }}),
+    );
+    assert_eq!(created["ok"], true, "create answered: {created}");
+    assert_eq!(created["data"]["credential"]["origin"], "https://pelda.hu");
+    let id = created["data"]["credential"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    // The metadata list never carries the secret.
+    let list = service.request("vault_list", json!({}));
+    assert_eq!(list["ok"], true);
+    assert_eq!(
+        list["data"]["credentials"].as_array().expect("array").len(),
+        1
+    );
+    assert!(
+        !list.to_string().contains("hunter2"),
+        "the list must not leak the secret"
+    );
+
+    // A get opens the secret.
+    let got = service.request("vault_get", json!({ "id_of_credential": id }));
+    assert_eq!(got["ok"], true, "get answered: {got}");
+    assert_eq!(got["data"]["credential"]["password"], "hunter2");
+    assert_eq!(got["data"]["credential"]["username"], "felhasznalo");
+
+    // Locking drops the key.
+    service.request("vault_lock", json!({}));
+    let after_lock = service.request("vault_get", json!({ "id_of_credential": id }));
+    assert_eq!(after_lock["ok"], false);
+    assert_eq!(after_lock["error"]["code"], "vault_locked");
+
+    service.stop();
+
+    // A restart with the same master password still opens the same secret.
+    let mut reopened = Service::start(&dir);
+    let unlock = reopened.request("vault_unlock", json!({ "password": "correct horse" }));
+    assert_eq!(unlock["ok"], true, "reopen unlock: {unlock}");
+    let got = reopened.request("vault_get", json!({ "id_of_credential": id }));
+    assert_eq!(got["ok"], true);
+    assert_eq!(got["data"]["credential"]["password"], "hunter2");
+    reopened.stop();
+
     let _ = std::fs::remove_dir_all(&dir);
 }

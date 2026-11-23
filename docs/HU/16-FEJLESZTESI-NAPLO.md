@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvenhatodik szelet) — a széf tárolója: credential tábla + vault IPC (M7)
+
+A jelszó-boltozat második fele: a titkosítás (145. szelet) után most már **tárol** is. A `credential`
+tábla SQLite-only (séma 0011), a titkos mezők AES-256-GCM-mel pecsételve, a DEK/KEK a `vault_meta`-ban,
+és a `vault_*` IPC-műveletek a huzalon át szolgálják ki a shellt.
+
+### Mi változott
+
+- **`crates/antikolt-core/src/secrets.rs`:** `random_dek` (a DEK a CSPRNG-ből, nem az id-generátorból).
+- **`crates/antikolt-core-service/src/sqlite_store.rs`:** séma 0011 (`credential` + `vault_meta` tábla) és
+  a `Db` metódusai (`all_credentials`, `credential`, `upsert_credential`, `touch_credential`,
+  `delete_credential`, `count_credentials`, `vault_meta`, `set_vault_meta`).
+- **`crates/antikolt-core-service/src/credentials.rs` (új):** `CredentialStore` — a pecsételés/nyitás,
+  a DEK/KEK-feloldás (mesterjelszó + DPAPI), a zár/nyit és az 5 perces idle auto-lock; a lista meta, a get titok.
+- **`crates/antikolt-core-service/src/main.rs`:** `vault_status`/`vault_unlock`/`vault_lock`/`vault_list`/
+  `vault_create`/`vault_get`/`vault_delete` IPC-műveletek + a széf `tick`-elése minden kérésnél.
+- **`tests/service.rs`:** end-to-end `the_vault_seals_serves_and_persists_credentials` (pecsételés,
+  meta-lista titok nélkül, get, lock, újraindítás utáni feloldás).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (71 ellenőrzés)
+cargo test         → 174 zöld: 88 + 60 + 10 + 1 + 15   (a +8 vault-teszt: 7 egység + 1 end-to-end)
+```
+
+### Ami továbbra is nyitott
+
+- A TOTP-kódgenerálás; a passkey (WebAuthn virtuális hitelesítő); a Chrome/Firefox CSV-import; a
+  shell-vault felület + izolált világú kitöltés; a PiP (views-architektúra-váltás).
+
 ## 2026-11-23 (száznegyvenötödik szelet) — a széf titkosítása: AES-256-GCM + Argon2id + DPAPI (M7)
 
 A jelszó-boltozat (M7) alapja. Az ADR-031 óta a széf **alakja** kész, de a titkosítás `UnavailableSecrets`
