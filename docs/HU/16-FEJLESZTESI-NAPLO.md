@@ -3,6 +3,42 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonnegyedik szelet) — a memória warn/hard sávok élő jelként (F6)
+
+Az F6 „warn/hard sávok tényleges vezérlője" első darabja: a profil `memory_warn_bytes`/`memory_hard_bytes` sávjai
+eddig csak **látszottak** (`--memoryreport`), de semmit nem hajtottak. Most a mért working set a sávokhoz van mérve,
+és az eredmény — a `normal`/`warn`/`hard` **nyomás-osztály** — a lap `system.memory` válaszában utazik, pont úgy,
+ahogy a mag `ProfileParams::pressure`-je definiálja (határ-inkluzív: `>= warn` → `warn`, `>= hard` → `hard`).
+
+### Mi változott
+
+- **`memoryPressureName(used, warn, hard)`** (szabad függvény a `main_window.{h,cpp}`-ben): a mag `pressure`-ének
+  shell-megfelelője; egy ki nem töltött (0) sáv sosem süt, tehát a két sáv egymástól függetlenül opcionális.
+- **A shell cache-eli a sávokat** (`memory_warn_bytes_`/`memory_hard_bytes_`, `refreshUserPrefs`), és a `system.memory`
+  válasz új `pressure` mezőt kap — így a lap a `overBudget` mellett a rendszer-nyomást is látja (a jövőbeli
+  governor-műveletek alapja).
+- **`--memorypressuretest` (új, tiszta függvényteszt):** mind a három osztály a határon és fölötte, plusz a
+  „nincs sáv" és a „csak az egyik sáv" esetek.
+- **`--memoryreport`** a `memory_pressure=`-t is írja, és a riport csak akkor zöld, ha a mező megérkezett (a bekötés
+  bizonyítéka, nem csak a képlet).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL SELF TESTS PASSED (56 ellenőrzés mind „ok", köztük a memorypressuretest és a check-repo)
+--memorypressuretest → pressure_normal=normal · pressure_warn_at=warn · pressure_warn_above=warn ·
+                       pressure_hard_at=hard · pressure_hard_above=hard · pressure_no_bands=normal ·
+                       pressure_warn_only=warn · pressure_hard_only=hard · memory_pressure_check=ok
+--memoryreport      → memory_pressure=normal · memory_report=ok
+cargo test          → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A nyomás **művelethez kötése** (a `warn`/`hard` szint hatása — előnézet-munkás szünet, kártya-hibernálás, illetve a
+  `video_max_height` tényleges médiaminőség-korlátja) és a lap oldali jelzés; az OAuth összekötése; az emberi kiadási
+  tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonharmadik szelet) — a munkaterület fogd-és-vidd igazolása (ADR-058)
 
 A munkaterület fogd-és-vidd nyitott tétele lezárva: a huzal már a kódban volt (a kártya `draggable`, a `dragstart`

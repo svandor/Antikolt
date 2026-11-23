@@ -114,6 +114,7 @@ $engineChecks = @(
     @{ Name = 'homeedittest'; Args = @('--homeedittest') },
     @{ Name = 'sandboxtest'; Args = @('--sandboxtest') },
     @{ Name = 'containerpolicytest'; Args = @('--containerpolicytest') },
+    @{ Name = 'memorypressuretest'; Args = @('--memorypressuretest') },
     @{ Name = 'enginerestarttest'; Args = @('--enginerestarttest') },
     @{ Name = 'rastertest'; Args = @('--rastertest') },
     @{ Name = 'rasterhometest'; Args = @('--rasterhometest') },

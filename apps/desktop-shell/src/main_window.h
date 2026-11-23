@@ -58,6 +58,11 @@ struct PendingWipe {
     QStringList storages;
 };
 
+/// The memory governor's pressure class (ADR-020) from the measured working set and the profile's warn/hard bands.
+/// Boundary-inclusive, mirroring the core's `ProfileParams::pressure`: `hard` at the hard band, `warn` at the warn
+/// band, `normal` below. An unset (zero) band never fires, so the two bands are independently optional.
+QString memoryPressureName(qint64 used_bytes, qint64 warn_bytes, qint64 hard_bytes);
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -407,6 +412,11 @@ private:
     /// The profile's memory budget in bytes (`memory_budget_mb` × MiB), cached from the core; the factory 512 MiB
     /// until the first `refreshUserPrefs` answers. `system.memory` reports it as `budgetBytes` (F6).
     qint64 memory_budget_bytes_ = 512LL * 1024 * 1024;
+    /// The profile's governor bands in bytes (ADR-020 `memory_warn_bytes`/`memory_hard_bytes`), cached from the
+    /// derived profile. `system.memory` derives the `pressure` signal from them against the measured working set
+    /// (F6). The factory values match the `Balanced` profile (850 MiB / 1000 MiB).
+    qint64 memory_warn_bytes_ = 850LL * 1024 * 1024;
+    qint64 memory_hard_bytes_ = 1000LL * 1024 * 1024;
     /// The idle-hibernation window in ms, cached from `user_prefs.idle_hibernate_ms` (ADR-072). The factory
     /// 10 minutes until the first `refreshUserPrefs` answers; `ANTIKOLT_HIBERNATE_MS` still overrides for the
     /// self test.

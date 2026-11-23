@@ -2437,6 +2437,38 @@ int runContainerPolicyCheck() {
     return ok ? 0 : 1;
 }
 
+int runMemoryPressureCheck() {
+    QTextStream out(stdout);
+
+    // The three classes, at and past each boundary (the core's bands are boundary-inclusive, so the shell's must be
+    // too). The unset-band cases prove the bands are independently optional: a zero band never fires.
+    const QString normal = memoryPressureName(100, 850, 1000);
+    const QString warn_at = memoryPressureName(850, 850, 1000);
+    const QString warn_above = memoryPressureName(999, 850, 1000);
+    const QString hard_at = memoryPressureName(1000, 850, 1000);
+    const QString hard_above = memoryPressureName(1200, 850, 1000);
+    const QString no_bands = memoryPressureName(1200, 0, 0);
+    const QString warn_only = memoryPressureName(1200, 850, 0);
+    const QString hard_only = memoryPressureName(1200, 0, 1000);
+
+    out << "pressure_normal=" << normal << '\n';
+    out << "pressure_warn_at=" << warn_at << '\n';
+    out << "pressure_warn_above=" << warn_above << '\n';
+    out << "pressure_hard_at=" << hard_at << '\n';
+    out << "pressure_hard_above=" << hard_above << '\n';
+    out << "pressure_no_bands=" << no_bands << '\n';
+    out << "pressure_warn_only=" << warn_only << '\n';
+    out << "pressure_hard_only=" << hard_only << '\n';
+
+    const bool ok = normal == QStringLiteral("normal") && warn_at == QStringLiteral("warn") &&
+                    warn_above == QStringLiteral("warn") && hard_at == QStringLiteral("hard") &&
+                    hard_above == QStringLiteral("hard") && no_bands == QStringLiteral("normal") &&
+                    warn_only == QStringLiteral("warn") && hard_only == QStringLiteral("hard");
+    out << "memory_pressure_check=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -2797,6 +2829,7 @@ int runMemoryReport(const QString& enginePath) {
     qint64 budget_bytes = 0;
     qint64 working_set = 0;
     bool over_budget = false;
+    QString pressure;
     qint64 card_sum = 0;
     int cards_measured = 0;
     qint64 home_surface = 0;
@@ -2858,6 +2891,8 @@ int runMemoryReport(const QString& enginePath) {
                                                              mem.value(QStringLiteral("usedBytes")).toDouble());
                                                          over_budget =
                                                              mem.value(QStringLiteral("overBudget")).toBool();
+                                                         pressure =
+                                                             mem.value(QStringLiteral("pressure")).toString();
                                                      }
                                                      loop.quit();
                                                  });
@@ -2885,6 +2920,7 @@ int runMemoryReport(const QString& enginePath) {
     out << "memory_budget_bytes=" << budget_bytes << '\n';
     out << "memory_working_set_bytes=" << working_set << '\n';
     out << "memory_over_budget=" << (over_budget ? "true" : "false") << '\n';
+    out << "memory_pressure=" << pressure << '\n';
     out << "memory_card_sum_bytes=" << card_sum << '\n';
     out << "memory_cards_measured=" << cards_measured << '\n';
 
@@ -2895,7 +2931,7 @@ int runMemoryReport(const QString& enginePath) {
                             resource_profile == QStringLiteral("saver") ||
                             resource_profile == QStringLiteral("ultra") ||
                             resource_profile == QStringLiteral("manual");
-    const bool ok = known_kind && budget_bytes > 0 && working_set > 0;
+    const bool ok = known_kind && budget_bytes > 0 && working_set > 0 && !pressure.isEmpty();
     out << "memory_report=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();
@@ -9140,6 +9176,9 @@ int main(int argc, char* argv[]) {
     const QCommandLineOption containerpolicytest(
         QStringLiteral("containerpolicytest"),
         QStringLiteral("Prove the per-container proxy/permission builder (F3), then exit."));
+    const QCommandLineOption memorypressuretest(
+        QStringLiteral("memorypressuretest"),
+        QStringLiteral("Prove the memory pressure class from the profile's warn/hard bands, then exit."));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9222,6 +9261,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(homeedittest);
     parser.addOption(sandboxtest);
     parser.addOption(containerpolicytest);
+    parser.addOption(memorypressuretest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9408,6 +9448,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(containerpolicytest)) {
         return runContainerPolicyCheck();
+    }
+
+    if (parser.isSet(memorypressuretest)) {
+        return runMemoryPressureCheck();
     }
 
     if (parser.isSet(enginerestarttest)) {

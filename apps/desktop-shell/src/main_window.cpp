@@ -1462,11 +1462,15 @@ void MainWindow::handleBridgeCall(qint64 surface, const QString& method, const Q
                 // The budget bands (F6, 03-MEMORIA.md §4): a live surface above the profile's budget is the
                 // signal for the media-quality limit — the page shows a "memory-saving" hint, overridable there.
                 const bool over_budget = memory_budget_bytes_ > 0 && used > memory_budget_bytes_;
+                // The profile's warn/hard bands (ADR-020) become a live signal here: the measured working set
+                // is classed against them, so the governor (and the page) can tell "fine" from "under pressure".
+                const QString pressure = memoryPressureName(used, memory_warn_bytes_, memory_hard_bytes_);
                 replyToPage(request,
                             QJsonObject{{QStringLiteral("usedBytes"), static_cast<double>(used)},
                                         {QStringLiteral("budgetBytes"),
                                          static_cast<double>(memory_budget_bytes_)},
-                                        {QStringLiteral("overBudget"), over_budget}});
+                                        {QStringLiteral("overBudget"), over_budget},
+                                        {QStringLiteral("pressure"), pressure}});
             });
             return;
         }
@@ -2507,6 +2511,16 @@ void MainWindow::importProfile() {
     });
 }
 
+QString memoryPressureName(qint64 used_bytes, qint64 warn_bytes, qint64 hard_bytes) {
+    if (hard_bytes > 0 && used_bytes >= hard_bytes) {
+        return QStringLiteral("hard");
+    }
+    if (warn_bytes > 0 && used_bytes >= warn_bytes) {
+        return QStringLiteral("warn");
+    }
+    return QStringLiteral("normal");
+}
+
 void MainWindow::refreshUserPrefs() {
     if (core_ == nullptr || !core_->isRunning()) {
         return;
@@ -2538,9 +2552,15 @@ void MainWindow::refreshUserPrefs() {
             preview_refresh_ = profile.value(QStringLiteral("preview_refresh")).toBool(true);
             const QJsonValue shutdown = profile.value(QStringLiteral("engine_warm_idle_shutdown_ms"));
             engine_shutdown_ms_ = shutdown.isNull() ? -1 : static_cast<qint64>(shutdown.toDouble());
+            memory_warn_bytes_ =
+                static_cast<qint64>(profile.value(QStringLiteral("memory_warn_bytes")).toDouble());
+            memory_hard_bytes_ =
+                static_cast<qint64>(profile.value(QStringLiteral("memory_hard_bytes")).toDouble());
         } else {
             preview_refresh_ = true;
             engine_shutdown_ms_ = -1;
+            memory_warn_bytes_ = 850LL * 1024 * 1024;
+            memory_hard_bytes_ = 1000LL * 1024 * 1024;
         }
         // An open dock follows the core's answer, not a stale copy of it.
         if (settings_dock_ != nullptr && settings_dock_->isVisible()) {

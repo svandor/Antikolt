@@ -350,7 +350,8 @@ hálózat (a függőségek lemezen nincsenek meg).
 
 **Memória (F6):** büdzsé-vezérlő sávokkal és médiaminőség-korláttal, kártyánkénti bontás, technika-létra
 luminancia-ellenőrzéssel, öt erőforrás-profil, raszter-kezdőlap (motor leállítva), hangolási riport, valamint
-a mérőpad S3/S6 állításai.
+a mérőpad S3/S6 állításai. A `warn`/`hard` sávokból **már `pressure` jel** számítódik (ADR-020, `--memorypressuretest`,
+124. szelet); a tényleges **művelet** (a videófelbontás-korlát és a nyomásra kötött akció) még hátra van.
 
 **Kiadás:** SignPath-jelentkezés (**emberi lépés**: publikus repó + elbírálás) → aláírt exe; Store identity +
 helyi MSIX telepítés (Partner Center + tanúsítvány); a `release.yml` scaffold sosem futott; frissítő
