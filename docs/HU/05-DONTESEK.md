@@ -3,6 +3,35 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-082 — A széf titkosítása: AES-256-GCM + Argon2id + Windows DPAPI (2026-11-23)
+
+**Kontextus:** az ADR-031 a széf alakját elkészítette, de a titkosítást `UnavailableSecrets` mögé
+rejtette, mert a buildkörnyezetben nem volt crates.io-elérés, az offline registry pedig egyetlen
+kriptográfiai crate-et sem tartalmazott. A jelszó-importnak (M7) viszont cél-boltozat kell, ami
+titkosítás nélkül nem építhető. A karbantartó döntése: **jelszavak + TOTP + passkey**, titkosítás
+**Windows DPAPI + opcionális mesterjelszó** (az ADR-010 DEK/KEK terve), és **Chrome/Firefox CSV-import**.
+
+**Döntés:**
+
+1. **A crate-ek bekötve** (`aes-gcm` 0.10, `argon2` 0.5, `zeroize` 1): a buildkörnyezet most eléri a
+   crates.io-t, így a korábbi blokkoló megszűnt.
+2. **A rekord-titkosítás AES-256-GCM** (`AesGcmSecrets`, `secrets.rs`): rekordonként friss 96 bites
+   nonce (a ciphertext elé írva), a rekord AAD-ja az **origin + rekord-azonosító** (ADR-010) — a GCM
+   címke a kulcsot, a testet és az AAD-ot együtt ellenőrzi, így a rossz kulcs, a hamisított rekord és
+   a másik originre átjátszott blob egyetlen hiba (`Corrupt`), soha nem plaintext-találat.
+3. **A mesterjelszó-út Argon2id** (`from_master_password` + `generate_salt`): a 256 bites kulcs a
+   jelszóból és a tárolt sóból jön; ugyanaz a jelszó+só ugyanazt a kulcsot adja, a rossz jelszó nem nyit.
+4. **A DPAPI-út Windows alatt** (`secrets::dpapi`): `CryptProtectData`/`CryptUnprotectData` a
+   `crypt32`-ből, `CRYPTPROTECT_UI_FORBIDDEN`-nel; a modul a crate egyetlen `unsafe`-t használó helye
+   (`#[allow(unsafe_code)]` modulban, SAFETY-kommentekkel), mert a crate `#![deny(unsafe_code)]`.
+5. **A kulcsanyag `zeroize::Zeroizing`-ben él**, a `Debug` impl nem ír ki titkot.
+
+**Következmény:** (+) a széf most már tud pecsételni és nyitni — a `can_store: false` megszűnt a
+mesterjelszó- és a DPAPI-út számára; (+) a 10 új teszt méri (round-trip, AAD-kötés, hamisítás-elutasítás,
+rossz jelszó, só-egyediség, DPAPI round-trip Windows alatt); (−) a DEK/KEK-tárolás, a `credential` tábla
+írása/olvasása, a TOTP, a passkey és a CSV-import még külön szeletek; (−) a DPAPI-blob gépre+felhasználóra
+kötött, a profil hordozhatósága csak mesterjelszóval adott (ADR-010). A `cargo test` most **166** zöld.
+
 ## ADR-081 — A könyvjelző-import a Netscape-HTML formátumot eszi (M7) (2026-11-23)
 
 **Kontextus:** az M7 „jelszó- és könyvjelző-import" nyitott volt. A jelszó-importnak nincs cél-boltozata a

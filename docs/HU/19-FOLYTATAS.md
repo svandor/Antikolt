@@ -13,7 +13,7 @@
 ```
 git rev-parse --short HEAD  →  d131c4f  (docs(slice-144): release files (THIRD-PARTY-NOTICES) + gate check (M8))
 scripts/verify.ps1          →  ALL CHECKS PASSED — 71 ellenőrzés mind „ok"
-cargo test                  →  156 zöld: 78 + 53 + 9 + 1 + 15
+cargo test                  →  166 zöld: 88 + 53 + 9 + 1 + 15
 git status                  →  tiszta munkafa, minden pusholva (origin/main)
 ```
 
@@ -48,10 +48,10 @@ A döntések után, sorrendben: vault + import → PiP (ha jóváhagyva) → tel
 | F6 `video_max_height` | **kész** (ADR-076, 136. szelet) | a profil `video_max_height`-je **megjelenítési sapkaként** alkalmazva (`set_video_cap` op, nevesített stíluselem); a dekódolási felbontás-csökkentés `not-measurable` (a CEF nem ad laponkénti korlátot) | `--videocaptest`: Fast 2160px → Saver 720px (renderelt magasság 720) → Manual eltávolítva |
 | Automatikus profilváltás (M6) | **kész** (ADR-080, 142. szelet) | `ProfileKind::Auto` + `resolve_profile` IPC (`{on_ac_power, pressure}` → `{kind, params}`); a shell `onAcPower()` + a memória-minta alapján minden ciklusban újra-kérdez | `--autoprofiltest`: normal/ac=balanced · normal/bat=saver · hard=ultra |
 | Könyvjelző-import (M7) | **kész** (ADR-081, 143. szelet) | Netscape-HTML → kártyák (`bookmarks.h` regex-parser + `newCardId`), az újra-import nem duplikál; a „💾 Profil" menüben `importBookmarksFromPath` | `--bookmarkimporttest`: parse + id-alak + upsert |
-| Jelszó-import (M7) | nyitott | nincs cél-boltozat a termékben — külön szelet kell | — |
+| Jelszó-boltozat (M7) | `crates/antikolt-core/src/secrets.rs` (ADR-082) | a **titkosítás** kész (AES-256-GCM + Argon2id mesterjelszó-út + Windows DPAPI); a DEK/KEK-tárolás, a `credential` tábla írása, a TOTP, a passkey és a Chrome/Firefox CSV-import nyitott | `cargo test` 166 zöld (88+53+9+1+15), köztük a 10 secrets-teszt |
 | OAuth összekötés | `main_window.cpp` (popup, 02-ARCH §8.5) | a mechanizmus kész, a bejelentkezési gesztus-út a harnessben nem kattintható | `not-measurable` gesztus; a kész mechanizmus már mért |
 | `sha256` blobtár | **kész** (ADR-077, 137. szelet) | a preview-név a tartalom hash-e (`previewContentName`, Qt `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből | `--previewhashtest` (publikus vektorok), `--previewgentest`/`--previewworkertest` (`preview_content_addressed=ok`) |
-| PiP | motor (CEF 158) | a CEF 158 PiP-je **views-alapú** (`CefBrowserViewDelegate`), a shell ablakos (nem views) API-t használ — valószínűleg architektúra-váltás kell, előbb döntés | — |
+| PiP | motor (CEF 158) | **döntés meghozva:** views-architektúra-váltás a Document-PiP-hez (a klasszikus video-PiP-hez a CEF nem ad API-t; a Document-PiP az Alloy/ablakos runtime-ban le van tiltva, csak a Chrome/views runtime-ban él) — külön, nagy szelet | — |
 | HU/EN felület | **kész** (ADR-078/079, 138–141. szelet) | `ui/language` + `i18n.h` `uiText` + `setLanguage` (chrome); `data-language` + `pushLanguageToGrid` + `home/app.js` `t()` (rács); `antikolt-card.js` `t()` (kártya); `setStatus` → `t()` (státuszüzenetek) | `--languagetest` + `--gridlangtest`: a chrome és a rács HU/EN vált |
 | Teljes képernyőolvasó-illesztés | külső | képernyőolvasóval (NVDA) manuális | emberi lépés |
 | Kiadás | SignPath, Store | emberi lépés (Partner Center, tanúsítvány) | — |

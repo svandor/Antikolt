@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvenötödik szelet) — a széf titkosítása: AES-256-GCM + Argon2id + DPAPI (M7)
+
+A jelszó-boltozat (M7) alapja. Az ADR-031 óta a széf **alakja** kész, de a titkosítás `UnavailableSecrets`
+mögött állt (a buildkörnyezetben nem volt crates.io-elérés). A hálózat most elérhető, így a karbantartó
+döntése szerinti titkosítás — **DPAPI + opcionális mesterjelszó**, jelszavak + TOTP + passkey céllal —
+megérkezett: a széf most már tud pecsételni és nyitni.
+
+### Mi változott
+
+- **`Cargo.toml` + `crates/antikolt-core/Cargo.toml`:** a `aes-gcm` 0.10, `argon2` 0.5, `zeroize` 1
+  workspace-függőség bekötve (a korábbi „nincs crate a lemezen" blokkoló megszűnt).
+- **`crates/antikolt-core/src/secrets.rs` (új):** `AesGcmSecrets` — AES-256-GCM rekordonként friss
+  96 bites nonce-szal és a rekord AAD-jával (origin + id, ADR-010); `from_master_password` + `generate_salt`
+  (Argon2id); `secrets::dpapi` — Windows DPAPI (`CryptProtectData`/`CryptUnprotectData`,
+  `CRYPTPROTECT_UI_FORBIDDEN`) a crate egyetlen `unsafe` moduljában.
+- **`crates/antikolt-core/src/lib.rs`:** `pub mod secrets;`.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (71 ellenőrzés)
+cargo test         → 166 zöld: 88 + 53 + 9 + 1 + 15   (a 10 új secrets-teszt: round-trip, AAD-kötés,
+                      hamisítás, rossz jelszó, só-egyediség, DPAPI round-trip Windows alatt)
+```
+
+### Ami továbbra is nyitott
+
+- A DEK/KEK-tárolás és a `credential` tábla írása/olvasása (a széf egy írója az SQLite, ADR-069/070);
+  a TOTP; a passkey (WebAuthn); a Chrome/Firefox CSV-import; a shell-vault felület; a PiP
+  (views-architektúra-váltás — a karbantartó ezt választotta, külön szelet).
+
 ## 2026-11-23 (száznegyvennegyedik szelet) — kiadási fájlok (THIRD-PARTY-NOTICES + ellenőrzés, M8)
 
 Az M8 „Licenc/NOTICE/AUTHORS/THIRD-PARTY/CONTRIBUTING" tétele: a hiányzó harmadikfél-jegyzék elkészült, a

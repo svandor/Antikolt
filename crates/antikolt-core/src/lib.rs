@@ -21,6 +21,7 @@ pub mod ids;
 pub mod lifecycle;
 pub mod migrations;
 pub mod profile;
+pub mod secrets;
 pub mod session;
 pub mod snapshot;
 pub mod vault;

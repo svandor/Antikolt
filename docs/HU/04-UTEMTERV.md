@@ -75,7 +75,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 - [x] Profil-költöztetés: egy fájl, verziózott köteg. — `--profiletest` (ADR-059): `profile_export`/`profile_import`; nyitott: felületi gomb és a köteg titkosítása
 
 ### M4 — „Nem kell jelszót gépelnem" (F4 vége)
-- [ ] Széf (DEK/KEK, opcionális mesterjelszó), auto-zárolás, KDBX export.
+- [ ] Széf (DEK/KEK, opcionális mesterjelszó), auto-zárolás, KDBX export. — a **titkosítás** kész (AES-256-GCM + Argon2id mesterjelszó-út + Windows DPAPI, ADR-082, `secrets.rs`); a DEK/KEK-tárolás, a `credential` tábla és a KDBX-export nyitott
 - [ ] Kitöltés izolált világban, origin-kötéssel, natív setterrel.
 - [ ] TOTP + vágólap-tisztítás.
 - [ ] Belépési forgatókönyv + kézi átadás CAPTCHA esetén.
