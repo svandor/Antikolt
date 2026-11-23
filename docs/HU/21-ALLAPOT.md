@@ -10,7 +10,7 @@
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
 71 ellenőrzés     ok        (68 önteszt + build + core service + check-repo; lásd alább, mit bizonyít mindegyik)
-check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 93+61+10+1+15 Rust-teszt)
+check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 93+67+11+1+15 Rust-teszt)
 ```
 
 A hordozható példány: `scripts/dist.ps1 -Release` → `dist/Antikolt/` (445.6 MB), asztali és Start-menü

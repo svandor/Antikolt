@@ -19,6 +19,7 @@
 mod bundle;
 mod containers;
 mod credentials;
+mod import;
 mod persist;
 mod sessions;
 mod sqlite_store;
@@ -1069,6 +1070,37 @@ fn handle(
                 ),
                 Err(error) => (error_reply(id, error.code(), &error.to_string()), true),
             }
+        }
+        "vault_import_csv" => {
+            let Some(csv_text) = request.get("csv").and_then(Value::as_str) else {
+                return (
+                    error_reply(id, "invalid_argument", "vault_import_csv needs csv"),
+                    true,
+                );
+            };
+            let container_id = request
+                .get("container_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let parsed = match import::parse_credential_csv(csv_text) {
+                Ok(parsed) => parsed,
+                Err(error) => return (error_reply(id, "invalid_argument", &error), true),
+            };
+            let credentials = import::to_new_credentials(parsed.rows, container_id);
+            let mut imported = 0usize;
+            for credential in credentials {
+                match vault.upsert(credential, now_ms()) {
+                    Ok(_) => imported += 1,
+                    Err(error) => return (error_reply(id, error.code(), &error.to_string()), true),
+                }
+            }
+            (
+                ok_reply(
+                    id,
+                    json!({ "imported": imported, "skipped": parsed.skipped }),
+                ),
+                true,
+            )
         }
         "shutdown" => {
             // One last export of all four documents, so the readable copies next to the database are never older than

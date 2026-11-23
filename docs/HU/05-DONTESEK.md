@@ -3,6 +3,28 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-085 — A jelszó-CSV-import név szerinti oszlop-leképezéssel, a magban (2026-11-23)
+
+**Kontextus:** a Chrome és a Firefox a jelszavakat CSV-be exportálja, de eltérő oszlopkészlettel:
+Chrome `name,url,username,password`, Firefox `url,username,password,…`. Az importnak a széfbe kell
+írnia (a titok a magban van, ADR-083), és a `vault_import_csv` IPC-n keresztül jön.
+
+**Döntés:**
+
+1. **Oszlop-leképezés név szerint, nem pozíció szerint:** a `url`/`username`/`password`/`name`
+   fejléceket keressük (a UTF-8 BOM-ot is kezelve), így mindkét exportáló és bármilyen sorrend
+   működik.
+2. **Az import a magban (`import.rs`) + `vault_import_csv`:** a parse tiszta függvény, a sorok
+   `kind = password` hitelesítővé válnak; a széfet a híváshoz nyitni kell (a többi titkos művelethez
+   hasonlóan).
+3. **A hiányos sort kihagyjuk, nem importáljuk:** URL vagy jelszó nélkül a sor nem lehet hitelesítő,
+   mert a későbbi autofillt félrevezetné.
+
+**Következmény:** (+) a Chrome/Firefox export importálható és mérve (`cargo test` **187** zöld);
+(−) a Firefox „csak URL, jelszó nélkül" sorai kimaradnak (ez a valóság: az ilyen sor nem jelszó);
+(−) az import egyelőre csak a `vault_import_csv` IPC-n keresztül érhető el, a shell menüje a
+shell-felület szeletével jön.
+
 ## ADR-084 — A TOTP a magban van, RFC 6238, és a kódot a szolgáltatás számolja (2026-11-23)
 
 **Kontextus:** a széf tárolója (ADR-083) már tartja a TOTP-titkot (`totp_secret_ct`), de a kód

@@ -593,3 +593,47 @@ fn the_vault_seals_serves_and_persists_credentials() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_vault_imports_a_chrome_password_csv() {
+    let dir = temp_dir("vault-import");
+    let mut service = Service::start(&dir);
+    let unlock = service.request("vault_unlock", json!({ "password": "pw" }));
+    assert_eq!(unlock["ok"], true, "unlock: {unlock}");
+
+    // Two complete rows and one without a password (skipped).
+    let csv = "name,url,username,password\n\
+               Alfa,https://a.hu,alice,secret-a\n\
+               Beta,https://b.hu,bob,secret-b\n\
+               Gamma,https://c.hu,carol,\n";
+    let reply = service.request("vault_import_csv", json!({ "csv": csv }));
+    assert_eq!(reply["ok"], true, "import answered: {reply}");
+    assert_eq!(reply["data"]["imported"], json!(2));
+    assert_eq!(reply["data"]["skipped"], json!(1));
+
+    let list = service.request("vault_list", json!({}));
+    assert_eq!(
+        list["data"]["credentials"].as_array().expect("array").len(),
+        2
+    );
+
+    // The imported secrets are retrievable and the import must never leak them in the list.
+    assert!(!list.to_string().contains("secret-a"));
+    let ids: Vec<String> = list["data"]["credentials"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|credential| credential["id"].as_str().expect("id").to_string())
+        .collect();
+    let mut saw_a = false;
+    for credential_id in &ids {
+        let got = service.request("vault_get", json!({ "id_of_credential": credential_id }));
+        assert_eq!(got["ok"], true);
+        let password = got["data"]["credential"]["password"].as_str().unwrap_or("");
+        saw_a |= password == "secret-a";
+    }
+    assert!(saw_a, "one imported credential carries secret-a");
+
+    service.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

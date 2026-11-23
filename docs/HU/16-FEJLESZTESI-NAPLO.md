@@ -3,6 +3,31 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvennyolcadik szelet) — Chrome/Firefox jelszó-CSV-import (M7)
+
+A „boltozat + CSV-import" döntés második fele: a Chrome és a Firefox jelszó-exportja a széfbe írható.
+
+### Mi változott
+
+- **`crates/antikolt-core-service/src/import.rs` (új):** `parse_credential_csv` (név szerinti
+  oszlop-leképezés, UTF-8 BOM, idézett vesszők, hiányos sor kihagyása) + `to_new_credentials`.
+- **`crates/antikolt-core-service/src/main.rs`:** `vault_import_csv` IPC — `csv` szöveg + opcionális
+  `container_id` → `{imported, skipped}`.
+- **`tests/service.rs`:** end-to-end `the_vault_imports_a_chrome_password_csv` (import → lista titok
+  nélkül → get).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (71 ellenőrzés)
+cargo test         → 187 zöld: 93 + 67 + 11 + 1 + 15   (a +7 import-teszt: 6 egység + 1 end-to-end)
+```
+
+### Ami továbbra is nyitott
+
+- A passkey (WebAuthn virtuális hitelesítő, F0 spike); a shell vault-felület + izolált világú
+  autofill; a PiP (views-architektúra-váltás).
+
 ## 2026-11-23 (száznegyvenhetedik szelet) — TOTP-kódgenerálás (RFC 6238, M7)
 
 A „jelszavak + TOTP + passkey" döntés középső lába: a széf már tárolja a TOTP-titkot (146. szelet), most

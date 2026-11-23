@@ -21,3 +21,4 @@ thiserror.workspace = true
 # The store's destination (ADR-064). `bundled` compiles SQLite from source, so the shipped binary carries its own
 # engine and does not depend on a system DLL the user may not have.
 rusqlite = { version = "0.37", features = ["bundled"] }
+csv.workspace = true
