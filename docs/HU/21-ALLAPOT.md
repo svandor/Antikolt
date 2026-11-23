@@ -9,7 +9,7 @@
 ```
 build + selftest  ok        (CMake + MSBuild + Qt, mindkét bináris elkészül)
 core service      ok        (a mag válaszol: hello, cards_list)
-69 ellenőrzés     ok        (66 önteszt + build + core service + check-repo; lásd alább, mit bizonyít mindegyik)
+70 ellenőrzés     ok        (67 önteszt + build + core service + check-repo; lásd alább, mit bizonyít mindegyik)
 check-repo        ok        (SPDX, linkek, JS-parse, cargo fmt, clippy -D warnings, 78+53+9+1+15 Rust-teszt)
 ```
 
@@ -82,7 +82,9 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
    és az **oldalarány-megőrző illesztés** kész (ADR-074/020, 102–120. szelet), a `warn`/`hard` sávokból pedig már `pressure` jel számítódik (ADR-020, 124. szelet), és a `hard` sáv hibernálja az élő kártyát, a `warn` sáv pedig szünetelteti a preview-munkást (ADR-020, 127–128. szelet); a profil **többi dimenziójának**
    tényleges vezérlő-művelete, a `video_max_height`, **kész megjelenítési sapkaként** (ADR-076, `--videocaptest`:
    a profil értéke `video{max-height:Npx}` szabályként jut a top-level `video`-ra, a `manual` profil eltávolítja);
-   a **dekódolási** felbontás-csökkentés `not-measurable` — a CEF nem ad laponkénti videó-dekódolási korlátot.
+   a **dekódolási** felbontás-csökkentés `not-measurable` — a CEF nem ad laponkénti videó-dekódolási korlátot;
+   az **automatikus profilváltás** kész (ADR-080, `--autoprofiltest`: az `Auto` mód a tápforrás + a mért nyomás
+   alapján a mag `resolve_profile`-ján át `Balanced`/`Saver`/`Ultra`-ra oldódik, a shell minden minta után újra-kérdez).
 
 ## Amihez emberi lépés kell (nem kód)
 

@@ -94,6 +94,7 @@ $engineChecks = @(
     @{ Name = 'partitiontest'; Args = @('--partitiontest'); Direct = $true },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
+    @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },
     @{ Name = 'lifecycletest'; Args = @('--lifecycletest') },
     @{ Name = 'opentest'; Args = @('--opentest') },
     @{ Name = 'embedtest'; Args = @('--embedtest') },

@@ -3,6 +3,37 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvenkettedik szelet) — automatikus erőforrás-profil (power + pressure, M6)
+
+Az M6 „Öt erőforrás-profil, automatikus váltással" nyitott fele: a profil mostantól **követheti a gépet**. Az
+`Auto` mód a tápforrás és a mért memória-nyomás alapján a magban oldódik fel egy beépített profilra.
+
+### Mi változott
+
+- **`crates/antikolt-core/src/profile.rs`:** `ProfileKind::Auto` (serde `auto`), `params()` = `None`.
+- **`crates/antikolt-core-service/src/sqlite_store.rs`:** az `auto` string oda-vissza leképezése.
+- **`crates/antikolt-core-service/src/main.rs`:** `resolve_profile` IPC (`{on_ac_power, pressure}` →
+  `{kind, params}`), a `ProfileKind::auto` + `params()` alapján.
+- **`apps/desktop-shell/src/core_client.{h,cpp}`:** `resolveProfile`.
+- **`apps/desktop-shell/src/main_window.{h,cpp}`:** `onAcPower()` (`GetSystemPowerStatus` + `ANTIKOLT_AC_POWER`
+  felülírás); az `applyProfileParams` kiemelve; a `refreshUserPrefs` az `auto`-t `normal` nyomással oldja fel,
+  a `checkMemoryPressure` minden minta után újra-kérdez; a profilválasztóban új „Automatikus" tétel.
+- **`--autoprofiltest` (új):** a tápforrás-felülírást és a mag `resolve_profile` leképezését méri (6 eset).
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (70 ellenőrzés mind „ok", köztük az autoprofiltest és a check-repo)
+--autoprofiltest   → resolve_normal/ac=balanced · resolve_normal/bat=saver · resolve_warn/ac=balanced ·
+                     resolve_warn/bat=saver · resolve_hard/ac=ultra · resolve_hard/bat=ultra · auto_profile=ok
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A jelszó- és könyvjelző-import (M7); a PiP (architektúra-döntés); a teljes képernyőolvasó-illesztés (NVDA);
+  az OAuth összekötése; az emberi kiadási tételek (SignPath, Store); az M8 Linux-csomag.
+
 ## 2026-11-23 (száznegyvenegyedik szelet) — a shell státuszüzenetei is válthatók (M7, i18n)
 
 A HU/EN felület utolsó tétele: a shell státuszsor-üzenetei (a `setStatus` hívások) eddig magyarok voltak. Ez a

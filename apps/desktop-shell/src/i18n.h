@@ -50,6 +50,12 @@ inline QString uiText(const QString& hu, const QString& lang) {
         map.insert(QStringLiteral("Memória-büdzsé (MiB):"), QStringLiteral("Memory budget (MiB):"));
         map.insert(QStringLiteral("Erőforrás-profil:"), QStringLiteral("Resource profile:"));
         map.insert(QStringLiteral("Nyelv:"), QStringLiteral("Language:"));
+        map.insert(QStringLiteral("Gyors"), QStringLiteral("Fast"));
+        map.insert(QStringLiteral("Kiegyensúlyozott"), QStringLiteral("Balanced"));
+        map.insert(QStringLiteral("Takarékos"), QStringLiteral("Saver"));
+        map.insert(QStringLiteral("Ultra"), QStringLiteral("Ultra"));
+        map.insert(QStringLiteral("Automatikus"), QStringLiteral("Auto"));
+        map.insert(QStringLiteral("Kézi"), QStringLiteral("Manual"));
         // Tray.
         map.insert(QStringLiteral("Antikolt — fut"), QStringLiteral("Antikolt — running"));
         map.insert(QStringLiteral("Megnyitás"), QStringLiteral("Open"));

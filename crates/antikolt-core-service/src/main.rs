@@ -27,7 +27,7 @@ mod workspaces;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use antikolt_core::profile::ProfileKind;
+use antikolt_core::profile::{MemoryPressure, ProfileKind};
 use antikolt_core::session::{SessionLedgerEntry, SessionRules};
 use antikolt_ipc::{decode_json_frame, encode_json_frame, FrameError};
 use serde_json::{json, Value};
@@ -669,6 +669,25 @@ fn handle(
                     true,
                 ),
             }
+        }
+        // ---- the automatic profile (F6, ADR-020) ------------------------------------------------
+        // The shell asks what the `Auto` mode resolves to right now: `ProfileKind::auto` maps the power source
+        // and the measured pressure to a built-in kind, and the reply carries that kind's params so the shell
+        // does not re-derive ADR-020's table itself.
+        "resolve_profile" => {
+            let on_ac_power = request
+                .get("on_ac_power")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let pressure: MemoryPressure =
+                serde_json::from_value(request.get("pressure").cloned().unwrap_or(json!("normal")))
+                    .unwrap_or(MemoryPressure::Normal);
+            let kind = ProfileKind::auto(on_ac_power, pressure);
+            let params = kind.params();
+            (
+                ok_reply(id, json!({ "kind": kind, "params": params })),
+                true,
+            )
         }
         // ---- the portable bundle -----------------------------------------------------------------
         // The user's data in one file, so a profile can be carried to another machine (ADR-059). Export reads the

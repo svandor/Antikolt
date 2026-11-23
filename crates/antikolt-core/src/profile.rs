@@ -11,7 +11,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The five shipped profiles. `Manual` carries no built-in values: it means "use what the user set".
+/// The shipped profiles plus the `Auto` mode. `Manual` carries no built-in values: it means "use what the user
+/// set". `Auto` also carries none: the shell resolves it to one of the built-in kinds from the power source and
+/// the measured memory pressure (ADR-020 `ProfileKind::auto`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileKind {
@@ -23,6 +25,8 @@ pub enum ProfileKind {
     Saver,
     /// Memory pressure: engine killed immediately when idle, 480p cap.
     Ultra,
+    /// Follow the machine: no fixed values — the shell resolves `auto(power, pressure)` at runtime.
+    Auto,
     /// Everything explicit; no automatic switching.
     Manual,
 }
@@ -74,6 +78,7 @@ impl ProfileKind {
                 memory_warn_bytes: 450 * 1024 * 1024,
                 memory_hard_bytes: 600 * 1024 * 1024,
             }),
+            ProfileKind::Auto => None,
             ProfileKind::Manual => None,
         }
     }

@@ -122,6 +122,13 @@ void CoreClient::userPrefsSet(const QJsonObject& prefs, ReplyHandler handler) {
     send(QStringLiteral("user_prefs_set"), fields, std::move(handler));
 }
 
+void CoreClient::resolveProfile(bool onAcPower, const QString& pressure, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("on_ac_power"), onAcPower);
+    fields.insert(QStringLiteral("pressure"), pressure);
+    send(QStringLiteral("resolve_profile"), fields, std::move(handler));
+}
+
 void CoreClient::sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("container_id"), containerId);

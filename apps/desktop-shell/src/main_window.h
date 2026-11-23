@@ -65,6 +65,9 @@ struct PendingWipe {
 /// band, `normal` below. An unset (zero) band never fires, so the two bands are independently optional.
 QString memoryPressureName(qint64 used_bytes, qint64 warn_bytes, qint64 hard_bytes);
 
+/// Whether the machine is on mains power (F6, ADR-020 `auto`). `ANTIKOLT_AC_POWER=1/0` overrides for a self test.
+bool onAcPower();
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -115,6 +118,9 @@ public:
     /// Refresh the cached user preferences from the core (live-card cap, hibernation timings and the memory
     /// budget, F6). The budget is a profile setting that changes rarely, so it is cached, not re-read per query.
     void refreshUserPrefs();
+    /// Apply one derived profile's params to the cached governor state (bands, video cap, preview refresh, engine
+    /// lifetime). Shared by `refreshUserPrefs` (the stored kind) and the `auto` re-resolution (F6, ADR-020).
+    void applyProfileParams(const QJsonObject& profile);
     /// Show the user-preferences dock (ADR-072/074) and fill it from the cached core values.
     void showSettings();
     /// Send the dock's values to the core (`user_prefs_set`); the core validates, the shell re-reads.
@@ -457,6 +463,13 @@ private:
     QSpinBox* prefs_budget_mb_ = nullptr;
     /// The resource profile picker (F6, `09-CELHARDVER.md` §3): a preset that fills the hibernation and budget.
     QComboBox* prefs_profile_ = nullptr;
+    /// The stored resource profile kind string (`fast`/`balanced`/`saver`/`ultra`/`auto`/`manual`), cached so the
+    /// governor knows whether it must re-resolve `auto` on every pressure sample (F6, ADR-020).
+    QString resource_profile_ = QStringLiteral("balanced");
+    /// Whether `resource_profile_` is `auto`: the effective profile is re-derived from power + pressure.
+    bool auto_profile_ = false;
+    /// Whether the machine is on mains power, cached from the system power status (and `ANTIKOLT_AC_POWER`).
+    bool ac_power_ = true;
     /// The container default the core reported (`keep`/`sweep`/`wipe`), sent back unchanged on save.
     QString session_policy_ = QStringLiteral("sweep");
     /// The profile's memory budget in bytes (`memory_budget_mb` × MiB), cached from the core; the factory 512 MiB

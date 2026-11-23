@@ -90,7 +90,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 - [ ] Szürke mód és olvasómód.
 
 ### M6 — „Elfér 150 MB-ban" (F6 vége)
-- [ ] Öt erőforrás-profil, automatikus váltással.
+- [x] Öt erőforrás-profil, automatikus váltással. — a profilok készek (`--prefstest`/`--memoryreport`), az **automatikus váltás** is: `Auto` mód (`ProfileKind::Auto` + `resolve_profile` IPC, ADR-080, `--autoprofiltest`)
 - [x] Büdzsé-vezérlő sávokkal, médiaminőség-korláttal. — a büdzsé a profilban (`memory_budget_mb`, ADR-074, `--prefstest`/`--memoryreport`), a médiaminőség-korlát `video_max_height` **megjelenítési sapka** (`set_video_cap`, ADR-076, `--videocaptest`); a dekódolási felbontás-csökkentés `not-measurable` (a CEF nem ad laponkénti korlátot)
 - [ ] Raszter-kezdőlap (motor leállítva).
 - [ ] Hangolási riport (mely kapcsolók segítettek, mérve).

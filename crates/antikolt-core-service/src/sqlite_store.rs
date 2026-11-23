@@ -105,6 +105,7 @@ pub fn profile_kind_to_str(kind: ProfileKind) -> &'static str {
         ProfileKind::Balanced => "balanced",
         ProfileKind::Saver => "saver",
         ProfileKind::Ultra => "ultra",
+        ProfileKind::Auto => "auto",
         ProfileKind::Manual => "manual",
     }
 }
@@ -115,6 +116,7 @@ pub fn profile_kind_from_str(value: &str) -> ProfileKind {
         "fast" => ProfileKind::Fast,
         "saver" => ProfileKind::Saver,
         "ultra" => ProfileKind::Ultra,
+        "auto" => ProfileKind::Auto,
         "manual" => ProfileKind::Manual,
         _ => ProfileKind::Balanced,
     }

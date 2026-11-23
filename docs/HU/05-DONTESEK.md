@@ -3,6 +3,27 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-080 — Az „Automatikus" profil a magban oldódik fel (power + pressure → built-in, M6) (2026-11-23)
+
+**Kontextus:** az M6 „Öt erőforrás-profil, automatikus váltással" nyitott fele volt az automatikus váltás. Az
+ADR-020 a `ProfileKind::auto(power, pressure)` leképezést már definiálta és tesztelte, de nem volt bekötve.
+
+**Döntés:**
+
+1. **Az `Auto` a `ProfileKind` hatodik értéke** (serde `auto`), `params()`-a `None` — nincs rögzített
+   paramétere, mint a `Manual`-nak. A mag a `resource_profile="auto"`-t tárolja és adja vissza.
+2. **A feloldás a magban történik** (`resolve_profile` IPC: `{on_ac_power, pressure}` → `{kind, params}`), a
+   `ProfileKind::auto` + `params()` alapján, hogy az ADR-020 táblája egy helyen maradjon (a Rust magban).
+3. **A shell a feltételeket méri és újra-kérdez:** a tápforrást a rendszerből olvassa (`GetSystemPowerStatus`,
+   `ANTIKOLT_AC_POWER` felülírással az önteszthez), a nyomást a meglévő memória-mintavételező adja; minden
+   minta után újra `resolve_profile`-ot hív, ha a profil `auto`. Az első feloldás `normal` nyomással indul
+   (a tápforrás a Balanced/Saver választója), a `checkMemoryPressure` utána pontosítja.
+
+**Következmény:** (+) a profil követi a gépet — a kemény nyomás `Ultra`-ra esik akár hálózaton is, a
+visszatérés `Balanced`-re lép fel; a `--autoprofiltest` méri a feloldást (6 eset) és a tápforrás-felülírást;
+(−) a sávok a következő minta-ciklusban lépnek életbe (a már meghozott osztályozás még a régi sávokkal
+történt); (−) a `Fast` a `auto`-ból soha nem jön — az mindig kézi választás.
+
 ## ADR-079 — A rács nyelve is a shellt követi (HU/EN), a `data-language` attribútummal (2026-11-23)
 
 **Kontextus:** az ADR-078 a shell **chrome**-át tette válthatóvá; a rács (`home/app.js`) még magyar volt. A
@@ -1316,6 +1337,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-077 | A preview-név a tartalom hash-e (`previewContentName`, `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből; a frissesség-ellenőrzés a tárolt `preview_ref`-re néz | Elfogadva |
 | ADR-078 | A shell nyelve futásidőben váltható (`ui/language` QSettings, default `hu`); `i18n.h` `uiText` HU→EN táblázatból; a `setLanguage` helyben átcímkézi a chrome-ot; a státuszüzenetek és a rács a következő szeletek | Elfogadva |
 | ADR-079 | A rács nyelve is a shellt követi (`data-language` attribútum + `pushLanguageToGrid` + `window.antikoltSetLanguage`); a rács saját `t()`-je (`home/app.js` EN térkép) újratöltés nélkül újrarenderel; a kártya inline címkéi és a statikus aria-címkék a következő szelet | Elfogadva |
+| ADR-080 | Az `Auto` profil a magban oldódik fel (`ProfileKind::Auto`, `params()`=None; `resolve_profile` IPC a `ProfileKind::auto` + `params()` alapján); a shell méri a tápforrást (`GetSystemPowerStatus` + `ANTIKOLT_AC_POWER`) és a nyomást, és minden minta után újra-kérdez; `Fast` az auto-ból nem jön | Elfogadva |
 
 ---
 

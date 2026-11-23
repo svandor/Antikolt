@@ -1093,6 +1093,94 @@ int runGridLangCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+/// Prove the `Auto` resource profile (M6, ADR-020): the power-source detection obeys its override, and the core's
+/// `resolve_profile` maps (power, pressure) to the documented built-in kind — Balanced on mains, Saver on battery,
+/// Ultra under a hard limit regardless of power. No engine: the mapping is the core's own.
+int runAutoProfileCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    (void)enginePath;
+
+    // 1. Power detection: the override wins, and the two directions disagree.
+    qputenv("ANTIKOLT_AC_POWER", "1");
+    const bool ac_true = onAcPower();
+    qputenv("ANTIKOLT_AC_POWER", "0");
+    const bool ac_false = onAcPower();
+    qunsetenv("ANTIKOLT_AC_POWER");
+    const bool power_ok = ac_true && !ac_false;
+
+    // 2. The core's `resolve_profile` (the deterministic heart of `auto`).
+    const QString corePath = MainWindow::coreExecutable();
+    if (corePath.isEmpty()) {
+        out << "core_executable=FAILED (set ANTIKOLT_CORE)\n";
+        return 1;
+    }
+    CoreClient oracle;
+    const QString core_data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                              QStringLiteral("/core-auto");
+    QDir().mkpath(core_data);
+    if (!oracle.start(corePath, core_data)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    struct Case {
+        bool ac;
+        QString pressure;
+        QString expected;
+    };
+    const QVector<Case> cases = {
+        {true, QStringLiteral("normal"), QStringLiteral("balanced")},
+        {false, QStringLiteral("normal"), QStringLiteral("saver")},
+        {true, QStringLiteral("warn"), QStringLiteral("balanced")},
+        {false, QStringLiteral("warn"), QStringLiteral("saver")},
+        {true, QStringLiteral("hard"), QStringLiteral("ultra")},
+        {false, QStringLiteral("hard"), QStringLiteral("ultra")},
+    };
+    QHash<QString, QString> got;
+    QEventLoop loop;
+    bool started = false;
+    QObject::connect(&oracle, &CoreClient::failed, &loop, [&](const QString& message) {
+        out << "core_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(&oracle, &CoreClient::ready, &loop, [&](const QJsonObject& info) {
+        out << "core_name=" << info.value(QStringLiteral("name")).toString() << '\n';
+        int pending = static_cast<int>(cases.size());
+        for (const Case& c : cases) {
+            oracle.resolveProfile(c.ac, c.pressure,
+                                  [&, c](const QJsonObject& data, const QString& error) {
+                                      if (error.isEmpty()) {
+                                          got.insert(c.pressure + (c.ac ? QStringLiteral("/ac")
+                                                                        : QStringLiteral("/bat")),
+                                                     data.value(QStringLiteral("kind")).toString());
+                                      }
+                                      if (--pending == 0) {
+                                          loop.quit();
+                                      }
+                                  });
+        }
+        started = true;
+    });
+    oracle.handshake();
+    QTimer::singleShot(15000, &loop, &QEventLoop::quit);
+    loop.exec();
+    oracle.shutdown();
+
+    bool resolve_ok = started;
+    for (const Case& c : cases) {
+        const QString key = c.pressure + (c.ac ? QStringLiteral("/ac") : QStringLiteral("/bat"));
+        const QString actual = got.value(key);
+        const bool ok = actual == c.expected;
+        resolve_ok = resolve_ok && ok;
+        out << "resolve_" << key << "=" << actual << (ok ? "" : " (expected " + c.expected + ")") << '\n';
+    }
+    out << "auto_power=" << (power_ok ? "ok" : "FAILED") << '\n';
+    out << "auto_resolve=" << (resolve_ok ? "ok" : "FAILED") << '\n';
+    const bool ok = power_ok && resolve_ok;
+    out << "auto_profile=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runGridCheck(const QString& enginePath) {
     QTextStream out(stdout);
     int failures = 0;
@@ -10021,6 +10109,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("gridlangtest"),
         QStringLiteral("Prove the grid follows the shell's language (HU/EN), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption autoprofiltest(
+        QStringLiteral("autoprofiltest"),
+        QStringLiteral("Prove the automatic resource profile (power + pressure, M6), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption lifecycletest(
         QStringLiteral("lifecycletest"),
         QStringLiteral("Prove an idle card hibernates by itself, then exit."),
@@ -10255,6 +10347,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(capturetest);
     parser.addOption(gridtest);
     parser.addOption(gridlangtest);
+    parser.addOption(autoprofiltest);
     parser.addOption(lifecycletest);
     parser.addOption(sessionpanel);
     parser.addOption(wipetest);
@@ -10604,6 +10697,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(gridlangtest)) {
         return runGridLangCheck(parser.value(gridlangtest));
+    }
+
+    if (parser.isSet(autoprofiltest)) {
+        return runAutoProfileCheck(parser.value(autoprofiltest));
     }
 
     if (parser.isSet(capturetest)) {

@@ -77,6 +77,9 @@ public:
     void userPrefs(ReplyHandler handler = {});
     /// Replace the user preferences; the core validates them (ADR-072).
     void userPrefsSet(const QJsonObject& prefs, ReplyHandler handler = {});
+    /// Resolve the `Auto` profile for the current conditions (F6, ADR-020): the core maps power + pressure to a
+    /// built-in kind and returns its params, so the shell does not re-derive ADR-020's table itself.
+    void resolveProfile(bool onAcPower, const QString& pressure, ReplyHandler handler = {});
     void sessionClose(const QString& containerId, const QString& origin, ReplyHandler handler = {});
     void shutdown();
 

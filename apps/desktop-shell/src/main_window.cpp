@@ -43,6 +43,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <windows.h>
+
 #include "core_client.h"
 #include "engine_client.h"
 #include "previews.h"
@@ -627,6 +629,18 @@ void MainWindow::checkMemoryPressure() {
         }
         const qint64 used = static_cast<qint64>(
             measured.value(QStringLiteral("engine_working_set_bytes")).toString().toLongLong());
+        const QString pressure = memoryPressureName(used, memory_warn_bytes_, memory_hard_bytes_);
+        // The `auto` profile follows the machine (F6, ADR-020): a fresh sample re-resolves the effective kind,
+        // so a hard-pressure spike can drop to `Ultra` and a return to calm can step back up. The bands the new
+        // profile carries take effect on the *next* sample — the classification just made still governs this one.
+        if (auto_profile_ && core_ != nullptr && core_->isRunning()) {
+            core_->resolveProfile(ac_power_, pressure,
+                                  [this](const QJsonObject& resolved, const QString& resolve_error) {
+                                      if (resolve_error.isEmpty()) {
+                                          applyProfileParams(resolved.value(QStringLiteral("params")).toObject());
+                                      }
+                                  });
+        }
         if (memory_hard_bytes_ > 0 && used >= memory_hard_bytes_) {
             // Hard: pause background previews, then hibernate the card itself when one is live.
             preview_paused_until_ms_ = QDateTime::currentMSecsSinceEpoch() + 300000;
@@ -2809,6 +2823,24 @@ void MainWindow::importProfile() {
     });
 }
 
+/// Whether the machine is on mains power (F6, ADR-020 `auto`). `ANTIKOLT_AC_POWER=1/0` overrides for a self test;
+/// otherwise the system power status answers. Unknown (no battery API) is treated as mains — the permissive
+/// default keeps a desktop usable even when the OS cannot tell.
+bool onAcPower() {
+    const QByteArray override = qgetenv("ANTIKOLT_AC_POWER");
+    if (override == "1") {
+        return true;
+    }
+    if (override == "0") {
+        return false;
+    }
+    SYSTEM_POWER_STATUS status;
+    if (GetSystemPowerStatus(&status)) {
+        return status.ACLineStatus == 1;
+    }
+    return true;
+}
+
 QString memoryPressureName(qint64 used_bytes, qint64 warn_bytes, qint64 hard_bytes) {
     if (hard_bytes > 0 && used_bytes >= hard_bytes) {
         return QStringLiteral("hard");
@@ -2823,6 +2855,7 @@ void MainWindow::refreshUserPrefs() {
     if (core_ == nullptr || !core_->isRunning()) {
         return;
     }
+    ac_power_ = onAcPower();
     core_->userPrefs([this](const QJsonObject& reply, const QString& error) {
         if (!error.isEmpty()) {
             return;
@@ -2842,48 +2875,68 @@ void MainWindow::refreshUserPrefs() {
                 idle_->setInterval(static_cast<int>(idle_hibernate_ms_));
             }
         }
-        // The derived profile params (ADR-020): the background preview worker follows `preview_refresh`, and the
-        // engine lifetime (T1/T2) is cached for the raster home. A `Manual` profile has no params (null), so the
-        // factory behaviour stays on.
-        const QJsonObject profile = reply.value(QStringLiteral("profile")).toObject();
-        // The warn/hard bands (ADR-020) come from the derived profile. A positive test-only override
-        // (`ANTIKOLT_MEMORY_WARN_BYTES`/`ANTIKOLT_MEMORY_HARD_BYTES`) replaces them, so a self test can force the
-        // measured working set across a boundary — the same pattern as `ANTIKOLT_HIBERNATE_MS`.
-        const qint64 warn_override = qEnvironmentVariableIntValue("ANTIKOLT_MEMORY_WARN_BYTES");
-        const qint64 hard_override = qEnvironmentVariableIntValue("ANTIKOLT_MEMORY_HARD_BYTES");
-        if (!profile.isEmpty()) {
-            preview_refresh_ = profile.value(QStringLiteral("preview_refresh")).toBool(true);
-            const QJsonValue shutdown = profile.value(QStringLiteral("engine_warm_idle_shutdown_ms"));
-            engine_shutdown_ms_ = shutdown.isNull() ? -1 : static_cast<qint64>(shutdown.toDouble());
-            memory_warn_bytes_ =
-                warn_override > 0
-                    ? warn_override
-                    : static_cast<qint64>(profile.value(QStringLiteral("memory_warn_bytes")).toDouble());
-            memory_hard_bytes_ =
-                hard_override > 0
-                    ? hard_override
-                    : static_cast<qint64>(profile.value(QStringLiteral("memory_hard_bytes")).toDouble());
-            // The top-level video display cap (ADR-020/ADR-076) comes from the same derived profile. A
-            // `manual` profile carries no params, so its factory 0 (no cap) is the honest default.
-            video_max_height_ =
-                static_cast<int>(profile.value(QStringLiteral("video_max_height")).toDouble());
-        } else {
-            preview_refresh_ = true;
-            engine_shutdown_ms_ = -1;
-            memory_warn_bytes_ = warn_override > 0 ? warn_override : 850LL * 1024 * 1024;
-            memory_hard_bytes_ = hard_override > 0 ? hard_override : 1000LL * 1024 * 1024;
-            video_max_height_ = 0;
+        // The stored profile kind. `auto` carries no fixed params: the effective profile is resolved from the
+        // power source and the measured pressure (F6, ADR-020), and re-resolved on every pressure sample.
+        resource_profile_ =
+            prefs.value(QStringLiteral("resource_profile")).toString(QStringLiteral("balanced"));
+        auto_profile_ = resource_profile_ == QStringLiteral("auto");
+        if (auto_profile_) {
+            // First resolution with `normal` pressure: the power source picks Balanced (AC) or Saver (battery).
+            // `checkMemoryPressure` re-resolves with the real measured pressure on every sample.
+            core_->resolveProfile(
+                ac_power_, QStringLiteral("normal"),
+                [this, prefs](const QJsonObject& resolved, const QString& resolve_error) {
+                    if (!resolve_error.isEmpty()) {
+                        return;
+                    }
+                    applyProfileParams(resolved.value(QStringLiteral("params")).toObject());
+                    // An open dock follows the core's answer, not a stale copy of it.
+                    if (settings_dock_ != nullptr && settings_dock_->isVisible()) {
+                        fillSettingsDock(prefs);
+                    }
+                });
+            return;
         }
-        // A profile change re-applies the cap to the live card immediately, so the user's switch is not
-        // silently deferred to the next card load. The grid has no videos, but the same call is harmless there.
-        if (live_engine_ != nullptr && surface_ != 0) {
-            live_engine_->setVideoCap(surface_, video_max_height_, nullptr);
-        }
+        applyProfileParams(reply.value(QStringLiteral("profile")).toObject());
         // An open dock follows the core's answer, not a stale copy of it.
         if (settings_dock_ != nullptr && settings_dock_->isVisible()) {
             fillSettingsDock(prefs);
         }
     });
+}
+
+void MainWindow::applyProfileParams(const QJsonObject& profile) {
+    // The warn/hard bands (ADR-020) come from the derived profile. A positive test-only override
+    // (`ANTIKOLT_MEMORY_WARN_BYTES`/`ANTIKOLT_MEMORY_HARD_BYTES`) replaces them, so a self test can force the
+    // measured working set across a boundary — the same pattern as `ANTIKOLT_HIBERNATE_MS`.
+    const qint64 warn_override = qEnvironmentVariableIntValue("ANTIKOLT_MEMORY_WARN_BYTES");
+    const qint64 hard_override = qEnvironmentVariableIntValue("ANTIKOLT_MEMORY_HARD_BYTES");
+    if (!profile.isEmpty()) {
+        preview_refresh_ = profile.value(QStringLiteral("preview_refresh")).toBool(true);
+        const QJsonValue shutdown = profile.value(QStringLiteral("engine_warm_idle_shutdown_ms"));
+        engine_shutdown_ms_ = shutdown.isNull() ? -1 : static_cast<qint64>(shutdown.toDouble());
+        memory_warn_bytes_ =
+            warn_override > 0
+                ? warn_override
+                : static_cast<qint64>(profile.value(QStringLiteral("memory_warn_bytes")).toDouble());
+        memory_hard_bytes_ =
+            hard_override > 0
+                ? hard_override
+                : static_cast<qint64>(profile.value(QStringLiteral("memory_hard_bytes")).toDouble());
+        video_max_height_ =
+            static_cast<int>(profile.value(QStringLiteral("video_max_height")).toDouble());
+    } else {
+        preview_refresh_ = true;
+        engine_shutdown_ms_ = -1;
+        memory_warn_bytes_ = warn_override > 0 ? warn_override : 850LL * 1024 * 1024;
+        memory_hard_bytes_ = hard_override > 0 ? hard_override : 1000LL * 1024 * 1024;
+        video_max_height_ = 0;
+    }
+    // A profile change re-applies the cap to the live card immediately, so the user's switch is not silently
+    // deferred to the next card load. The grid has no videos, but the same call is harmless there.
+    if (live_engine_ != nullptr && surface_ != 0) {
+        live_engine_->setVideoCap(surface_, video_max_height_, nullptr);
+    }
 }
 
 void MainWindow::showSettings() {
@@ -2943,11 +2996,12 @@ void MainWindow::showSettings() {
         settings_profile_label_ = new QLabel(t(QStringLiteral("Erőforrás-profil:")), profile);
         profile_layout->addWidget(settings_profile_label_);
         prefs_profile_ = new QComboBox(profile);
-        prefs_profile_->addItem(QStringLiteral("Gyors"), QStringLiteral("fast"));
-        prefs_profile_->addItem(QStringLiteral("Kiegyensúlyozott"), QStringLiteral("balanced"));
-        prefs_profile_->addItem(QStringLiteral("Takarékos"), QStringLiteral("saver"));
-        prefs_profile_->addItem(QStringLiteral("Ultra"), QStringLiteral("ultra"));
-        prefs_profile_->addItem(QStringLiteral("Kézi"), QStringLiteral("manual"));
+        prefs_profile_->addItem(t(QStringLiteral("Gyors")), QStringLiteral("fast"));
+        prefs_profile_->addItem(t(QStringLiteral("Kiegyensúlyozott")), QStringLiteral("balanced"));
+        prefs_profile_->addItem(t(QStringLiteral("Takarékos")), QStringLiteral("saver"));
+        prefs_profile_->addItem(t(QStringLiteral("Ultra")), QStringLiteral("ultra"));
+        prefs_profile_->addItem(t(QStringLiteral("Automatikus")), QStringLiteral("auto"));
+        prefs_profile_->addItem(t(QStringLiteral("Kézi")), QStringLiteral("manual"));
         prefs_profile_->setToolTip(QStringLiteral(
             "A névvel ellátott profil preset: felülírja a hibernálást és a büdzsét. A Kézi a fentieket hagyja."));
         profile_layout->addWidget(prefs_profile_);
