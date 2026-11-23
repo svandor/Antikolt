@@ -331,6 +331,13 @@ void EngineClient::metrics(qint64 surface, ReplyHandler handler) {
     send(QStringLiteral("metrics"), fields, std::move(handler));
 }
 
+void EngineClient::printPdf(qint64 surface, const QString& path, ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("path"), path);
+    send(QStringLiteral("print_pdf"), fields, std::move(handler));
+}
+
 void EngineClient::bridgeReply(qint64 request, const QJsonObject& json, const QString& error) {
     QJsonObject fields;
     fields.insert(QStringLiteral("request"), static_cast<double>(request));

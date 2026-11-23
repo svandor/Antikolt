@@ -2527,6 +2527,32 @@ void MainWindow::exportProfile() {
     });
 }
 
+void MainWindow::printToPdf() {
+    // Save the live card as a PDF (F7 "nyomtatás"): only a real card has a document worth printing — the grid is
+    // the browser's own chrome, not a page.
+    if (surface_ == 0 || surface_ == home_surface_ || live_engine_ == nullptr ||
+        !live_engine_->isRunning()) {
+        setStatus(QStringLiteral("nincs élő kártya — nincs mit menteni"));
+        return;
+    }
+    const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Oldal mentése PDF-be"),
+        documents + QStringLiteral("/antikolt-page.pdf"),
+        QStringLiteral("PDF (*.pdf)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    live_engine_->printPdf(surface_, path, [this, path](const QJsonObject& reply, const QString& error) {
+        if (!error.isEmpty() || !reply.value(QStringLiteral("ok")).toBool()) {
+            setStatus(QStringLiteral("a PDF mentése nem sikerült: %1")
+                          .arg(error.isEmpty() ? QStringLiteral("ismeretlen hiba") : error));
+            return;
+        }
+        setStatus(QStringLiteral("PDF mentve: %1").arg(path));
+    });
+}
+
 void MainWindow::importProfile() {
     if (core_ == nullptr || !core_->isRunning()) {
         setStatus(QStringLiteral("a mag nem fut — nincs hová betölteni"));
@@ -3051,6 +3077,22 @@ void MainWindow::buildToolBar() {
     connect(import_action, &QAction::triggered, this, &MainWindow::importProfile);
     profile_button->setMenu(profile_menu);
     toolbar->addWidget(profile_button);
+    // Save-as-PDF (F7 "nyomtatás"): the shell owns the native dialog, the engine writes the PDF. The dialog cannot
+    // be clicked by the harness, so `--printtest` measures the underlying `print_pdf` path.
+    auto* print_button = new QToolButton(this);
+    print_button->setObjectName(QStringLiteral("printButton"));
+    print_button->setText(QStringLiteral("🖨️ PDF"));
+    print_button->setPopupMode(QToolButton::InstantPopup);
+    print_button->setAutoRaise(true);
+    print_button->setCursor(Qt::PointingHandCursor);
+    print_button->setToolTip(QStringLiteral("Az élő oldal mentése PDF-be (F7)."));
+    print_button->setAccessibleName(QStringLiteral("PDF mentése"));
+    auto* print_menu = new QMenu(print_button);
+    auto* save_action = print_menu->addAction(QStringLiteral("Oldal mentése PDF-be…"));
+    save_action->setObjectName(QStringLiteral("printSaveAction"));
+    connect(save_action, &QAction::triggered, this, &MainWindow::printToPdf);
+    print_button->setMenu(print_menu);
+    toolbar->addWidget(print_button);
     // Site themes (ADR-037): the page decides what `prefers-color-scheme` means; this only reports it.
     auto* siteTheme = toolbar->addAction(QStringLiteral("🌓 Oldal-téma: auto"));
     siteTheme->setObjectName(QStringLiteral("siteThemeAction"));

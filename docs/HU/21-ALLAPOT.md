@@ -57,6 +57,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Előnézet | `--preview*` | a háttér-worker szabályai (ADR-041) és az ütemező mérve |
 | Memória | `--metricstest`, `--memorytest`, `--prefstest`, `--memorypressuretest`, `--memorypressuree2etest`, `--memoryhibernatetest`, `--memorywarnpausetest`, `--memoryreport` | az engine working set-je mérve (`engine_working_set_bytes`), a büdzsé a profil `memory_budget_mb`-je (`budgetBytes`); a rács used/budget sávot rajzol, és `mem-over`/`mem-warn`/`mem-hard` jelzéssel mutatja a nyomást (a híd átadja a `overBudget`/`pressure`-t, 126. szelet); a kártya `memory_bytes`-e a fagyasztáskori working set (séma 0008); a `system.memory` `overBudget` jele a médiaminőség-korlát alapja, és a profil `warn`/`hard` sávjaiból `pressure` (normal/warn/hard) is számítódik (ADR-020, 124. szelet), és a `hard` sáv elérése hibernálja az élő kártyát, a `warn` sáv pedig szünetelteti a preview-munkást (ADR-020, 127–128. szelet); a `--memoryreport` a teljes vezérlő-állapotot (profil + büdzsé + working set + kártyánkénti memória + nyomás) egyben írja |
 | Tálca, napló, téma | `--traytest`, `--logtest`, `--themetest` | a napló nem ír feleslegesen, a témák a helyes színt adják |
+| Nyomtatás (mentés PDF-be) | `--printtest` | a motor a saját kompozitorával (`PrintToPDF`) írja a PDF-et; a shell `🖨️ PDF` gombja natív fájldialógust nyit (a dialógus `not-measurable`, az utat a `--printtest` méri — F7 nyitány) |
 
 ## Ami nyitva van (tudatosan, nem elfelejtve)
 

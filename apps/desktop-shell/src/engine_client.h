@@ -121,6 +121,9 @@ public:
     /// The numbers are measured by the engine — the page's own node count and JS heap through DevTools, and
     /// the engine host's working set — so the status bar can show a real figure instead of a guess.
     void metrics(qint64 surface, ReplyHandler handler);
+    /// Save the live page as a PDF (`print_pdf`, F7 "nyomtatás"). The reply carries `{ok, path}` once the
+    /// engine's compositor has written the file.
+    void printPdf(qint64 surface, const QString& path, ReplyHandler handler);
     void destroySurface(qint64 surface, ReplyHandler handler = {});
     /// Answer a page request (`request > 0`) the engine is holding open.
     ///

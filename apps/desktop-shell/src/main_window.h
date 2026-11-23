@@ -241,6 +241,9 @@ public slots:
     void exportProfile();
     /// Import a portable profile bundle from a file the user picks (ADR-059), then refresh the grid.
     void importProfile();
+    /// Save the live card as a PDF (F7 "nyomtatás"): a native file dialog picks the path, the engine writes it.
+    /// The dialog cannot be clicked by the harness; the `print_pdf` path is measured by `--printtest`.
+    void printToPdf();
 
 protected:
     /// The close button hides the window to the tray instead of ending the browser (ADR-043); without a

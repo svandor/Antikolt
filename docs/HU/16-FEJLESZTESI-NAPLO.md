@@ -3,6 +3,34 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százhuszonkilencedik szelet) — az oldal mentése PDF-be (F7 nyitány)
+
+Az F6 memória-governor kész (a `warn`/`hard` sávok műveletei 127–128. szelet); a maradék F6 a `video_max_height`
+kutatási tétel. Ezzel megnyílt az **F7 (asztali böngésző-alapok)** első darabja: a **nyomtatás** „mentés PDF-be"
+formában. A motor a saját kompozitorával (`CefBrowserHost::PrintToPDF`) írja a fájlt, a shell nevezi el.
+
+### Mi változott
+
+- **`apps/engine-host` (protocol.h/.cpp, host.cpp):** új `print_pdf` op — `path` mező a `Command`-ban, `PdfPrint`
+  (`CefPdfPrintCallback`) osztály, dispatch, a képességek listája és a „known ops" hibaüzenet bővítve.
+- **`apps/desktop-shell` (engine_client, main_window):** `EngineClient::printPdf(surface, path, …)`; a `MainWindow`
+  `printToPdf()` natív fájldialógussal; egy `🖨️ PDF` eszköztár-gomb (a dialógus `not-measurable`, az utat a
+  `--printtest` méri — a profil-gomb mintája).
+- **`--printtest` (új):** a rácsot PDF-be menti, és ellenőrzi a fájl létezését, méretét és a `%PDF-` varázslatot.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL SELF TESTS PASSED (60 ellenőrzés mind „ok", köztük a printtest és a check-repo)
+--printtest        → print_ok=true · print_bytes=210429 · print_magic=%PDF- · print=ok
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- F7 többi tétele (Ctrl+F, letöltés, PiP, teljes nyomtatás-dialógus, crash-recovery, akadálymentesség, HU/EN); az
+  F6 `video_max_height` kutatási tétele; az OAuth összekötése; az emberi kiadási tételek (SignPath, Store).
+
 ## 2026-11-23 (százhuszonnyolcadik szelet) — a figyelmeztető sáv szünetelteti a preview-t (F6)
 
 A 127. szelet a „hard = hibernálás" akciót tette be; most a „warn = háttér-erőforrás felszabadítása" jött. A

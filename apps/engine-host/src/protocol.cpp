@@ -110,6 +110,7 @@ bool ParseCommand(const std::string& payload, Command* out) {
     out->bridge_request = static_cast<int64_t>(GetNumber(message, "request"));
     out->json = GetString(message, "json");
     out->error = GetString(message, "error");
+    out->path = GetString(message, "path");
     // Site theme emulation (`set_media`): auto | dark | light.
     const std::string media = GetString(message, "media");
     if (!media.empty()) {

@@ -97,6 +97,8 @@ struct Command {
     int64_t bridge_request = 0;
     std::string json;
     std::string error;
+    /// Output file path (`print_pdf`): where the PDF is written (F7 "nyomtatás").
+    std::string path;
 };
 
 /// Upper bound for one frame. Mirrors antikolt_ipc::MAX_FRAME_BYTES.

@@ -2699,6 +2699,63 @@ int runMemoryWarnPauseCheck(const QString& enginePath) {
     return ok ? 0 : 1;
 }
 
+int runPrintCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    qputenv("ANTIKOLT_ENGINE", enginePath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    window.move(150, 110);
+    window.startEngine();
+
+    const QString pdf_path = QDir::temp().filePath(
+        QStringLiteral("antikolt-print-%1.pdf").arg(QDateTime::currentMSecsSinceEpoch()));
+
+    qint64 home_surface = 0;
+    bool printed = false;
+    qint64 bytes = 0;
+    QString magic;
+    {
+        QEventLoop loop;
+        QObject::connect(window.engine(), &EngineClient::loadFinished, &loop,
+                         [&](qint64 id, const QString& url, int) {
+                             if (!url.startsWith(QStringLiteral("file:"))) {
+                                 return;
+                             }
+                             home_surface = id;
+                             // One beat for the grid to settle, then ask the engine to write the PDF.
+                             QTimer::singleShot(500, &loop, [&, id] {
+                                 window.engine()->printPdf(
+                                     id, pdf_path,
+                                     [&](const QJsonObject& reply, const QString& error) {
+                                         printed = error.isEmpty() &&
+                                                   reply.value(QStringLiteral("ok")).toBool();
+                                         QFile file(pdf_path);
+                                         if (file.open(QIODevice::ReadOnly)) {
+                                             bytes = file.size();
+                                             magic = QString::fromLatin1(file.read(5));
+                                             file.close();
+                                         }
+                                         loop.quit();
+                                     });
+                             });
+                         });
+        QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+
+    out << "print_home_surface=" << home_surface << '\n';
+    out << "print_ok=" << (printed ? "true" : "false") << '\n';
+    out << "print_bytes=" << bytes << '\n';
+    out << "print_magic=" << magic << '\n';
+    const bool ok = home_surface != 0 && printed && bytes > 0 && magic == QStringLiteral("%PDF-");
+    out << "print=" << (ok ? "ok" : "FAILED") << '\n';
+    QFile::remove(pdf_path);
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 /// Prove the engine can stop and start again (T2, raster home): a shutdown must not leave the engine client unable
 /// to spawn a fresh process. The raster home stops the engine when idle and must be able to bring it back.
 int runEngineRestartCheck(const QString& enginePath) {
@@ -9421,6 +9478,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("memorywarnpausetest"),
         QStringLiteral("Prove the warn band pauses the preview worker (F6), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption printtest(
+        QStringLiteral("printtest"),
+        QStringLiteral("Prove the page saves to PDF (F7), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption enginerestarttest(
         QStringLiteral("enginerestarttest"),
         QStringLiteral("Prove the engine can stop and start again (T2), then exit."),
@@ -9507,6 +9568,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(memorypressuree2etest);
     parser.addOption(memoryhibernatetest);
     parser.addOption(memorywarnpausetest);
+    parser.addOption(printtest);
     parser.addOption(enginerestarttest);
     parser.addOption(rastertest);
     parser.addOption(rasterhometest);
@@ -9709,6 +9771,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(memorywarnpausetest)) {
         return runMemoryWarnPauseCheck(parser.value(memorywarnpausetest));
+    }
+
+    if (parser.isSet(printtest)) {
+        return runPrintCheck(parser.value(printtest));
     }
 
     if (parser.isSet(enginerestarttest)) {

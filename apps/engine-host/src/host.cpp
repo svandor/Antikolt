@@ -382,6 +382,8 @@ CefRefPtr<CefDictionaryValue> MakeEngineInfo() {
     capabilities->SetString(3, "offscreen_surface");
     // Claimed from this milestone on: the DOM snapshot that makes disk hibernation possible.
     capabilities->SetString(4, "snapshot");
+    // Save-as-PDF (F7 "nyomtatás").
+    capabilities->SetString(5, "print_pdf");
     engine->SetList("capabilities", capabilities);
     return engine;
 }
@@ -1191,6 +1193,35 @@ private:
 
     IMPLEMENT_REFCOUNTING(MetricsCapture);
     DISALLOW_COPY_AND_ASSIGN(MetricsCapture);
+};
+
+/// Writes the live page to a PDF file (`print_pdf`, F7 "nyomtatás"). The browser's own compositor does the
+/// work (`CefBrowserHost::PrintToPDF`); the shell names the file, and the callback replies `{ok, path}` once the
+/// PDF is on disk — the same "the object replies when the work lands" pattern the capture classes use.
+class PdfPrint : public CefPdfPrintCallback {
+public:
+    explicit PdfPrint(int64_t request_id, std::string path)
+        : request_id_(request_id), path_(std::move(path)) {}
+
+    void Start(CefRefPtr<CefBrowser> browser) {
+        // Default settings: portrait, letter, no header/footer chrome — the PDF is the page's own content.
+        CefPdfPrintSettings settings;
+        browser->GetHost()->PrintToPDF(CefString(path_), settings, this);
+    }
+
+private:
+    void OnPdfPrintFinished(const CefString& path, bool ok) override {
+        CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+        result->SetBool("ok", ok);
+        result->SetString("path", path.ToString());
+        StdioLink::Instance().Reply(request_id_, result);
+    }
+
+    int64_t request_id_;
+    std::string path_;
+
+    IMPLEMENT_REFCOUNTING(PdfPrint);
+    DISALLOW_COPY_AND_ASSIGN(PdfPrint);
 };
 
 /// Evaluates JavaScript in the page through DevTools and replies with the resulting value.
@@ -2318,6 +2349,20 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
                             "DevTools is unavailable, cannot measure");
         }
         // The reply is sent by the metrics object when the numbers arrive.
+    } else if (command.op == "print_pdf") {
+        // Save the page as a PDF (F7 "nyomtatás"): the compositor writes the file, the shell names it. Only a
+        // live surface has a document to print.
+        if (!state.browser || !state.browser->GetMainFrame()) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.path.empty()) {
+            link.ReplyError(command.id, "invalid_argument", "path is required");
+            return;
+        }
+        CefRefPtr<PdfPrint> print(new PdfPrint(command.id, command.path));
+        print->Start(state.browser);
+        // The reply is sent by the callback when the PDF is on disk.
     } else if (command.op == "capture") {
         if (!state.browser || !state.browser->GetMainFrame()) {
             link.ReplyError(command.id, "surface_not_found", "no live surface");
@@ -2401,7 +2446,7 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
     } else {
         link.ReplyError(command.id, "not_supported",
                         "this milestone implements hello, ping, create_surface, navigate, eval, "
-                        "capture, snapshot, set_bounds, focus, install_bridge, bridge_reply, "
+                        "capture, snapshot, print_pdf, set_bounds, focus, install_bridge, bridge_reply, "
                         "destroy_surface and shutdown");
     }
 }
