@@ -95,6 +95,7 @@ $engineChecks = @(
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },
+    @{ Name = 'bookmarkimporttest'; Args = @('--bookmarkimporttest') },
     @{ Name = 'lifecycletest'; Args = @('--lifecycletest') },
     @{ Name = 'opentest'; Args = @('--opentest') },
     @{ Name = 'embedtest'; Args = @('--embedtest') },

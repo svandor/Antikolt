@@ -121,6 +121,9 @@ public:
     /// Apply one derived profile's params to the cached governor state (bands, video cap, preview refresh, engine
     /// lifetime). Shared by `refreshUserPrefs` (the stored kind) and the `auto` re-resolution (F6, ADR-020).
     void applyProfileParams(const QJsonObject& profile);
+    /// Import bookmarks from a Netscape-format HTML file into the card store (M7): each anchor becomes a card in
+    /// the default workspace; URLs already present are skipped, never duplicated.
+    void importBookmarksFromPath(const QString& path);
     /// Show the user-preferences dock (ADR-072/074) and fill it from the cached core values.
     void showSettings();
     /// Send the dock's values to the core (`user_prefs_set`); the core validates, the shell re-reads.
@@ -434,6 +437,7 @@ private:
     QAction* action_sessions_ = nullptr;
     QAction* action_settings_ = nullptr;
     QAction* action_site_theme_ = nullptr;
+    QAction* action_import_bookmarks_ = nullptr;
     QToolButton* profile_button_ = nullptr;
     QToolButton* print_button_ = nullptr;
     QLabel* settings_live_label_ = nullptr;

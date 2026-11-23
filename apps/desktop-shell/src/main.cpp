@@ -60,6 +60,7 @@
 #endif
 
 #include "core_client.h"
+#include "bookmarks.h"
 #include "engine_client.h"
 #include "instance_guard.h"
 #include "live_card.h"
@@ -1096,6 +1097,114 @@ int runGridLangCheck(const QString& enginePath) {
 /// Prove the `Auto` resource profile (M6, ADR-020): the power-source detection obeys its override, and the core's
 /// `resolve_profile` maps (power, pressure) to the documented built-in kind — Balanced on mains, Saver on battery,
 /// Ultra under a hard limit regardless of power. No engine: the mapping is the core's own.
+/// Prove the bookmark import (M7): the tolerant Netscape-format parser keeps the anchors in order and skips
+/// `javascript:` links and folders, the generated card id has the grid's 26-character base32 shape, and the parsed
+/// entries upsert into the core as cards. No engine: the parse is pure and the upsert is the core's own.
+int runBookmarkImportCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+    (void)enginePath;
+
+    // 1. The parser: a representative Netscape export — anchors, a folder, a javascript link.
+    const QString html = QStringLiteral(
+        "<!DOCTYPE NETSCAPE-Bookmark-file-1>\n"
+        "<TITLE>Bookmarks</TITLE><H1>Bookmarks</H1>\n"
+        "<DL><p>\n"
+        "  <DT><A HREF=\"https://example.com/a\" ADD_DATE=\"1\">Alpha</A>\n"
+        "  <DT><A HREF=\"https://example.com/b\">Beta</A>\n"
+        "  <DT><A HREF=\"javascript:void(0)\">Kihagy</A>\n"
+        "  <DT><H3>Mappa</H3>\n"
+        "  <DL><p>\n"
+        "    <DT><A HREF=\"https://example.com/c\">Gamma</A>\n"
+        "  </DL><p>\n"
+        "</DL><p>\n");
+    const QVector<antikolt::BookmarkEntry> entries = antikolt::parseBookmarksHtml(html);
+    const bool parse_ok = entries.size() == 3 &&
+                          entries[0].title == QStringLiteral("Alpha") &&
+                          entries[0].url == QStringLiteral("https://example.com/a") &&
+                          entries[1].title == QStringLiteral("Beta") &&
+                          entries[1].url == QStringLiteral("https://example.com/b") &&
+                          entries[2].title == QStringLiteral("Gamma") &&
+                          entries[2].url == QStringLiteral("https://example.com/c");
+
+    // 2. The card id: 26 characters, Crockford base32, and the millisecond stamp's top 5 bits are zero.
+    const QString id = antikolt::newCardId();
+    const bool id_ok = id.size() == 26 && id.at(0) == QLatin1Char('0');
+
+    // 3. The upsert path: each parsed entry becomes a card. A fresh core seeds its own sample cards, so the check
+    //    is "the three imported URLs are present", not an exact count.
+    const QString corePath = MainWindow::coreExecutable();
+    if (corePath.isEmpty()) {
+        out << "core_executable=FAILED (set ANTIKOLT_CORE)\n";
+        return 1;
+    }
+    CoreClient oracle;
+    const QString core_data = QDir::tempPath() + QStringLiteral("/antikolt-bookmark-") +
+                              QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir().mkpath(core_data);
+    if (!oracle.start(corePath, core_data)) {
+        out << "core_start=FAILED\n";
+        return 1;
+    }
+    int upserted = 0;
+    QEventLoop loop;
+    QObject::connect(&oracle, &CoreClient::failed, &loop, [&](const QString& message) {
+        out << "core_error=" << message << '\n';
+        loop.quit();
+    });
+    QObject::connect(&oracle, &CoreClient::ready, &loop, [&](const QJsonObject& info) {
+        out << "core_name=" << info.value(QStringLiteral("name")).toString() << '\n';
+        int pending = static_cast<int>(entries.size());
+        for (const antikolt::BookmarkEntry& entry : entries) {
+            QJsonObject card;
+            card.insert(QStringLiteral("id"), antikolt::newCardId());
+            card.insert(QStringLiteral("title"), entry.title);
+            card.insert(QStringLiteral("url"), entry.url);
+            card.insert(QStringLiteral("workspace"), QStringLiteral(""));
+            oracle.cardUpsert(card, [&](const QJsonObject&, const QString& error) {
+                if (error.isEmpty()) {
+                    ++upserted;
+                }
+                if (--pending == 0) {
+                    loop.quit();
+                }
+            });
+        }
+    });
+    oracle.handshake();
+    QTimer::singleShot(15000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    bool cards_ok = false;
+    {
+        QEventLoop verify_loop;
+        oracle.cardsList([&](const QJsonObject& data, const QString& error) {
+            if (error.isEmpty()) {
+                QSet<QString> urls;
+                for (const QJsonValue& value : data.value(QStringLiteral("cards")).toArray()) {
+                    urls.insert(value.toObject().value(QStringLiteral("url")).toString());
+                }
+                cards_ok = urls.contains(QStringLiteral("https://example.com/a")) &&
+                           urls.contains(QStringLiteral("https://example.com/b")) &&
+                           urls.contains(QStringLiteral("https://example.com/c"));
+                out << "import_urls=" << urls.size() << '\n';
+            }
+            verify_loop.quit();
+        });
+        QTimer::singleShot(15000, &verify_loop, &QEventLoop::quit);
+        verify_loop.exec();
+    }
+    oracle.shutdown();
+
+    out << "bookmark_parse=" << (parse_ok ? "ok" : "FAILED") << '\n';
+    out << "bookmark_id=" << (id_ok ? "ok" : "FAILED") << '\n';
+    out << "bookmark_upsert=" << (upserted == 3 ? "ok" : "FAILED") << '\n';
+    out << "bookmark_cards=" << (cards_ok ? "ok" : "FAILED") << '\n';
+    const bool ok = parse_ok && id_ok && upserted == 3 && cards_ok;
+    out << "bookmark_import=" << (ok ? "ok" : "FAILED") << '\n';
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runAutoProfileCheck(const QString& enginePath) {
     QTextStream out(stdout);
     (void)enginePath;
@@ -10113,6 +10222,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("autoprofiltest"),
         QStringLiteral("Prove the automatic resource profile (power + pressure, M6), then exit."),
         QStringLiteral("path"));
+    const QCommandLineOption bookmarkimporttest(
+        QStringLiteral("bookmarkimporttest"),
+        QStringLiteral("Prove the Netscape bookmark import (parse + card upsert, M7), then exit."),
+        QStringLiteral("path"));
     const QCommandLineOption lifecycletest(
         QStringLiteral("lifecycletest"),
         QStringLiteral("Prove an idle card hibernates by itself, then exit."),
@@ -10348,6 +10461,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(gridtest);
     parser.addOption(gridlangtest);
     parser.addOption(autoprofiltest);
+    parser.addOption(bookmarkimporttest);
     parser.addOption(lifecycletest);
     parser.addOption(sessionpanel);
     parser.addOption(wipetest);
@@ -10701,6 +10815,10 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(autoprofiltest)) {
         return runAutoProfileCheck(parser.value(autoprofiltest));
+    }
+
+    if (parser.isSet(bookmarkimporttest)) {
+        return runBookmarkImportCheck(parser.value(bookmarkimporttest));
     }
 
     if (parser.isSet(capturetest)) {

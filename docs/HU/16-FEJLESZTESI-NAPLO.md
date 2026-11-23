@@ -3,6 +3,34 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (száznegyvenharmadik szelet) — könyvjelző-import Netscape-HTML-ből (M7)
+
+Az M7 „jelszó- és könyvjelző-import" első fele: a **könyvjelző-import** kész. A Netscape-HTML az egyetlen
+Chrome/Firefox/Edge közös export, ezért egy parser mindhármat lefedi; minden könyvjelző kártya lesz.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/bookmarks.h` (új):** `parseBookmarksHtml` (toleráns regex-parser: a `<A HREF>`
+  horgonyokból cím + URL, a `javascript:`-et és a mappákat kihagyja) + `newCardId` (a rács ULID-jának C++ párja).
+- **`apps/desktop-shell/src/main_window.{h,cpp}`:** `importBookmarksFromPath` (fájl → parse → a már meglévő
+  URL-ek kihagyása → kártya-upsert a magba, majd a rács frissítése); a „💾 Profil" menüben új
+  „Könyvjelzők importálása…" tétel (fájlválasztóval).
+- **`--bookmarkimporttest` (új):** a parser (3 eset + `javascript:`/mappa kihagyása), az id-alak és a
+  kártya-upsert mérése.
+
+### Bizonyíték (mért)
+
+```
+scripts/verify.ps1 → ALL CHECKS PASSED (71 ellenőrzés mind „ok", köztük a bookmarkimporttest és a check-repo)
+--bookmarkimporttest → bookmark_parse=ok · bookmark_id=ok · bookmark_upsert=ok · bookmark_cards=ok
+cargo test         → 156 zöld: 78 + 53 + 9 + 1 + 15
+```
+
+### Ami továbbra is nyitott
+
+- A jelszó-import (nincs cél-boltozat a termékben); a PiP (architektúra-döntés); a teljes képernyőolvasó-illesztés
+  (NVDA); az OAuth összekötése; az emberi kiadási tételek (SignPath, Store); az M8 Linux-csomag.
+
 ## 2026-11-23 (száznegyvenkettedik szelet) — automatikus erőforrás-profil (power + pressure, M6)
 
 Az M6 „Öt erőforrás-profil, automatikus váltással" nyitott fele: a profil mostantól **követheti a gépet**. Az

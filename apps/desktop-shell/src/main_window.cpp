@@ -17,6 +17,9 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
+
+#include <memory>
 #include <QHash>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -46,6 +49,7 @@
 #include <windows.h>
 
 #include "core_client.h"
+#include "bookmarks.h"
 #include "engine_client.h"
 #include "previews.h"
 #include "scroll_book.h"
@@ -2823,6 +2827,76 @@ void MainWindow::importProfile() {
     });
 }
 
+void MainWindow::importBookmarksFromPath(const QString& path) {
+    if (core_ == nullptr || !core_->isRunning()) {
+        setStatus(QStringLiteral("a mag nem fut, az import nem mehet"));
+        return;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        setStatus(t(QStringLiteral("a könyvjelző-fájl nem olvasható: %1")).arg(path));
+        return;
+    }
+    const QString html = QString::fromUtf8(file.readAll());
+    const QVector<antikolt::BookmarkEntry> entries = antikolt::parseBookmarksHtml(html);
+    if (entries.isEmpty()) {
+        setStatus(QStringLiteral("nincs könyvjelző a fájlban"));
+        return;
+    }
+    // A re-import must not duplicate the grid: skip URLs that already live in the store, then upsert the rest
+    // into the default workspace. The shared state survives the async upserts, so the final status is counted once.
+    core_->cardsList([this, entries](const QJsonObject& listed, const QString& list_error) {
+        QSet<QString> existing;
+        if (list_error.isEmpty()) {
+            for (const QJsonValue& value : listed.value(QStringLiteral("cards")).toArray()) {
+                existing.insert(value.toObject().value(QStringLiteral("url")).toString());
+            }
+        }
+        struct State {
+            int added = 0;
+            int skipped = 0;
+            int pending = 0;
+        };
+        auto state = std::make_shared<State>();
+        for (const antikolt::BookmarkEntry& entry : entries) {
+            if (existing.contains(entry.url)) {
+                state->skipped += 1;
+                continue;
+            }
+            QJsonObject card;
+            card.insert(QStringLiteral("id"), antikolt::newCardId());
+            card.insert(QStringLiteral("title"), entry.title);
+            card.insert(QStringLiteral("url"), entry.url);
+            card.insert(QStringLiteral("workspace"), QStringLiteral(""));
+            state->pending += 1;
+            core_->cardUpsert(card, [this, state](const QJsonObject&, const QString& upsert_error) {
+                if (upsert_error.isEmpty()) {
+                    state->added += 1;
+                } else {
+                    state->skipped += 1;
+                }
+                state->pending -= 1;
+                if (state->pending == 0) {
+                    setStatus(t(QStringLiteral("könyvjelzők importálva: %1 (kihagyva %2)"))
+                                  .arg(state->added)
+                                  .arg(state->skipped));
+                    if (home_surface_ != 0) {
+                        pushCardsToGrid(home_surface_);
+                    }
+                }
+            });
+        }
+        if (state->pending == 0) {
+            setStatus(t(QStringLiteral("könyvjelzők importálva: %1 (kihagyva %2)"))
+                          .arg(state->added)
+                          .arg(state->skipped));
+            if (home_surface_ != 0) {
+                pushCardsToGrid(home_surface_);
+            }
+        }
+    });
+}
+
 /// Whether the machine is on mains power (F6, ADR-020 `auto`). `ANTIKOLT_AC_POWER=1/0` overrides for a self test;
 /// otherwise the system power status answers. Unknown (no battery API) is treated as mains — the permissive
 /// default keeps a desktop usable even when the OS cannot tell.
@@ -3389,6 +3463,22 @@ void MainWindow::buildToolBar() {
     auto* import_action = profile_menu->addAction(QStringLiteral("Betöltés…"));
     import_action->setObjectName(QStringLiteral("profileImportAction"));
     connect(import_action, &QAction::triggered, this, &MainWindow::importProfile);
+    // Bookmark import (M7): the shell owns the native file dialog; `--bookmarkimporttest` measures the parse +
+    // upsert path because the dialog itself cannot be clicked by the harness.
+    auto* import_bookmarks_action = profile_menu->addAction(t(QStringLiteral("Könyvjelzők importálása…")));
+    import_bookmarks_action->setObjectName(QStringLiteral("profileImportBookmarksAction"));
+    connect(import_bookmarks_action, &QAction::triggered, this, [this] {
+        if (core_ == nullptr || !core_->isRunning()) {
+            setStatus(QStringLiteral("a mag nem fut, az import nem mehet"));
+            return;
+        }
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("Könyvjelzők importálása"), QString(),
+            QStringLiteral("HTML fájlok (*.html *.htm)"));
+        if (!path.isEmpty()) {
+            importBookmarksFromPath(path);
+        }
+    });
     profile_button->setMenu(profile_menu);
     toolbar->addWidget(profile_button);
     // Save-as-PDF (F7 "nyomtatás"): the shell owns the native dialog, the engine writes the PDF. The dialog cannot

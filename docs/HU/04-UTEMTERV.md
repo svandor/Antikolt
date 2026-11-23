@@ -99,7 +99,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 - [ ] Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás. — a **zoom** kész (`--scrollzoomtest`), a **nyomtatás** „mentés PDF-be" útja kész (`--printtest`, 129. szelet), a **Ctrl+F** kész (`--findtest`, 130. szelet), a **letöltés** kész (`--downloadtest`, 131. szelet), a **PDF** kész (`--pdftest`, 134. szelet), a **PiP** nyitott
 - [x] Összeomlás utáni helyreállítás. — kész: a shell az összeomlott felületet automatikusan újratölti (`--crashtest`, 132–133. szelet)
 - [ ] Billentyűzetes navigáció, képernyőolvasó-támogatás. — a **nevesített vezérlők + Ctrl+F** kész (`--accessibilitytest`, 135. szelet), a teljes képernyőolvasó-illesztés nyitott
-- [ ] HU/EN felület; jelszó- és könyvjelző-import. — a HU/EN felület **kész** (`ui/language` + `data-language` + `setStatus`→`t()`, ADR-078/079, `--languagetest`/`--gridlangtest`); a jelszó- és könyvjelző-import nyitott
+- [ ] HU/EN felület; jelszó- és könyvjelző-import. — a HU/EN felület **kész** (`ui/language` + `data-language` + `setStatus`→`t()`, ADR-078/079); a **könyvjelző-import** kész (Netscape-HTML → kártyák, ADR-081, `--bookmarkimporttest`); a **jelszó-import** nyitott (nincs cél-boltozat a termékben)
 
 ### M8 — „1.0" (F8 vége)
 - [ ] Linux (Nobara/KDE/Wayland) OSR-rel, RPM csomag.

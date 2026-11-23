@@ -205,6 +205,15 @@ inline QString uiText(const QString& hu, const QString& lang) {
         map.insert(QStringLiteral("raszter kész: %1"), QStringLiteral("raster ready: %1"));
         map.insert(QStringLiteral("raszter-kezdőlap (a motor leállítva)"),
                    QStringLiteral("raster home (engine stopped)"));
+        // Bookmark import (M7).
+        map.insert(QStringLiteral("Könyvjelzők importálása…"), QStringLiteral("Import bookmarks…"));
+        map.insert(QStringLiteral("a mag nem fut, az import nem mehet"),
+                   QStringLiteral("the core is not running, import cannot proceed"));
+        map.insert(QStringLiteral("a könyvjelző-fájl nem olvasható: %1"),
+                   QStringLiteral("the bookmarks file cannot be read: %1"));
+        map.insert(QStringLiteral("nincs könyvjelző a fájlban"), QStringLiteral("no bookmarks in the file"));
+        map.insert(QStringLiteral("könyvjelzők importálva: %1 (kihagyva %2)"),
+                   QStringLiteral("bookmarks imported: %1 (skipped %2)"));
         return map;
     }();
     return en.value(hu, hu);

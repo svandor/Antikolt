@@ -3,6 +3,26 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-081 — A könyvjelző-import a Netscape-HTML formátumot eszi (M7) (2026-11-23)
+
+**Kontextus:** az M7 „jelszó- és könyvjelző-import" nyitott volt. A jelszó-importnak nincs cél-boltozata a
+termékben (külön, nagyobb szelet), a könyvjelző-import viszont a kártya-modellre természetesen illik.
+
+**Döntés:**
+
+1. **A bemenet a Netscape-HTML** (`<!DOCTYPE NETSCAPE-Bookmark-file-1>`): ez az egyetlen formátum, amit a
+   Chrome, a Firefox és az Edge is exportál, így egy parser mindhármat lefedi.
+2. **Toleráns regex-parser** (`bookmarks.h` `parseBookmarksHtml`): a formátum nem érvényes XML (bare `<p>`,
+   `<H3>` mappák), ezért a `<A HREF>`-horgonyokat regexszel szedjük ki, nem stream-parserrel; a `javascript:`
+   hivatkozásokat és a mappákat kihagyjuk, a sorrend megmarad.
+3. **Minden könyvjelző egy kártya:** cím + URL, az alapértelmezett munkaterületre, a már meglévő URL-ek
+   kihagyásával (az újra-import nem duplikál). Az azonosító a rács saját `newCardId`-jának C++ párja
+   (`bookmarks.h` `newCardId`, 26 karakter, Crockford base32).
+
+**Következmény:** (+) a könyvjelző-import kész, a `--bookmarkimporttest` méri (a parser 3 esetet, az id-alakot
+és a kártya-upsertet); (−) a jelszó-import nincs (nincs cél-boltozat — külön szelet); (−) a fájlválasztó dialógust
+a harness nem kattinthatja — a menüpont a termék belépési pontja, a `--bookmarkimporttest` az alatta lévő utat méri.
+
 ## ADR-080 — Az „Automatikus" profil a magban oldódik fel (power + pressure → built-in, M6) (2026-11-23)
 
 **Kontextus:** az M6 „Öt erőforrás-profil, automatikus váltással" nyitott fele volt az automatikus váltás. Az
@@ -1338,6 +1358,7 @@ kártyák törlődnek először (LRU), a rögzítettek (pinned) utoljára.
 | ADR-078 | A shell nyelve futásidőben váltható (`ui/language` QSettings, default `hu`); `i18n.h` `uiText` HU→EN táblázatból; a `setLanguage` helyben átcímkézi a chrome-ot; a státuszüzenetek és a rács a következő szeletek | Elfogadva |
 | ADR-079 | A rács nyelve is a shellt követi (`data-language` attribútum + `pushLanguageToGrid` + `window.antikoltSetLanguage`); a rács saját `t()`-je (`home/app.js` EN térkép) újratöltés nélkül újrarenderel; a kártya inline címkéi és a statikus aria-címkék a következő szelet | Elfogadva |
 | ADR-080 | Az `Auto` profil a magban oldódik fel (`ProfileKind::Auto`, `params()`=None; `resolve_profile` IPC a `ProfileKind::auto` + `params()` alapján); a shell méri a tápforrást (`GetSystemPowerStatus` + `ANTIKOLT_AC_POWER`) és a nyomást, és minden minta után újra-kérdez; `Fast` az auto-ból nem jön | Elfogadva |
+| ADR-081 | A könyvjelző-import a Netscape-HTML-t eszi (az egyetlen Chrome/Firefox/Edge közös export); toleráns regex-parser (`bookmarks.h`), minden könyvjelző kártya, az újra-import nem duplikál; a jelszó-import nincs (nincs cél-boltozat) | Elfogadva |
 
 ---
 
