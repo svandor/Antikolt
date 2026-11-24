@@ -29,18 +29,17 @@ git status                  →  tiszta munkafa, minden pusholva (origin/main)
 
 ### Sorrend és egyeztetés a karbantartóval (ez blokkolja a kódot)
 
-A jól szcopolható kódmunka **kész**. A maradék néhány nagy tétel, többhöz **előbb döntés kell**:
+A jól szcopolható kódmunka **kész**. A maradék egy nagy tételhez **előbb döntés kell**:
 
-1. **Jelszó-boltozat + jelszó-import (M7)** — a termékben **nincs** jelszótároló, így az import nem mehet
-   anélkül. **Egyeztetni:** mit tárol (csak jelszavak / + TOTP / + passkey), milyen titkosítással (Windows DPAPI
-   vagy mesterjelszó), honnan importál (Chrome/Firefox CSV, vagy előbb csak a vault).
+1. **Jelszó-boltozat + jelszó-import (M7)** — **kész** (ADR-083/093 + a 163. szelet kulcs-exportja): AES-256-GCM +
+   Argon2id + DPAPI, TOTP, CSV-import, autofill, origin-lookup, passkey-tárolás + export; a teljes
+   `navigator.credentials.create/get` a valós felületen `not-measurable` (fókusz-gesztus).
 2. **PiP (M7)** — **elhalasztva (döntés 2026-11-24):** a maintainer a 2. opciót választotta — a PiP a
    windowed úton marad a dokumentált crash-sel (ADR-095/096/097, mérve); a views-váltás (Chrome-profilok)
    most nem folytatódik.
-3. **Verzió/mérföldkő** — az M6 kész, az M7 majdnem. **Egyeztetni:** `v0.8` → `v0.9` bump, és mi zárja az M7-et.
+3. **Verzió/mérföldkő** — az M6 kész, az M7 (a PiP elhalasztásával) lezárható. **Egyeztetni:** `v0.8` → `v0.9` bump.
 
-A döntések után, sorrendben: vault + import → PiP (ha jóváhagyva) → teljes HU→EN fordítás (M8) → Linux-csomag
-(M8) → kiadás (emberi: SignPath/Store, NVDA).
+A döntés után, sorrendben: teljes HU→EN fordítás (M8) → Linux-csomag (M8) → kiadás (emberi: SignPath/Store, NVDA).
 
 ### Ami nyitva van (konkrét következő lépés)
 
