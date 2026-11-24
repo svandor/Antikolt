@@ -3,6 +3,38 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-24 (százhatvanhatodik szelet) — a teljes HU→EN dokumentáció-fordítás (M8)
+
+A `docs/HU/00`–`21` mind a 22 dokumentuma lefordítva angolra a `docs/EN/` alá — a felület (164. szelet)
+után most a **dokumentáció** is kétnyelvű. A magyar marad a tekintélyes; az angol fájlok fordítások.
+
+### Mi változott
+
+- **`docs/EN/00`–`21`:** 22 új angol dokumentum (a `docs/HU/` 1:1 tükörfordítása, ~11 400 sor).
+- **`docs/EN/README.md`:** a „Documents" tábla most az angol dokumentumokra mutat (`00`–`21`), a
+  „18 ADR" → „97 ADR" javítva; a bevezető kimondja, hogy a magyar a tekintélyes.
+
+### Bizonyíték (mért)
+
+```
+check-repo → ALL CHECKS PASSED; „Markdown links: every relative link resolves" (a 22 új EN-dokumentum
+             linkje is), cargo test 190 zöld (93+69+12+1+15); mind a 22 fájl sorszáma megegyezik a
+             HU-forráséval (05: 1978, 16: 5780 sor — a chunkok újra-összeillesztve pontos paritással)
+```
+
+### Ami kiderült
+
+- A fordítás free-láncú workflow-ban futott: 31 egység (20 egész dokumentum + a 05/16 nagy fájlok 11
+  sortartomány-chunkja), **31/31 OK** egyetlen körben. A `05-DONTESEK` (1978 sor) és a `16-FEJLESZTESI-NAPLO`
+  (5780 sor) sortartomány-chunkokra bontva készült, majd a fő szálon összeillesztve — a paritás a csonkolás
+  ellenőrzése.
+- A kód-tokenek (`--selftest`, `db_status=ok schema=11`, `user_version=11`), a relatív linkek céljai és a
+  számok érintetlenül átjöttek (a link-ellenőrzés zöld).
+
+### Ami továbbra is nyitott
+
+- Linux-csomag (M8), a kiadás (emberi: SignPath/Store, NVDA) és a frissítő/telepítő (Ed25519) kódja.
+
 ## 2026-11-24 (százhatvanötödik szelet) — verzióbump v0.8 → v0.9, az M7 lezárása
 
 A karbantartó a **teljes bumpot** választotta: a `v0.8` badge → `v0.9`, és a csomagverzió `0.1.0` →

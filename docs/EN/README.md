@@ -5,9 +5,10 @@ Fedora/Nobara + KDE Wayland (later). Open source, **MPL-2.0** ([`LICENSE`](../..
 Status: **v0.9 — runnable, measured**. The repo is not a design document any more: it builds two native
 binaries (a Qt 6 shell and a CEF engine host) and a Rust core, and a gate proves the behaviour.
 
-The authoritative plan, the decision log (ADR-001…ADR-097) and the development log are Hungarian under
-[`docs/HU/`](../HU/); this page is the condensed English version, and
-[`docs/HU/21-ALLAPOT.md`](../HU/21-ALLAPOT.md) is the measured "where the product stands" page.
+The full documentation (`docs/HU/00`–`21`) is now translated into English under this directory
+(`00-JAVASLATOK.md` … `21-ALLAPOT.md`, see the table below). **Hungarian remains authoritative** — the
+English files are translations. This page is the condensed entry point, and
+[`21-ALLAPOT.md`](21-ALLAPOT.md) is the measured "where the product stands" page.
 
 ## What is proven today
 
@@ -87,28 +88,28 @@ site, so it improves over time.
 
 | File | Content |
 |---|---|
-| [`HU/00-JAVASLATOK.md`](../HU/00-JAVASLATOK.md) | Review of the original (Gemini) plan: 18 findings + risks |
-| [`HU/01-KERDESEK.md`](../HU/01-KERDESEK.md) | Open questions with recommended answers |
-| [`HU/02-ARCHITEKTURA.md`](../HU/02-ARCHITEKTURA.md) | The plan: processes, lifecycle, snapshots, SQL schema, vault, themes |
-| [`HU/03-MEMORIA.md`](../HU/03-MEMORIA.md) | Memory budget, measurement method, CI gates |
-| [`HU/04-UTEMTERV.md`](../HU/04-UTEMTERV.md) | Phases, milestones, stopping criteria |
-| [`HU/05-DONTESEK.md`](../HU/05-DONTESEK.md) | Architecture decision records (18 ADRs) |
-| [`HU/06-OTLETEK.md`](../HU/06-OTLETEK.md) | Idea list beyond the requirements (time-travel through snapshots, offline reading, memory transparency, …) |
-| [`HU/07-FOGALMAK.md`](../HU/07-FOGALMAK.md) | Hungarian–English glossary of the terminology used across the docs |
-| [`HU/08-DIZAJN.md`](../HU/08-DIZAJN.md) | Design tokens, four themes, card anatomy |
-| [`HU/09-CELHARDVER.md`](../HU/09-CELHARDVER.md) | Target hardware ("VECTOR": 24 threads, 32 GB, RTX 5080 16 GB + iGPU, dual display) and resource profiles |
-| [`HU/10-MUNKAMENET.md`](../HU/10-MUNKAMENET.md) | Keeping logins alive at ~0 RAM, the measurable session ledger, and the explicit "what do we lose" table |
-| [`HU/11-OSR.md`](../HU/11-OSR.md) | Native window embedding vs offscreen rendering, and why Wayland forces OSR |
-| [`HU/12-PASSKEY.md`](../HU/12-PASSKEY.md) | Passkeys: CEF has no WebAuthn support — options, costs, and the software-authenticator plan |
-| [`HU/13-LICENC.md`](../HU/13-LICENC.md) | MPL-2.0, Qt LGPL-3 obligations, CEF BSD, DCO, AI-authorship disclosure |
-| [`HU/14-KODALAS.md`](../HU/14-KODALAS.md) | Code signing: SmartScreen reality, free OSS options, Ed25519 update signing |
-| [`HU/15-HOZZAJARULAS.md`](../HU/15-HOZZAJARULAS.md) | Contribution model (DCO, no CLA) and security governance (protected areas, fuzzing, disclosure) |
-| [`HU/16-FEJLESZTESI-NAPLO.md`](../HU/16-FEJLESZTESI-NAPLO.md) | Development log: what is built, how it was verified, what blocks |
-| [`HU/17-ESZKOZLANC.md`](../HU/17-ESZKOZLANC.md) | Toolchain: Qt 6, CEF, MSVC, and the four traps that cost the most time |
-| [`HU/18-F0-JELENTES.md`](../HU/18-F0-JELENTES.md) | The F0 measurement: what is measured, how much, what it means, with reservations |
-| [`HU/19-FOLYTATAS.md`](../HU/19-FOLYTATAS.md) | Continuation plan: what is done, what comes next |
-| [`HU/20-ALASAS.md`](../HU/20-ALASAS.md) | Code signing: Store and SignPath, costs, and the exact steps in the repo |
-| [`HU/21-ALLAPOT.md`](../HU/21-ALLAPOT.md) | **Measured status**: what works and with which evidence, what is open, what needs a human |
+| [`00-JAVASLATOK.md`](00-JAVASLATOK.md) | Review of the original (Gemini) plan: 18 findings + risks |
+| [`01-KERDESEK.md`](01-KERDESEK.md) | Open questions with recommended answers |
+| [`02-ARCHITEKTURA.md`](02-ARCHITEKTURA.md) | The plan: processes, lifecycle, snapshots, SQL schema, vault, themes |
+| [`03-MEMORIA.md`](03-MEMORIA.md) | Memory budget, measurement method, CI gates |
+| [`04-UTEMTERV.md`](04-UTEMTERV.md) | Phases, milestones, stopping criteria |
+| [`05-DONTESEK.md`](05-DONTESEK.md) | Architecture decision records (97 ADRs) |
+| [`06-OTLETEK.md`](06-OTLETEK.md) | Idea list beyond the requirements (time-travel through snapshots, offline reading, memory transparency, …) |
+| [`07-FOGALMAK.md`](07-FOGALMAK.md) | Hungarian–English glossary of the terminology used across the docs |
+| [`08-DIZAJN.md`](08-DIZAJN.md) | Design tokens, four themes, card anatomy |
+| [`09-CELHARDVER.md`](09-CELHARDVER.md) | Target hardware ("VECTOR": 24 threads, 32 GB, RTX 5080 16 GB + iGPU, dual display) and resource profiles |
+| [`10-MUNKAMENET.md`](10-MUNKAMENET.md) | Keeping logins alive at ~0 RAM, the measurable session ledger, and the explicit "what do we lose" table |
+| [`11-OSR.md`](11-OSR.md) | Native window embedding vs offscreen rendering, and why Wayland forces OSR |
+| [`12-PASSKEY.md`](12-PASSKEY.md) | Passkeys: CEF has no WebAuthn support — options, costs, and the software-authenticator plan |
+| [`13-LICENC.md`](13-LICENC.md) | MPL-2.0, Qt LGPL-3 obligations, CEF BSD, DCO, AI-authorship disclosure |
+| [`14-KODALAS.md`](14-KODALAS.md) | Code signing: SmartScreen reality, free OSS options, Ed25519 update signing |
+| [`15-HOZZAJARULAS.md`](15-HOZZAJARULAS.md) | Contribution model (DCO, no CLA) and security governance (protected areas, fuzzing, disclosure) |
+| [`16-FEJLESZTESI-NAPLO.md`](16-FEJLESZTESI-NAPLO.md) | Development log: what is built, how it was verified, what blocks |
+| [`17-ESZKOZLANC.md`](17-ESZKOZLANC.md) | Toolchain: Qt 6, CEF, MSVC, and the four traps that cost the most time |
+| [`18-F0-JELENTES.md`](18-F0-JELENTES.md) | The F0 measurement: what is measured, how much, what it means, with reservations |
+| [`19-FOLYTATAS.md`](19-FOLYTATAS.md) | Continuation plan: what is done, what comes next |
+| [`20-ALASAS.md`](20-ALASAS.md) | Code signing: Store and SignPath, costs, and the exact steps in the repo |
+| [`21-ALLAPOT.md`](21-ALLAPOT.md) | **Measured status**: what works and with which evidence, what is open, what needs a human |
 | [`../proto/README.md`](../../proto/README.md) | Wire protocol v1 between the core and the engine host |
 | [`forras/`](../forras/) | The original plan this work started from (ODT + text) and the raw research notes |
 

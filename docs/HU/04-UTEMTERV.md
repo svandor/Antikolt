@@ -104,7 +104,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 ### M8 — „1.0" (F8 vége)
 - [ ] Linux (Nobara/KDE/Wayland) OSR-rel, RPM csomag.
 - [ ] SignPath-aláírás + Ed25519 frissítés-aláírás, telepítő + frissítő.
-- [ ] Licenc/NOTICE/AUTHORS/THIRD-PARTY fájlok, HU/EN dokumentáció, CONTRIBUTING (DCO). — a **fájlok** kész (LICENSE/NOTICE/AUTHORS/CONTRIBUTING/THIRD-PARTY-NOTICES, a check-repo „Release files" őrzi őket); a teljes HU→EN fordítás nyitott
+- [ ] Licenc/NOTICE/AUTHORS/THIRD-PARTY fájlok, HU/EN dokumentáció, CONTRIBUTING (DCO). — a **fájlok** kész (LICENSE/NOTICE/AUTHORS/CONTRIBUTING/THIRD-PARTY-NOTICES, a check-repo „Release files" őrzi őket); a teljes HU→EN fordítás **kész** (166. szelet, `docs/EN/00`–`21`)
 
 ## Kockázatok és „stop" kritériumok
 

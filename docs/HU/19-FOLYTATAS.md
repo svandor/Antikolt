@@ -39,8 +39,8 @@ A jól szcopolható kódmunka **kész**. A maradék egy nagy tételhez **előbb 
    most nem folytatódik.
 3. **Verzió/mérföldkő** — **kész (165. szelet):** `v0.8` → `v0.9` (badge) + a Cargo/CMake `0.1.0` → `0.9.0`; az **M7 lezárva**.
 
-A **felületi HU→EN fordítás kész** (164. szelet). A verzióbump (165) után, sorrendben: teljes HU→EN
-dokumentáció-fordítás (M8) → Linux-csomag (M8) → kiadás (emberi: SignPath/Store, NVDA).
+A **felületi HU→EN fordítás kész** (164. szelet), a **teljes HU→EN dokumentáció-fordítás is** (166. szelet).
+Hátra: Linux-csomag (M8) → kiadás (emberi: SignPath/Store, NVDA).
 
 ### Ami nyitva van (konkrét következő lépés)
 
