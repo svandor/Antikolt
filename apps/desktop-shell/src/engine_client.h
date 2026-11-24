@@ -92,9 +92,13 @@ public:
     /// passkey. The reply carries `{authenticator_id: …}`.
     void webauthnSetup(qint64 surface, ReplyHandler handler = {});
     /// Read the credentials the virtual authenticator holds (the export side, ADR-023/093). The reply
-    /// carries `{count: …}`.
+    /// carries `{count: …}` plus `{credentials: <json array>}` (the full credentials incl. privateKey).
     void webauthnCredentials(qint64 surface, const QString& authenticatorId,
                              ReplyHandler handler = {});
+    /// Inject a fixed resident credential into the virtual authenticator (`WebAuthn.addCredential`), so
+    /// the export path has a credential to read. The reply carries `{credential_id: …}`.
+    void webauthnAddCredential(qint64 surface, const QString& authenticatorId,
+                               ReplyHandler handler = {});
     /// Install the engine-side JS bridge (`window.antikoltNative`) on a surface.
     ///
     /// Only surfaces the shell enables this way may call back: the engine refuses everything else, so

@@ -2636,6 +2636,13 @@ public:
                 const int count = credentials ? static_cast<int>(credentials->GetSize()) : 0;
                 CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
                 result->SetInt("count", count);
+                // The full credential list (credentialId + privateKey + rpId + userHandle + signCount),
+                // so the export path can persist real passkeys, not just their count.
+                if (credentials) {
+                    CefRefPtr<CefValue> list_value = CefValue::Create();
+                    list_value->SetList(credentials);
+                    result->SetString("credentials", CefWriteJSON(list_value, JSON_WRITER_DEFAULT));
+                }
                 StdioLink::Instance().Reply(self->request_id_, result);
             }));
         return call->Start(browser);
@@ -2651,6 +2658,63 @@ private:
 
     IMPLEMENT_REFCOUNTING(WebAuthnCredentials);
     DISALLOW_COPY_AND_ASSIGN(WebAuthnCredentials);
+};
+
+namespace {
+/// A fixed resident credential the export test injects into the virtual authenticator via
+/// `WebAuthn.addCredential` (the page-side create is focus-gated and unreachable in the harness, so the
+/// export path needs a credential put there by CDP). The private key is a real EC P-256 PKCS#8.
+constexpr char kExportCredentialId[] = "dGVzdC1jcmVkZW50aWFsLWlk";  // base64url("test-credential-id")
+constexpr char kExportPrivateKey[] =
+    "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgUVDhkXBWSu8k0WiZ4u7bJ4CK01ax3OVmRBvdPot6P1mh"
+    "RANCAASctqSolR9da6Vx8SSkrxEOr0k9kemicwwtxAbQ1MfJDpbR9YG1U6hpG3xZkcONruDqAeYrOxBjNB3RlVWtCKla";
+constexpr char kExportUserHandle[] = "dXNlci0x";                      // base64url("user-1")
+constexpr char kExportRpId[] = "antikolt-test";
+}  // namespace
+
+/// Inject a fixed resident credential into the virtual authenticator (`WebAuthn.addCredential`) and reply
+/// to `webauthn_add_credential` with its id, so `webauthn_credentials` has a real credential to export.
+class WebAuthnAddCredential : public CefBaseRefCounted {
+public:
+    WebAuthnAddCredential(int64_t request_id, std::string authenticator_id)
+        : request_id_(request_id), authenticator_id_(std::move(authenticator_id)) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<WebAuthnAddCredential> self(this);
+        CefRefPtr<CefDictionaryValue> credential = CefDictionaryValue::Create();
+        credential->SetString("credentialId", kExportCredentialId);
+        credential->SetBool("isResidentCredential", true);
+        credential->SetString("rpId", kExportRpId);
+        credential->SetString("privateKey", kExportPrivateKey);
+        credential->SetString("userHandle", kExportUserHandle);
+        credential->SetInt("signCount", 0);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("authenticatorId", authenticator_id_);
+        params->SetDictionary("credential", credential);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "WebAuthn.addCredential", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+                if (!reply.ok()) {
+                    self->Finish(reply.error);
+                    return;
+                }
+                CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+                result->SetString("credential_id", kExportCredentialId);
+                StdioLink::Instance().Reply(self->request_id_, result);
+            }));
+        return call->Start(browser);
+    }
+
+private:
+    void Finish(const std::string& error) {
+        StdioLink::Instance().ReplyError(request_id_, "internal", error.c_str());
+    }
+
+    int64_t request_id_;
+    std::string authenticator_id_;
+
+    IMPLEMENT_REFCOUNTING(WebAuthnAddCredential);
+    DISALLOW_COPY_AND_ASSIGN(WebAuthnAddCredential);
 };
 
 void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
@@ -3502,6 +3566,21 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
             link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot read WebAuthn");
         }
         // The reply is sent by WebAuthnCredentials once the credential list is read.
+    } else if (command.op == "webauthn_add_credential") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.authenticator_id.empty()) {
+            link.ReplyError(command.id, "invalid_argument", "webauthn_add_credential needs authenticator_id");
+            return;
+        }
+        CefRefPtr<WebAuthnAddCredential> add(
+            new WebAuthnAddCredential(command.id, command.authenticator_id));
+        if (!add->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot inject WebAuthn");
+        }
+        // The reply is sent by WebAuthnAddCredential once the credential is injected.
     } else {
         link.ReplyError(command.id, "not_supported",
                         "this milestone implements hello, ping, create_surface, navigate, eval, "

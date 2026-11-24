@@ -6619,6 +6619,7 @@ int runPasskeyExportCheck(const QString& enginePath) {
     QEventLoop loop;
     qint64 surface = 0;
     bool setup_ok = false;
+    bool injected = false;
     bool export_ok = false;
 
     QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
@@ -6651,18 +6652,51 @@ int runPasskeyExportCheck(const QString& enginePath) {
                                      setup_ok = !authenticator.isEmpty();
                                      out << "passkey_export_setup=" << (setup_ok ? "ok" : "FAILED")
                                          << '\n';
-                                     client.webauthnCredentials(
+                                     // The page-side create is focus-gated and unreachable in the
+                                     // harness, so the export test injects a fixed resident credential
+                                     // via CDP and then reads it back — the real key-export round-trip.
+                                     client.webauthnAddCredential(
                                          id, authenticator,
-                                         [&](const QJsonObject& credentials,
-                                             const QString& credentials_error) {
-                                             export_ok = credentials_error.isEmpty() &&
+                                         [&, authenticator, id](const QJsonObject&, const QString& add_error) {
+                                             injected = add_error.isEmpty();
+                                             out << "passkey_export_inject="
+                                                 << (injected ? "ok" : "FAILED") << '\n';
+                                             // The CDP addCredential reply can arrive before the
+                                             // credential is committed to the authenticator's list
+                                             // (measured under load: getCredentials then reports
+                                             // count=0). A short settle delay removes the race.
+                                             QTimer::singleShot(500, &loop, [&, authenticator, id] {
+                                                 client.webauthnCredentials(
+                                                     id, authenticator,
+                                                     [&](const QJsonObject& credentials,
+                                                         const QString& credentials_error) {
+                                                     const QString list =
+                                                         credentials.value(QStringLiteral("credentials"))
+                                                             .toString();
+                                                     export_ok =
+                                                         credentials_error.isEmpty() &&
                                                          credentials.value(QStringLiteral("count"))
-                                                                 .toInt() == 0;
-                                             out << "passkey_export_credentials="
-                                                 << (export_ok ? "ok" : "FAILED") << " count="
-                                                 << credentials.value(QStringLiteral("count")).toInt()
-                                                 << '\n';
-                                             loop.quit();
+                                                                 .toInt() == 1 &&
+                                                         list.contains(
+                                                             QStringLiteral("dGVzdC1jcmVkZW50aWFsLWlk")) &&
+                                                         list.contains(QStringLiteral("privateKey"));
+                                                     out << "passkey_export_credentials="
+                                                         << (export_ok ? "ok" : "FAILED") << " count="
+                                                         << credentials.value(QStringLiteral("count"))
+                                                                .toInt()
+                                                         << " has_id="
+                                                         << (list.contains(QStringLiteral(
+                                                                 "dGVzdC1jcmVkZW50aWFsLWlk"))
+                                                                 ? "yes"
+                                                                 : "no")
+                                                         << " has_key="
+                                                         << (list.contains(QStringLiteral("privateKey"))
+                                                                 ? "yes"
+                                                                 : "no")
+                                                         << '\n';
+                                                     loop.quit();
+                                                 });
+                                              });
                                          });
                                  });
                          });
@@ -6670,7 +6704,7 @@ int runPasskeyExportCheck(const QString& enginePath) {
     QTimer::singleShot(45000, &loop, &QEventLoop::quit);
     loop.exec();
 
-    const bool ok = setup_ok && export_ok;
+    const bool ok = setup_ok && injected && export_ok;
     out << "passkey_export=" << (ok ? "ok" : "FAILED") << '\n';
     window.close();
     out.flush();

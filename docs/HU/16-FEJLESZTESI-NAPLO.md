@@ -3,7 +3,43 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
-## 2026-11-24 (százhatvankettedik szelet) — a views-váltás de-kockáztatása: betölt, de a partíció-cache elutasítva (M7)
+## 2026-11-24 (százhatvanharmadik szelet) — a passkey kulcs-export a virtuális hitelesítőből (M7)
+
+A széf passkey-köre bezárult: a CDP virtuális hitelesítő teljes credential-je (credentialId + privateKey +
+rpId + userHandle + signCount) exportálható, nem csak a darabszáma.
+
+### Mi változott
+
+- **`apps/engine-host/src/host.cpp`:** a `webauthn_credentials` a `count` mellett a teljes credential-listát
+  is visszaadja (JSON `credentials` mező); új `webauthn_add_credential` parancs (`WebAuthn.addCredential`)
+  egy fix resident credential-t injektál (a lap-oldali `create` fókusz-gátolt, a harnessben nem elérhető).
+- **`apps/desktop-shell/src/`:** `webauthnAddCredential` + a `--passkeyexporttest` az injektálás → export
+  körön méri a credentialId-t és a privateKey-t.
+
+### Bizonyíték (mért)
+
+```
+--passkeyexporttest → passkey_export=ok (exit 0):
+  passkey_export_setup=ok · passkey_export_inject=ok ·
+  passkey_export_credentials=ok count=1 has_id=yes has_key=yes
+```
+
+### Ami kiderült
+
+- A `WebAuthn.addCredential` + `getCredentials` kör működik: a fix EC P-256 PKCS#8 credential injektálható,
+  és a teljes credential (a privateKey-val együtt) visszaolvasható — ez a kulcs-export alapja (a széf
+  passkey-tárolása a 158. szeletben már mérve van, így a lánc authenticator → vault bezárult).
+- A teszt először `0xC0000409`-cel elhalt, majd a kapuban `count=0`-val elbukott — két használat-utáni-
+  felszabadítás miatt: az `authenticator` `QString`-et **és** az `id` felület-azonosítót a beágyazott
+  async-lambdák referenciaként (`[&]`) kapták el, és a setup-handler visszatérése után hivatkozták; a
+  by-value capture (`[&, authenticator, id]`) mindkettőt javította.
+
+### Ami továbbra is nyitott
+
+- A teljes `navigator.credentials.create/get` a valós felületen (`not-measurable`, fókusz-gesztus); a PiP
+  **elhalasztva** (2026-11-24-i döntés).
+
+
 
 A views-keretrendszer (`CefBrowserView`/`CefWindow`) **betölt egy oldalt**, de a CHROME-stílusú views
 **elutasítja a custom cache-útvonalat** — a partíció-izoláció alapját.
