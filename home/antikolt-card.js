@@ -28,6 +28,15 @@
     "＋címke": "＋tag",
     "Új címke": "New tag",
     "címke": "tag",
+    "Kitűzés levétele": "Unpin",
+    "Kitűzés": "Pin",
+    "Jegyzet szerkesztése": "Edit note",
+    "Jegyzet hozzáadása": "Add note",
+    "Jegyzet": "Note",
+    "Kattints újra a törléshez (5 másodpercig)": "Click again to delete (5 seconds)",
+    "Kártya törlése (két kattintás)": "Delete card (two clicks)",
+    "a lap utolsó munkakészlete fagyasztáskor": "the page's last working set at freeze",
+    "Címke hozzáadása": "Add tag",
   };
   const t = (hu) => (document.documentElement.dataset.language === "en" && EN[hu] ? EN[hu] : hu);
 
@@ -338,7 +347,7 @@
       badge.type = "button";
       badge.className = "badge pin";
       badge.textContent = `${card.pinned ? "📌 " : ""}${card.archived ? "💤 " : ""}${status.icon}`;
-      badge.title = card.pinned ? "Kitűzés levétele" : "Kitűzés";
+      badge.title = t(card.pinned ? "Kitűzés levétele" : "Kitűzés");
       // The card itself opens on click, so the pin must not travel further: it is a control inside a
       // link-shaped surface, and a click on it would otherwise also open the card.
       badge.addEventListener("click", (event) => {
@@ -359,7 +368,7 @@
       noteButton.type = "button";
       noteButton.className = "note";
       noteButton.textContent = card.notes ? "✎" : "＋";
-      noteButton.title = card.notes ? "Jegyzet szerkesztése" : "Jegyzet hozzáadása";
+      noteButton.title = t(card.notes ? "Jegyzet szerkesztése" : "Jegyzet hozzáadása");
 
       const editor = document.createElement("div");
       editor.className = "note-editor";
@@ -367,7 +376,7 @@
       const textarea = document.createElement("textarea");
       textarea.rows = 2;
       textarea.value = card.notes || "";
-      textarea.setAttribute("aria-label", "Jegyzet");
+      textarea.setAttribute("aria-label", t("Jegyzet"));
       const save = document.createElement("button");
       save.type = "button";
       save.className = "note-save";
@@ -429,10 +438,11 @@
       removeButton.className = "badge remove";
       removeButton.textContent = this.armedDelete?.id === card.id ? t("Biztos?") : "×";
       removeButton.dataset.armed = this.armedDelete?.id === card.id ? "1" : "0";
-      removeButton.title =
+      removeButton.title = t(
         this.armedDelete?.id === card.id
           ? "Kattints újra a törléshez (5 másodpercig)"
-          : "Kártya törlése (két kattintás)";
+          : "Kártya törlése (két kattintás)",
+      );
       removeButton.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -451,7 +461,7 @@
         const memory = document.createElement("span");
         memory.className = "card-memory";
         memory.textContent = `≈${Math.max(1, Math.round(card.memoryBytes / 1048576))} MB`;
-        memory.title = "a lap utolsó munkakészlete fagyasztáskor";
+        memory.title = t("a lap utolsó munkakészlete fagyasztáskor");
         meta.append(memory);
       }
       meta.append(noteButton, badge, removeButton);
@@ -489,7 +499,7 @@
       addTag.type = "button";
       addTag.className = "tag-add";
       addTag.textContent = t("＋címke");
-      addTag.title = "Címke hozzáadása";
+      addTag.title = t("Címke hozzáadása");
       addTag.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();

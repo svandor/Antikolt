@@ -112,6 +112,37 @@ const EN = {
     "warning memory pressure: the page is above the warn band",
   "memória-takarékos: a lap túllépi a büdzsét (kattintás: elrejtés)":
     "memory-saving: the page exceeds the budget (click to hide)",
+  "ismeretlen": "unknown",
+  "Munkaterület törlése (csak ha üres)": "Delete workspace (only if empty)",
+  "Enter: mentés · Esc: mégse": "Enter: save · Esc: cancel",
+  "a híd nem tud írni (nincs motor)": "the bridge cannot write (no engine)",
+  "Szűrő törlése": "Clear filter",
+  "Konténer törlése (csak ha üres)": "Delete container (only if empty)",
+  "Proxy-mód": "Proxy mode",
+  "rendszer": "system",
+  "közvetlen (nincs proxy)": "direct (no proxy)",
+  "fix proxy": "fixed proxy",
+  "Proxy-host": "Proxy host",
+  "Proxy-port": "Proxy port",
+  "Proxy-bypass": "Proxy bypass",
+  "Engedélyek": "Permissions",
+  "Áthelyezés és törlés": "Move and delete",
+  "Hely": "Location",
+  "Értesítések": "Notifications",
+  "Vágólap": "Clipboard",
+  "MIDI": "MIDI",
+  "Kamera": "Camera",
+  "Mikrofon": "Microphone",
+  "Egérzár": "Pointer lock",
+  "Billentyűzár": "Keyboard lock",
+  "Tétlenség": "Idle detection",
+  "Helyi betűk": "Local fonts",
+  "Tárhely": "Storage access",
+  "Fájlrendszer": "File system access",
+  "Többszörös letöltés": "Multiple downloads",
+  "Protokoll-kezelő": "Protocol handler",
+  "Érzékelők": "Sensors",
+  "Média (kamera + mikrofon)": "Media (camera + microphone)",
 };
 const pageLanguage = () => document.documentElement.dataset.language || "hu";
 const t = (hu) => (pageLanguage() === "en" && EN[hu] ? EN[hu] : hu);
@@ -247,7 +278,7 @@ function safeDomain(url) {
   try {
     return new URL(url).host.replace(/^www\./, "");
   } catch {
-    return "ismeretlen";
+    return t("ismeretlen");
   }
 }
 
@@ -1031,8 +1062,11 @@ class HomePage {
       remove.type = "button";
       remove.className = "ws-remove";
       remove.dataset.workspace = workspace.id;
-      remove.setAttribute("aria-label", `${workspace.name} törlése`);
-      remove.title = "Munkaterület törlése (csak ha üres)";
+      remove.setAttribute(
+        "aria-label",
+        pageLanguage() === "en" ? `Delete ${workspace.name}` : `${workspace.name} törlése`,
+      );
+      remove.title = t("Munkaterület törlése (csak ha üres)");
       remove.textContent = "×";
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -1054,7 +1088,7 @@ class HomePage {
       input.setAttribute("aria-label", input.placeholder);
       const confirm = document.createElement("span");
       confirm.className = "ws-editor-hint";
-      confirm.textContent = "Enter: mentés · Esc: mégse";
+      confirm.textContent = t("Enter: mentés · Esc: mégse");
       form.append(input, confirm);
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -1124,7 +1158,7 @@ class HomePage {
       return;
     }
     if (typeof this.bridge?.workspaces?.upsert !== "function") {
-      this.lastWorkspaceError = "a híd nem tud írni (nincs motor)";
+      this.lastWorkspaceError = t("a híd nem tud írni (nincs motor)");
       this.workspaceEdit = null;
       this.renderWorkspaces();
       return;
@@ -1144,7 +1178,7 @@ class HomePage {
 
   async deleteWorkspace(id) {
     if (typeof this.bridge?.workspaces?.delete !== "function") {
-      this.lastWorkspaceError = "a híd nem tud írni (nincs motor)";
+      this.lastWorkspaceError = t("a híd nem tud írni (nincs motor)");
       this.renderWorkspaces();
       return;
     }
@@ -1200,7 +1234,12 @@ class HomePage {
       pick.className = "legend-pick";
       pick.dataset.container = container.id;
       pick.setAttribute("aria-pressed", this.containerFilter === container.id ? "true" : "false");
-      pick.title = this.containerFilter === container.id ? "Szűrő törlése" : `${container.name} szűrése`;
+      pick.title =
+        this.containerFilter === container.id
+          ? t("Szűrő törlése")
+          : pageLanguage() === "en"
+            ? `Filter ${container.name}`
+            : `${container.name} szűrése`;
       const dot = document.createElement("span");
       dot.className = "dot";
       dot.style.background = container.color;
@@ -1221,8 +1260,11 @@ class HomePage {
       remove.type = "button";
       remove.className = "legend-remove";
       remove.dataset.container = container.id;
-      remove.setAttribute("aria-label", `${container.name} törlése`);
-      remove.title = "Konténer törlése (csak ha üres)";
+      remove.setAttribute(
+        "aria-label",
+        pageLanguage() === "en" ? `Delete ${container.name}` : `${container.name} törlése`,
+      );
+      remove.title = t("Konténer törlése (csak ha üres)");
       remove.textContent = "×";
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -1259,7 +1301,7 @@ class HomePage {
       const proxySelect = document.createElement("select");
       proxySelect.name = "proxyMode";
       proxySelect.className = "legend-proxy-mode";
-      proxySelect.setAttribute("aria-label", "Proxy-mód");
+      proxySelect.setAttribute("aria-label", t("Proxy-mód"));
       for (const [value, label] of [
         ["system", "rendszer"],
         ["direct", "közvetlen (nincs proxy)"],
@@ -1267,7 +1309,7 @@ class HomePage {
       ]) {
         const option = document.createElement("option");
         option.value = value;
-        option.textContent = label;
+        option.textContent = t(label);
         proxySelect.append(option);
       }
       proxySelect.value = existing.proxy_mode || "system";
@@ -1280,7 +1322,7 @@ class HomePage {
       host.name = "proxyHost";
       host.placeholder = "host";
       host.value = existing.proxy_host || "";
-      host.setAttribute("aria-label", "Proxy-host");
+      host.setAttribute("aria-label", t("Proxy-host"));
       const port = document.createElement("input");
       port.type = "number";
       port.name = "proxyPort";
@@ -1288,13 +1330,13 @@ class HomePage {
       port.min = "1";
       port.max = "65535";
       port.value = existing.proxy_port || "";
-      port.setAttribute("aria-label", "Proxy-port");
+      port.setAttribute("aria-label", t("Proxy-port"));
       const bypass = document.createElement("input");
       bypass.type = "text";
       bypass.name = "proxyBypass";
       bypass.placeholder = "bypass (;)";
       bypass.value = existing.proxy_bypass || "";
-      bypass.setAttribute("aria-label", "Proxy-bypass");
+      bypass.setAttribute("aria-label", t("Proxy-bypass"));
       fixed.append(host, port, bypass);
       proxySelect.addEventListener("change", () => {
         fixed.hidden = proxySelect.value !== "fixed";
@@ -1305,7 +1347,7 @@ class HomePage {
       const permissions = document.createElement("details");
       permissions.className = "legend-permissions";
       const summary = document.createElement("summary");
-      summary.textContent = "Engedélyek";
+      summary.textContent = t("Engedélyek");
       permissions.append(summary);
       const grid = document.createElement("span");
       grid.className = "legend-permissions-grid";
@@ -1316,14 +1358,14 @@ class HomePage {
         checkbox.type = "checkbox";
         checkbox.name = "perm:" + key;
         checkbox.checked = existing.permissions?.[key] === "allow";
-        row.append(checkbox, document.createTextNode(" " + label));
+        row.append(checkbox, document.createTextNode(" " + t(label)));
         grid.append(row);
       }
       permissions.append(grid);
 
       const confirm = document.createElement("span");
       confirm.className = "legend-editor-hint";
-      confirm.textContent = "Enter: mentés · Esc: mégse";
+      confirm.textContent = t("Enter: mentés · Esc: mégse");
       form.append(input, proxyLabel, proxySelect, fixed, permissions, confirm);
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -1372,7 +1414,7 @@ class HomePage {
       const confirm = document.createElement("button");
       confirm.type = "button";
       confirm.className = "legend-move-confirm";
-      confirm.textContent = "Áthelyezés és törlés";
+      confirm.textContent = t("Áthelyezés és törlés");
       confirm.addEventListener("click", () =>
         this.moveAndDeleteContainer(this.containerMove.id, select.value),
       );

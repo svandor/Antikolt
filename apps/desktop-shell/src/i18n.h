@@ -214,6 +214,75 @@ inline QString uiText(const QString& hu, const QString& lang) {
         map.insert(QStringLiteral("nincs könyvjelző a fájlban"), QStringLiteral("no bookmarks in the file"));
         map.insert(QStringLiteral("könyvjelzők importálva: %1 (kihagyva %2)"),
                    QStringLiteral("bookmarks imported: %1 (skipped %2)"));
+        // Session ledger dock + policy editor.
+        map.insert(QStringLiteral("kitakarva: %1"), QStringLiteral("cleaned up: %1"));
+        map.insert(QStringLiteral("kitakarva, de a napló nem (%1)"),
+                   QStringLiteral("cleaned up, but the ledger did not (%1)"));
+        map.insert(QStringLiteral("munkamenet-politika mentve"), QStringLiteral("session policy saved"));
+        map.insert(QStringLiteral("munkamenet-politika hiba: %1"),
+                   QStringLiteral("session policy error: %1"));
+        map.insert(QStringLiteral("a munkaterület-tábla nem érkezett meg: %1"),
+                   QStringLiteral("the workspace table did not arrive: %1"));
+        map.insert(QStringLiteral("Takarítás most"), QStringLiteral("Clean up now"));
+        map.insert(QStringLiteral("Állapot"), QStringLiteral("Status"));
+        map.insert(QStringLiteral("Politika"), QStringLiteral("Policy"));
+        map.insert(QStringLiteral("Sütik"), QStringLiteral("Cookies"));
+        map.insert(QStringLiteral("Lejárt"), QStringLiteral("Expired"));
+        map.insert(QStringLiteral("Törlésnél"), QStringLiteral("On wipe"));
+        map.insert(QStringLiteral("Lejárat (óra):"), QStringLiteral("Expiry (hours):"));
+        map.insert(QStringLiteral("App-zárnál törlés"), QStringLiteral("Wipe on app close"));
+        map.insert(QStringLiteral("lejárt"), QStringLiteral("expired"));
+        map.insert(QStringLiteral("%1 süti · %2 kB"), QStringLiteral("%1 cookies · %2 kB"));
+        map.insert(QStringLiteral(" · belépés"), QStringLiteral(" · sign-in"));
+        // Dialogs, buttons and tooltips.
+        map.insert(QStringLiteral("Mentés"), QStringLiteral("Save"));
+        map.insert(QStringLiteral("Profil mentése"), QStringLiteral("Save profile"));
+        map.insert(QStringLiteral("Oldal mentése PDF-be"), QStringLiteral("Save page as PDF"));
+        map.insert(QStringLiteral("Profil betöltése"), QStringLiteral("Load profile"));
+        map.insert(QStringLiteral("Egyéni kezdőlap szerkesztése"), QStringLiteral("Edit custom home page"));
+        map.insert(QStringLiteral("Egyéni kezdőlap visszaállítása"),
+                   QStringLiteral("Reset custom home page"));
+        map.insert(QStringLiteral("Létrehozza a kiinduló home.html-t (ha még nincs), és megnyitja a szerkesztőben."),
+                   QStringLiteral("Creates the starting home.html (if missing) and opens it in the editor."));
+        map.insert(QStringLiteral("Törli a profil home.html-jét, és visszatölti a beépített kártyarácskot."),
+                   QStringLiteral("Deletes the profile's home.html and restores the built-in card grid."));
+        map.insert(QStringLiteral("A profil egyetlen fájlba mentése vagy onnan betöltése (ADR-059)."),
+                   QStringLiteral("Save the profile to a single file or load it from one (ADR-059)."));
+        map.insert(QStringLiteral("Mentés másként…"), QStringLiteral("Save as…"));
+        map.insert(QStringLiteral("Betöltés…"), QStringLiteral("Load…"));
+        map.insert(QStringLiteral("Könyvjelzők importálása"), QStringLiteral("Import bookmarks"));
+        map.insert(QStringLiteral("HTML fájlok (*.html *.htm)"),
+                   QStringLiteral("HTML files (*.html *.htm)"));
+        map.insert(QStringLiteral("Az élő oldal mentése PDF-be (F7)."),
+                   QStringLiteral("Save the live page as PDF (F7)."));
+        map.insert(QStringLiteral("PDF mentése"), QStringLiteral("Save PDF"));
+        map.insert(QStringLiteral("Oldal mentése PDF-be…"), QStringLiteral("Save page as PDF…"));
+        map.insert(QStringLiteral("Oldalak sötétítése: %1\nA weboldal saját sötét témája nélkül is sötét lesz."),
+                   QStringLiteral("Darken pages: %1\nDark even without the website's own dark theme."));
+        map.insert(QStringLiteral("Oldalak sötétítése"), QStringLiteral("Darken pages"));
+        map.insert(QStringLiteral("Találatok száma"), QStringLiteral("Number of matches"));
+        map.insert(QStringLiteral("Keresés bezárása"), QStringLiteral("Close find"));
+        map.insert(QStringLiteral("Fő"), QStringLiteral("Main"));
+        map.insert(QStringLiteral("nincs találat"), QStringLiteral("no matches"));
+        // Theme and page-dark labels.
+        map.insert(QStringLiteral("Világos téma"), QStringLiteral("Light theme"));
+        map.insert(QStringLiteral("Szürke téma (alap)"), QStringLiteral("Grey theme (default)"));
+        map.insert(QStringLiteral("Sötét téma"), QStringLiteral("Dark theme"));
+        map.insert(QStringLiteral("AMOLED fekete téma"), QStringLiteral("AMOLED black theme"));
+        map.insert(QStringLiteral("Sötét (invertálás)"), QStringLiteral("Dark (inverted)"));
+        map.insert(QStringLiteral("Sötét szürke"), QStringLiteral("Dark grey"));
+        map.insert(QStringLiteral("Sötét meleg"), QStringLiteral("Dark warm"));
+        map.insert(QStringLiteral("Kikapcsolva"), QStringLiteral("Off"));
+        // Zoom / page-theme / dark-pages live and error variants (the no-live-surface forms already exist).
+        map.insert(QStringLiteral("nagyítás: %1%"), QStringLiteral("zoom: %1%"));
+        map.insert(QStringLiteral("nagyítás hiba: %1"), QStringLiteral("zoom error: %1"));
+        map.insert(QStringLiteral("oldal-téma: %1"), QStringLiteral("page theme: %1"));
+        map.insert(QStringLiteral("oldal-téma hiba: %1"), QStringLiteral("page theme error: %1"));
+        map.insert(QStringLiteral("sötét oldalak: %1"), QStringLiteral("dark pages: %1"));
+        map.insert(QStringLiteral("sötét oldalak hiba: %1"), QStringLiteral("dark pages error: %1"));
+        map.insert(QStringLiteral(", app-zárnál törlés"), QStringLiteral(", wipe on app close"));
+        map.insert(QStringLiteral("A böngésző a tálcán fut tovább. Megnyitás és kilépés: a tálcaikon menüje."),
+                   QStringLiteral("The browser keeps running in the tray. Open and quit: the tray icon menu."));
         return map;
     }();
     return en.value(hu, hu);

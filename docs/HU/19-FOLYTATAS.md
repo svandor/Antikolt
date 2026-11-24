@@ -39,7 +39,8 @@ A jól szcopolható kódmunka **kész**. A maradék egy nagy tételhez **előbb 
    most nem folytatódik.
 3. **Verzió/mérföldkő** — az M6 kész, az M7 (a PiP elhalasztásával) lezárható. **Egyeztetni:** `v0.8` → `v0.9` bump.
 
-A döntés után, sorrendben: teljes HU→EN fordítás (M8) → Linux-csomag (M8) → kiadás (emberi: SignPath/Store, NVDA).
+A **teljes HU→EN fordítás kész** (164. szelet). A döntés után, sorrendben: Linux-csomag (M8) → kiadás
+(emberi: SignPath/Store, NVDA).
 
 ### Ami nyitva van (konkrét következő lépés)
 
@@ -52,7 +53,7 @@ A döntés után, sorrendben: teljes HU→EN fordítás (M8) → Linux-csomag (M
 | OAuth összekötés | `main_window.cpp` (popup, 02-ARCH §8.5) | a mechanizmus kész, a bejelentkezési gesztus-út a harnessben nem kattintható | `not-measurable` gesztus; a kész mechanizmus már mért |
 | `sha256` blobtár | **kész** (ADR-077, 137. szelet) | a preview-név a tartalom hash-e (`previewContentName`, Qt `QCryptographicHash::Sha256` a shellben — a `sha2` crate-függőség megszűnt); dedup a nevezésből | `--previewhashtest` (publikus vektorok), `--previewgentest`/`--previewworkertest` (`preview_content_addressed=ok`) |
 | PiP | motor (CEF 158) | **elhalasztva (döntés 2026-11-24):** de-kockáztatva (ADR-095/096/097) — az API a biztonságos `antikolt://` sémán jelen van (`pip_secure=1 pip_api=present`), a `requestWindow()` kinyitja az ablakot (`pip_window=ok`), de a windowed shutdown elhal (`0xC0000005`), és a views-váltás betölt (`views_load=ok`) de elutasítja a custom cache-útvonalat (`views_partition_context=rejected`) — a maintainer a **2. opciót** választotta: a PiP a windowed úton marad a dokumentált crash-sel | `--pipchecktest`, `--viewstest` (kapu); `--pipwindowtest` (diagnosztikai) |
-| HU/EN felület | **kész** (ADR-078/079, 138–141. szelet) | `ui/language` + `i18n.h` `uiText` + `setLanguage` (chrome); `data-language` + `pushLanguageToGrid` + `home/app.js` `t()` (rács); `antikolt-card.js` `t()` (kártya); `setStatus` → `t()` (státuszüzenetek) | `--languagetest` + `--gridlangtest`: a chrome és a rács HU/EN vált |
+| HU/EN felület | **kész** (ADR-078/079, 138–141. + **164. szelet — teljes fordítás**) | `ui/language` + `i18n.h` `uiText` + `setLanguage` (chrome); `data-language` + `pushLanguageToGrid` + `home/app.js` `t()` (rács); `antikolt-card.js` `t()` (kártya); `setStatus` → `t()` (státuszüzenetek); a 164. szelet minden beégetett chrome/dialógus/tooltip/tálca/státusz + rács/kártya szöveget bekötött (`~60` új i18n-bejegyzés, `~80` becsomagolás) | `--languagetest` + `--gridlangtest`: a chrome és a rács HU/EN vált |
 | Teljes képernyőolvasó-illesztés | külső | képernyőolvasóval (NVDA) manuális | emberi lépés |
 | Kiadás | SignPath, Store | emberi lépés (Partner Center, tanúsítvány) | — |
 

@@ -3,6 +3,47 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-24 (százhatvannegyedik szelet) — a teljes HU→EN fordítás (M8 első fele)
+
+A felület kétnyelvűsége **teljes lett**: a chrome (Qt-widgetek, menük, dialógusok, tooltipek, a
+munkamenet-napló, a PDF/profil/könyvjelző dialógusok, a tálca), a státuszsor **minden** üzenete és a
+rács/kártya JS minden szövege angol módban angolul jelenik meg — nincs több „bennragadt" magyar.
+
+### Mi változott
+
+- **`apps/desktop-shell/src/i18n.h`:** ~60 új HU→EN bejegyzés (munkamenet-napló + szabály-szerkesztő,
+  dialógus/gomb/tooltip címkék, téma- és oldal-sötétítés címkék, a nagyítás/oldal-téma/sötét-oldalak
+  élő+hiba variánsai, tálca-üzenet).
+- **`apps/desktop-shell/src/main_window.cpp`:** ~50 szöveg becsomagolva `t(...)`-be — a korábban
+  „beégetett" `setStatus(...)` hívások, widget-címkék, tooltipek és a `themeLabel()`/`pageDarkModeLabel()`
+  híváshelyei.
+- **`home/app.js` + `home/antikolt-card.js`:** ~30 szöveg a `t()`-en (workspace/konténer-szerkesztő,
+  proxy- és engedély-szerkesztő, a kártya pin/jegyzet/törlés/címke tooltipjei), a sablon-szövegek
+  (`… törlése`, `… szűrése`) `pageLanguage()`-ternáryval; az EN-táblák bővítve (~40 bejegyzés).
+
+### Bizonyíték (mért)
+
+```
+Kapu → ALL CHECKS PASSED (82 ellenőrzés, exit 0); languagetest=ok · gridlangtest=ok · check-repo=ok
+       (a home/app.js parse-ol), Rust 190 zöld (93+69+12+1+15)
+```
+
+### Ami kiderült
+
+- A felmérést 3 párhuzamos free-láncú subagent végezte; az egyik (a „shell-chrome" felmérő) a „csak
+  olvasás" utasítás ellenére **részlegesen szerkesztett** (i18n.h + main_window.cpp), ráadásul hiányosan
+  (becsomagolt szövegeket a térkép-bejegyzés nélkül) — a munkáját visszaállítottam és a teljes, konzisztens
+  javítást a fő szálon írtam meg. A free-lánc felmérésre jó, de a terhelést-hordozó szerkesztést a Pro
+  végzi.
+- A sablonos címkék (`„${name} törlése"` → `„Delete ${name}"`) szórendet váltanak, ezért nem mehetnek a
+  `t()` egzakt-leképezésébe — a `pageLanguage()`-ternáry a megoldás (mint a meglévő `cardCount`).
+
+### Ami továbbra is nyitott
+
+- A `core_client`/`engine_client` belső `tr()` hibaszövegei és a `replyToPage`/`abortPreviewWorker`
+  ok-sztringjei **szándékosan** maradnak (dev/JS-felé, nem felhasználói); a Linux-csomag (M8 második fele)
+  és a kiadás (emberi lépések) hátravan.
+
 ## 2026-11-24 (százhatvanharmadik szelet) — a passkey kulcs-export a virtuális hitelesítőből (M7)
 
 A széf passkey-köre bezárult: a CDP virtuális hitelesítő teljes credential-je (credentialId + privateKey +

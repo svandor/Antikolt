@@ -389,7 +389,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         QTimer::singleShot(1200, this, &MainWindow::schedulePreviewWork);
     });
 
-    setStatus(QStringLiteral("motor: nincs elindítva · kártyák: 0"));
+    setStatus(t(QStringLiteral("motor: nincs elindítva · kártyák: 0")));
     applyTheme(QStringLiteral("grey"));
 
     // The icon in the notification area: the same picture the shortcut carries, alive exactly as long as
@@ -535,18 +535,18 @@ void MainWindow::hideToTray() {
         // it for good. Repeating it on every close would be a nag, not an explanation.
         tray_hint_shown_ = true;
         tray_->showMessage(QStringLiteral("Antikolt"),
-                           QStringLiteral("A böngésző a tálcán fut tovább. Megnyitás és kilépés: a "
-                                          "tálcaikon menüje."),
+                           t(QStringLiteral("A böngésző a tálcán fut tovább. Megnyitás és kilépés: a "
+                                            "tálcaikon menüje.")),
                            QSystemTrayIcon::Information, 5000);
     }
-    setStatus(QStringLiteral("a tálcán fut · megnyitás: a tálcaikon"));
+    setStatus(t(QStringLiteral("a tálcán fut · megnyitás: a tálcaikon")));
 }
 
 void MainWindow::restoreFromTray() {
     showNormal();
     raise();
     activateWindow();
-    setStatus(QStringLiteral("előhozva a tálcáról"));
+    setStatus(t(QStringLiteral("előhozva a tálcáról")));
 }
 
 void MainWindow::quitFromTray() {
@@ -591,12 +591,12 @@ void MainWindow::onIdleTimeout() {
     // The documented opt-out, and the user asked for it explicitly: a pinned card stays alive. The
     // clock keeps running, so unpinning it (or pinning a different card) needs no extra bookkeeping.
     if (live_card_pinned_) {
-        setStatus(QStringLiteral("kitűzött kártya — a hibernálás kimarad"));
+        setStatus(t(QStringLiteral("kitűzött kártya — a hibernálás kimarad")));
         armIdleTimer();
         return;
     }
     if (popup_open_) {
-        setStatus(QStringLiteral("bejelentkezés folyamatban — a hibernálás vár"));
+        setStatus(t(QStringLiteral("bejelentkezés folyamatban — a hibernálás vár")));
         armIdleTimer();
         return;
     }
@@ -609,11 +609,11 @@ void MainWindow::onIdleTimeout() {
             hibernating_ = false;
             const QString value = reply.value(QStringLiteral("value")).toString();
             if (error.isEmpty() && value == QStringLiteral("playing")) {
-                setStatus(QStringLiteral("a kártya médiát játszik — a hibernálás vár"));
+                setStatus(t(QStringLiteral("a kártya médiát játszik — a hibernálás vár")));
                 armIdleTimer();
                 return;
             }
-            setStatus(QStringLiteral("tétlenség: a kártya lemezre megy"));
+            setStatus(t(QStringLiteral("tétlenség: a kártya lemezre megy")));
             return_to_grid_ = true;
             freezeCard();
         });
@@ -648,7 +648,7 @@ void MainWindow::checkMemoryPressure() {
         if (memory_hard_bytes_ > 0 && used >= memory_hard_bytes_) {
             // Hard: pause background previews, then hibernate the card itself when one is live.
             preview_paused_until_ms_ = QDateTime::currentMSecsSinceEpoch() + 300000;
-            setStatus(QStringLiteral("memória-nyomás: a kemény sáv fölött"));
+            setStatus(t(QStringLiteral("memória-nyomás: a kemény sáv fölött")));
             if (surface_ != home_surface_) {
                 onIdleTimeout();
             }
@@ -1058,8 +1058,8 @@ void MainWindow::wireEngine(EngineClient* engine) {
                             container, origin,
                             [this, origin](const QJsonObject&, const QString& close_error) {
                                 setStatus(close_error.isEmpty()
-                                              ? QStringLiteral("kitakarva: %1").arg(origin)
-                                              : QStringLiteral("kitakarva, de a napló nem (%1)")
+                                              ? t(QStringLiteral("kitakarva: %1")).arg(origin)
+                                              : t(QStringLiteral("kitakarva, de a napló nem (%1)"))
                                                     .arg(close_error));
                                 if (sessions_dock_ != nullptr && sessions_dock_->isVisible()) {
                                     refreshSessions();
@@ -1085,7 +1085,7 @@ void MainWindow::wireEngine(EngineClient* engine) {
             });
     connect(engine, &EngineClient::popupClosed, this, [this](qint64) {
         popup_open_ = false;
-        setStatus(QStringLiteral("a bejelentkezési ablak bezárult"));
+        setStatus(t(QStringLiteral("a bejelentkezési ablak bezárult")));
         armIdleTimer();
     });
 }
@@ -1174,7 +1174,7 @@ void MainWindow::cleanupCardPartition(const QString& url, const QString& contain
 void MainWindow::startEngine() {
     const QString enginePath = engineExecutable();
     if (enginePath.isEmpty()) {
-        setStatus(QStringLiteral("nem találom a motorházat (állítsd be az ANTIKOLT_ENGINE változót)"));
+        setStatus(t(QStringLiteral("nem találom a motorházat (állítsd be az ANTIKOLT_ENGINE változót)")));
         return;
     }
 
@@ -1213,7 +1213,7 @@ void MainWindow::startEngine() {
         const QString coreData = coreDataDir();
         QDir().mkpath(coreData);
         if (corePath.isEmpty()) {
-            setStatus(QStringLiteral("a mag nem található (ANTIKOLT_CORE) — a rács egyelőre mintaadatot mutat"));
+            setStatus(t(QStringLiteral("a mag nem található (ANTIKOLT_CORE) — a rács egyelőre mintaadatot mutat")));
         } else if (core_->start(corePath, coreData)) {
             core_->handshake();
         }
@@ -1276,7 +1276,7 @@ void MainWindow::ensureSurface() {
         policy.container = pending_container_;
     }
     if (!card_->attach(live_engine_, partition, policy)) {
-        setStatus(QStringLiteral("a kártya nem tudott felületet kérni a motortól"));
+        setStatus(t(QStringLiteral("a kártya nem tudott felületet kérni a motortól")));
     }
 }
 
@@ -1288,11 +1288,11 @@ void MainWindow::openCard(const QString& url, const QString& title) {
     }
     rememberScroll([this, url, title] {
     if (url.isEmpty()) {
-        setStatus(QStringLiteral("a kártyának nincs címe"));
+        setStatus(t(QStringLiteral("a kártyának nincs címe")));
         return;
     }
     if (!engine_->isRunning()) {
-        setStatus(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot"));
+        setStatus(t(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot")));
         return;
     }
     pending_url_ = url;
@@ -1742,7 +1742,7 @@ void MainWindow::pushCardsToGrid(qint64 surface) {
                                               const QString& spaces_error) {
             if (!spaces_error.isEmpty()) {
                 setStatus(
-                    QStringLiteral("a munkaterület-tábla nem érkezett meg: %1").arg(spaces_error));
+                    t(QStringLiteral("a munkaterület-tábla nem érkezett meg: %1")).arg(spaces_error));
                 return;
             }
             QJsonObject spaces_payload;
@@ -1760,7 +1760,7 @@ void MainWindow::pushCardsToGrid(qint64 surface) {
 void MainWindow::loadHome() {
     rememberScroll([this] {
     if (!engine_->isRunning()) {
-        setStatus(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot"));
+        setStatus(t(QStringLiteral("a motor még nem fut — nyomd meg a „Motor indítása” gombot")));
         return;
     }
     // Going home means leaving whatever card is open, so no pending URL and no live card id may survive
@@ -1851,7 +1851,7 @@ void MainWindow::showSessions() {
         sessions_dock_->setObjectName(QStringLiteral("sessions"));
         auto* panel = new QWidget(sessions_dock_);
         auto* layout = new QVBoxLayout(panel);
-        auto* cleanup = new QPushButton(QStringLiteral("Takarítás most"), panel);
+        auto* cleanup = new QPushButton(t(QStringLiteral("Takarítás most")), panel);
         cleanup->setToolTip(QStringLiteral(
             "A mag által esedékesnek jelölt originök törlése (ADR-033). Ami épp nyitva van, azonnal; a "
             "többi a kártya következő megnyitásakor."));
@@ -1859,8 +1859,8 @@ void MainWindow::showSessions() {
         layout->addWidget(cleanup);
         sessions_table_ = new QTableWidget(0, 6, panel);
         sessions_table_->setHorizontalHeaderLabels(
-            {QStringLiteral("Origin"), QStringLiteral("Állapot"), QStringLiteral("Politika"),
-             QStringLiteral("Sütik"), QStringLiteral("Lejárt"), QStringLiteral("Törlésnél")});
+            {QStringLiteral("Origin"), t(QStringLiteral("Állapot")), t(QStringLiteral("Politika")),
+             t(QStringLiteral("Sütik")), t(QStringLiteral("Lejárt")), t(QStringLiteral("Törlésnél"))});
         sessions_table_->verticalHeader()->setVisible(false);
         sessions_table_->horizontalHeader()->setStretchLastSection(true);
         sessions_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -1870,14 +1870,14 @@ void MainWindow::showSessions() {
         auto* rules = new QWidget(panel);
         auto* rules_layout = new QHBoxLayout(rules);
         rules_layout->setContentsMargins(0, 0, 0, 0);
-        rules_layout->addWidget(new QLabel(QStringLiteral("Lejárat (óra):"), rules));
+        rules_layout->addWidget(new QLabel(t(QStringLiteral("Lejárat (óra):")), rules));
         sessions_ttl_ = new QSpinBox(rules);
         sessions_ttl_->setRange(1, 720);
         sessions_ttl_->setValue(24);
         rules_layout->addWidget(sessions_ttl_);
-        sessions_lock_wipe_ = new QCheckBox(QStringLiteral("App-zárnál törlés"), rules);
+        sessions_lock_wipe_ = new QCheckBox(t(QStringLiteral("App-zárnál törlés")), rules);
         rules_layout->addWidget(sessions_lock_wipe_);
-        auto* save = new QPushButton(QStringLiteral("Mentés"), rules);
+        auto* save = new QPushButton(t(QStringLiteral("Mentés")), rules);
         save->setObjectName(QStringLiteral("sessionRulesSave"));
         connect(save, &QPushButton::clicked, this, &MainWindow::saveSessionRules);
         rules_layout->addWidget(save);
@@ -1894,7 +1894,7 @@ void MainWindow::showSessions() {
 
 void MainWindow::saveSessionRules() {
     if (core_ == nullptr || !core_->isRunning()) {
-        setStatus(QStringLiteral("a mag nem fut, a szabályok nem menthetők"));
+        setStatus(t(QStringLiteral("a mag nem fut, a szabályok nem menthetők")));
         return;
     }
     const qint64 hours = (sessions_ttl_ != nullptr) ? sessions_ttl_->value() : 24;
@@ -1914,7 +1914,7 @@ void MainWindow::saveSessionRules() {
                       .arg(static_cast<qint64>(stored.value(QStringLiteral("ttl_ms")).toDouble() /
                                                3600000.0))
                       .arg(stored.value(QStringLiteral("wipe_on_app_lock")).toBool()
-                               ? QStringLiteral(", app-zárnál törlés")
+                               ? t(QStringLiteral(", app-zárnál törlés"))
                                : QString()));
         refreshSessions();
     });
@@ -1931,8 +1931,8 @@ void MainWindow::setZoomPercent(int percent) {
         return;
     }
     live_engine_->setZoom(surface_, clamped, [this, clamped](const QJsonObject&, const QString& error) {
-        setStatus(error.isEmpty() ? QStringLiteral("nagyítás: %1%").arg(clamped)
-                                  : QStringLiteral("nagyítás hiba: %1").arg(error));
+        setStatus(error.isEmpty() ? t(QStringLiteral("nagyítás: %1%")).arg(clamped)
+                                  : t(QStringLiteral("nagyítás hiba: %1")).arg(error));
     });
 }
 
@@ -1947,8 +1947,8 @@ void MainWindow::setPageMedia(const QString& media) {
         return;
     }
     live_engine_->setMedia(surface_, media, [this, media](const QJsonObject&, const QString& error) {
-        setStatus(error.isEmpty() ? QStringLiteral("oldal-téma: %1").arg(media)
-                                  : QStringLiteral("oldal-téma hiba: %1").arg(error));
+        setStatus(error.isEmpty() ? t(QStringLiteral("oldal-téma: %1")).arg(media)
+                                  : t(QStringLiteral("oldal-téma hiba: %1")).arg(error));
     });
 }
 
@@ -1977,8 +1977,8 @@ void MainWindow::setPageDarkMode(const QString& mode) {
         // The button's face and tooltip are the state: the mode is visible without opening the menu.
         page_dark_button_->setIcon(PageDarkIcon(page_dark_mode_));
         page_dark_button_->setToolTip(
-            QStringLiteral("Oldalak sötétítése: %1\nA weboldal saját sötét témája nélkül is sötét lesz.")
-                .arg(pageDarkModeLabel(page_dark_mode_)));
+            t(QStringLiteral("Oldalak sötétítése: %1\nA weboldal saját sötét témája nélkül is sötét lesz."))
+                .arg(t(pageDarkModeLabel(page_dark_mode_))));
         if (page_dark_button_->menu() != nullptr) {
             for (QAction* action : page_dark_button_->menu()->actions()) {
                 action->setChecked(action->objectName() ==
@@ -1988,15 +1988,15 @@ void MainWindow::setPageDarkMode(const QString& mode) {
     }
     if (live_engine_ == nullptr || !live_engine_->isRunning() || surface_ == 0) {
         setStatus(t(QStringLiteral("sötét oldalak: %1 (nincs élő felület)"))
-                      .arg(pageDarkModeLabel(page_dark_mode_)));
+                      .arg(t(pageDarkModeLabel(page_dark_mode_))));
         return;
     }
     live_engine_->setPageDarkMode(surface_, page_dark_mode_,
                                   [this](const QJsonObject&, const QString& error) {
                                  setStatus(error.isEmpty()
-                                               ? QStringLiteral("sötét oldalak: %1").arg(
-                                                     pageDarkModeLabel(page_dark_mode_))
-                                               : QStringLiteral("sötét oldalak hiba: %1").arg(error));
+                                               ? t(QStringLiteral("sötét oldalak: %1")).arg(
+                                                     t(pageDarkModeLabel(page_dark_mode_)))
+                                               : t(QStringLiteral("sötét oldalak hiba: %1")).arg(error));
                              });
 }
 
@@ -2445,7 +2445,7 @@ void MainWindow::refreshSessions() {
     }
     if (core_ == nullptr || !core_->isRunning()) {
         sessions_table_->setRowCount(0);
-        setStatus(QStringLiteral("a munkamenet-naplóhoz előbb indítsd el a magot"));
+        setStatus(t(QStringLiteral("a munkamenet-naplóhoz előbb indítsd el a magot")));
         return;
     }
     core_->sessionList([this](const QJsonObject& listed, const QString& error) {
@@ -2529,18 +2529,18 @@ void MainWindow::refreshSessions() {
                     sessions_table_->setItem(
                         row, 4,
                         new QTableWidgetItem(due_origins.contains(origin)
-                                                 ? QStringLiteral("lejárt")
+                                                 ? t(QStringLiteral("lejárt"))
                                                  : QStringLiteral("—")));
                     // What a cleanup would remove for this row, as the core measured it (41st slice): the
                     // amount on one line, and the friction it costs in one word.
                     const QJsonObject size = entry.value(QStringLiteral("size")).toObject();
                     const double bytes = size.value(QStringLiteral("bytes")).toDouble();
                     QString loss =
-                        QStringLiteral("%1 süti · %2 kB")
+                        t(QStringLiteral("%1 süti · %2 kB"))
                             .arg(size.value(QStringLiteral("cookies")).toInt())
                             .arg(QString::number(bytes / 1024.0, 'f', 1));
                     if (entry.value(QStringLiteral("loses_login")).toBool()) {
-                        loss += QStringLiteral(" · belépés");
+                        loss += t(QStringLiteral(" · belépés"));
                     }
                     sessions_table_->setItem(row, 5, new QTableWidgetItem(loss));
                     ++row;
@@ -2588,7 +2588,7 @@ int MainWindow::sessionPanelRowCount() const {
 
 void MainWindow::cleanupSessions() {
     if (core_ == nullptr || !core_->isRunning()) {
-        setStatus(QStringLiteral("a takarításhoz előbb indítsd el a magot"));
+        setStatus(t(QStringLiteral("a takarításhoz előbb indítsd el a magot")));
         return;
     }
     // The orphaned previews are housekeeping, not policy: they are removed whether or not anything is due.
@@ -2694,7 +2694,7 @@ void MainWindow::exportProfile() {
     }
     const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     const QString path = QFileDialog::getSaveFileName(
-        this, QStringLiteral("Profil mentése"),
+        this, t(QStringLiteral("Profil mentése")),
         documents + QStringLiteral("/antikolt-profile.json"),
         QStringLiteral("Antikolt profil (*.json)"));
     if (path.isEmpty()) {
@@ -2717,12 +2717,12 @@ void MainWindow::printToPdf() {
     // the browser's own chrome, not a page.
     if (surface_ == 0 || surface_ == home_surface_ || live_engine_ == nullptr ||
         !live_engine_->isRunning()) {
-        setStatus(QStringLiteral("nincs élő kártya — nincs mit menteni"));
+        setStatus(t(QStringLiteral("nincs élő kártya — nincs mit menteni")));
         return;
     }
     const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     const QString path = QFileDialog::getSaveFileName(
-        this, QStringLiteral("Oldal mentése PDF-be"),
+        this, t(QStringLiteral("Oldal mentése PDF-be")),
         documents + QStringLiteral("/antikolt-page.pdf"),
         QStringLiteral("PDF (*.pdf)"));
     if (path.isEmpty()) {
@@ -2792,19 +2792,19 @@ void MainWindow::onFindResult(qint64 surface, int count, int active) {
     }
     find_last_count_ = count;
     if (find_status_ != nullptr) {
-        find_status_->setText(count == 0 ? QStringLiteral("nincs találat")
+        find_status_->setText(count == 0 ? t(QStringLiteral("nincs találat"))
                                          : QStringLiteral("%1 / %2").arg(active).arg(count));
     }
 }
 
 void MainWindow::importProfile() {
     if (core_ == nullptr || !core_->isRunning()) {
-        setStatus(QStringLiteral("a mag nem fut — nincs hová betölteni"));
+        setStatus(t(QStringLiteral("a mag nem fut — nincs hová betölteni")));
         return;
     }
     const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("Profil betöltése"),
+        this, t(QStringLiteral("Profil betöltése")),
         documents, QStringLiteral("Antikolt profil (*.json)"));
     if (path.isEmpty()) {
         return;
@@ -2840,7 +2840,7 @@ void MainWindow::importBookmarksFromPath(const QString& path) {
     const QString html = QString::fromUtf8(file.readAll());
     const QVector<antikolt::BookmarkEntry> entries = antikolt::parseBookmarksHtml(html);
     if (entries.isEmpty()) {
-        setStatus(QStringLiteral("nincs könyvjelző a fájlban"));
+        setStatus(t(QStringLiteral("nincs könyvjelző a fájlban")));
         return;
     }
     // A re-import must not duplicate the grid: skip URLs that already live in the store, then upsert the rest
@@ -3096,26 +3096,26 @@ void MainWindow::showSettings() {
         language_layout->addWidget(prefs_language_);
         layout->addWidget(language);
 
-        auto* save = new QPushButton(QStringLiteral("Mentés"), panel);
+        auto* save = new QPushButton(t(QStringLiteral("Mentés")), panel);
         save->setObjectName(QStringLiteral("prefsSave"));
         connect(save, &QPushButton::clicked, this, &MainWindow::saveUserPrefs);
         layout->addWidget(save);
 
         // The editable home (item 3): a user-authored home.html overrides the grid. One button brings the built-in
         // grid back, because a broken custom page must never be a dead end.
-        auto* home_edit = new QPushButton(QStringLiteral("Egyéni kezdőlap szerkesztése"), panel);
+        auto* home_edit = new QPushButton(t(QStringLiteral("Egyéni kezdőlap szerkesztése")), panel);
         home_edit->setObjectName(QStringLiteral("editCustomHome"));
-        home_edit->setToolTip(QStringLiteral(
-            "Létrehozza a kiinduló home.html-t (ha még nincs), és megnyitja a szerkesztőben."));
+        home_edit->setToolTip(t(QStringLiteral(
+            "Létrehozza a kiinduló home.html-t (ha még nincs), és megnyitja a szerkesztőben.")));
         connect(home_edit, &QPushButton::clicked, this, [this] {
             createCustomHomeTemplate();
             QDesktopServices::openUrl(QUrl::fromLocalFile(coreDataDir() + QStringLiteral("/home.html")));
         });
         layout->addWidget(home_edit);
-        auto* home_reset = new QPushButton(QStringLiteral("Egyéni kezdőlap visszaállítása"), panel);
+        auto* home_reset = new QPushButton(t(QStringLiteral("Egyéni kezdőlap visszaállítása")), panel);
         home_reset->setObjectName(QStringLiteral("resetCustomHome"));
-        home_reset->setToolTip(QStringLiteral(
-            "Törli a profil home.html-jét, és visszatölti a beépített kártyarácskot."));
+        home_reset->setToolTip(t(QStringLiteral(
+            "Törli a profil home.html-jét, és visszatölti a beépített kártyarácskot.")));
         connect(home_reset, &QPushButton::clicked, this, &MainWindow::resetCustomHome);
         layout->addWidget(home_reset);
         layout->addStretch(1);
@@ -3161,7 +3161,7 @@ void MainWindow::fillSettingsDock(const QJsonObject& prefs) {
 
 void MainWindow::saveUserPrefs() {
     if (core_ == nullptr || !core_->isRunning()) {
-        setStatus(QStringLiteral("a mag nem fut, a beállítások nem menthetők"));
+        setStatus(t(QStringLiteral("a mag nem fut, a beállítások nem menthetők")));
         return;
     }
     QJsonObject prefs;
@@ -3182,7 +3182,7 @@ void MainWindow::saveUserPrefs() {
             setStatus(t(QStringLiteral("a beállítások nem mentődtek: %1")).arg(error));
             return;
         }
-        setStatus(QStringLiteral("beállítások mentve"));
+        setStatus(t(QStringLiteral("beállítások mentve")));
         // Re-read what the core accepted: the cache (budget, hibernation window) follows the stored row.
         refreshUserPrefs();
     });
@@ -3193,7 +3193,7 @@ void MainWindow::resetCustomHome() {
     if (QFile::exists(home)) {
         QFile::remove(home);
     }
-    setStatus(QStringLiteral("az egyéni kezdőlap visszaállítva"));
+    setStatus(t(QStringLiteral("az egyéni kezdőlap visszaállítva")));
     // Reload the grid: without `home.html`, `homePageUrl()` serves the built-in `home/index.html` again.
     loadHome();
 }
@@ -3273,7 +3273,7 @@ void MainWindow::createCustomHomeTemplate() {
 
 void MainWindow::captureGrid() {
     if (!engine_->isRunning() || home_surface_ == 0) {
-        setStatus(QStringLiteral("nincs mit raszterizálni"));
+        setStatus(t(QStringLiteral("nincs mit raszterizálni")));
         return;
     }
     // `capture` writes into `screenshots/`; the raster home wants one stable file under the profile.
@@ -3328,7 +3328,7 @@ void MainWindow::enterRasterMode() {
                              if (card_stack_ != nullptr) {
                                  card_stack_->setCurrentWidget(raster_label_);
                              }
-                             setStatus(QStringLiteral("raszter-kezdőlap (a motor leállítva)"));
+                             setStatus(t(QStringLiteral("raszter-kezdőlap (a motor leállítva)")));
                          });
     });
 }
@@ -3430,7 +3430,7 @@ QString MainWindow::cardAtRasterPoint(qreal x, qreal y) const {
 }
 
 void MainWindow::buildToolBar() {
-    auto* toolbar = addToolBar(QStringLiteral("Fő"));
+    auto* toolbar = addToolBar(t(QStringLiteral("Fő")));
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
 
@@ -3454,13 +3454,13 @@ void MainWindow::buildToolBar() {
     profile_button->setAutoRaise(true);
     profile_button->setCursor(Qt::PointingHandCursor);
     profile_button->setToolTip(
-        QStringLiteral("A profil egyetlen fájlba mentése vagy onnan betöltése (ADR-059)."));
+        t(QStringLiteral("A profil egyetlen fájlba mentése vagy onnan betöltése (ADR-059).")));
     profile_button->setAccessibleName(QStringLiteral("Profil"));
     auto* profile_menu = new QMenu(profile_button);
-    auto* export_action = profile_menu->addAction(QStringLiteral("Mentés másként…"));
+    auto* export_action = profile_menu->addAction(t(QStringLiteral("Mentés másként…")));
     export_action->setObjectName(QStringLiteral("profileExportAction"));
     connect(export_action, &QAction::triggered, this, &MainWindow::exportProfile);
-    auto* import_action = profile_menu->addAction(QStringLiteral("Betöltés…"));
+    auto* import_action = profile_menu->addAction(t(QStringLiteral("Betöltés…")));
     import_action->setObjectName(QStringLiteral("profileImportAction"));
     connect(import_action, &QAction::triggered, this, &MainWindow::importProfile);
     // Bookmark import (M7): the shell owns the native file dialog; `--bookmarkimporttest` measures the parse +
@@ -3473,8 +3473,8 @@ void MainWindow::buildToolBar() {
             return;
         }
         const QString path = QFileDialog::getOpenFileName(
-            this, QStringLiteral("Könyvjelzők importálása"), QString(),
-            QStringLiteral("HTML fájlok (*.html *.htm)"));
+            this, t(QStringLiteral("Könyvjelzők importálása")), QString(),
+            t(QStringLiteral("HTML fájlok (*.html *.htm)")));
         if (!path.isEmpty()) {
             importBookmarksFromPath(path);
         }
@@ -3490,10 +3490,10 @@ void MainWindow::buildToolBar() {
     print_button->setPopupMode(QToolButton::InstantPopup);
     print_button->setAutoRaise(true);
     print_button->setCursor(Qt::PointingHandCursor);
-    print_button->setToolTip(QStringLiteral("Az élő oldal mentése PDF-be (F7)."));
-    print_button->setAccessibleName(QStringLiteral("PDF mentése"));
+    print_button->setToolTip(t(QStringLiteral("Az élő oldal mentése PDF-be (F7).")));
+    print_button->setAccessibleName(t(QStringLiteral("PDF mentése")));
     auto* print_menu = new QMenu(print_button);
-    auto* save_action = print_menu->addAction(QStringLiteral("Oldal mentése PDF-be…"));
+    auto* save_action = print_menu->addAction(t(QStringLiteral("Oldal mentése PDF-be…")));
     save_action->setObjectName(QStringLiteral("printSaveAction"));
     connect(save_action, &QAction::triggered, this, &MainWindow::printToPdf);
     print_button->setMenu(print_menu);
@@ -3532,7 +3532,7 @@ void MainWindow::buildToolBar() {
     page_dark_button_->setCursor(Qt::PointingHandCursor);
     page_dark_button_->setMenu(new QMenu(page_dark_button_));
     for (const QString& mode : pageDarkModes()) {
-        auto* action = page_dark_button_->menu()->addAction(pageDarkModeLabel(mode));
+        auto* action = page_dark_button_->menu()->addAction(t(pageDarkModeLabel(mode)));
         action->setObjectName(QStringLiteral("pageDarkMode_") + mode);
         action->setCheckable(true);
         action->setChecked(mode == page_dark_mode_);
@@ -3541,9 +3541,9 @@ void MainWindow::buildToolBar() {
     }
     page_dark_button_->setIcon(PageDarkIcon(page_dark_mode_));
     page_dark_button_->setToolTip(
-        QStringLiteral("Oldalak sötétítése: %1\nA weboldal saját sötét témája nélkül is sötét lesz.")
-            .arg(pageDarkModeLabel(page_dark_mode_)));
-    page_dark_button_->setAccessibleName(QStringLiteral("Oldalak sötétítése"));
+        t(QStringLiteral("Oldalak sötétítése: %1\nA weboldal saját sötét témája nélkül is sötét lesz."))
+            .arg(t(pageDarkModeLabel(page_dark_mode_))));
+    page_dark_button_->setAccessibleName(t(QStringLiteral("Oldalak sötétítése")));
     toolbar->addWidget(page_dark_button_);
 
     auto* spacer = new QWidget(this);
@@ -3568,13 +3568,13 @@ void MainWindow::buildToolBar() {
         button->setChecked(name == currentTheme_);
         button->setIcon(ThemeIcon(paletteFor(name)));
         button->setIconSize(QSize(20, 20));
-        button->setToolTip(QStringLiteral("%1 (%2)").arg(themeLabel(name), name));
-        button->setAccessibleName(themeLabel(name));
+        button->setToolTip(QStringLiteral("%1 (%2)").arg(t(themeLabel(name)), name));
+        button->setAccessibleName(t(themeLabel(name)));
         theme_buttons_.insert(name, button);
         themeLayout->addWidget(button);
 
         // One action per theme, so the group stays exclusive without a second source of truth.
-        auto* action = new QAction(themeLabel(name), button);
+        auto* action = new QAction(t(themeLabel(name)), button);
         action->setCheckable(true);
         action->setChecked(name == currentTheme_);
         themeActions->addAction(action);
@@ -3635,11 +3635,11 @@ void MainWindow::buildCardArea() {
     find_edit_->setClearButtonEnabled(true);
     find_status_ = new QLabel(find_bar_);
     find_status_->setObjectName(QStringLiteral("antikoltFindStatus"));
-    find_status_->setAccessibleName(QStringLiteral("Találatok száma"));
+    find_status_->setAccessibleName(t(QStringLiteral("Találatok száma")));
     auto* find_close = new QToolButton(find_bar_);
     find_close->setObjectName(QStringLiteral("antikoltFindClose"));
     find_close->setText(QStringLiteral("✕"));
-    find_close->setAccessibleName(QStringLiteral("Keresés bezárása"));
+    find_close->setAccessibleName(t(QStringLiteral("Keresés bezárása")));
     find_close->setAutoRaise(true);
     find_close->setCursor(Qt::PointingHandCursor);
     connect(find_close, &QToolButton::clicked, this, &MainWindow::closeFind);
