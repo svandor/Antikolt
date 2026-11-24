@@ -228,7 +228,8 @@ bool CreateSurface(const HostConfig& config, HostState* state, const std::string
 
     CefRefPtr<EngineClient> client_handler(new EngineClient(
         state, config.quit_on_first_load, config.webauthn_test, config.isolated_world_test,
-        config.autofill_test, config.passkey_flow_test, config.pip_test, config.permissions));
+        config.autofill_test, config.passkey_flow_test, config.pip_test, config.pip_window_test,
+        config.permissions));
     CefBrowserSettings browser_settings;
     // The surface's request context: its own storage (cookies, cache, localStorage) and its container's proxy. Passing
     // nullptr here was the old behaviour — every card shared one global cookie jar and the `partition` key was a
@@ -1615,7 +1616,8 @@ bool EngineApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 
 EngineClient::EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
                            bool isolated_world_test, bool autofill_test, bool passkey_flow_test,
-                           bool pip_test, std::map<std::string, std::string> permissions)
+                           bool pip_test, bool pip_window_test,
+                           std::map<std::string, std::string> permissions)
     : state_(state),
       quit_on_first_load_(quit_on_first_load),
       webauthn_test_(webauthn_test),
@@ -1623,6 +1625,7 @@ EngineClient::EngineClient(HostState* state, bool quit_on_first_load, bool webau
       autofill_test_(autofill_test),
       passkey_flow_test_(passkey_flow_test),
       pip_test_(pip_test),
+      pip_window_test_(pip_window_test),
       permission_(new PermissionPolicy(std::move(permissions))) {
     router_ = CefMessageRouterBrowserSide::Create(MessageRouterConfig());
     router_->AddHandler(this, /*first=*/false);
@@ -2338,6 +2341,41 @@ void EngineClient::StartPipProbe(CefRefPtr<CefBrowser> browser) {
     }
 }
 
+void EngineClient::StartPipWindowProbe(CefRefPtr<CefBrowser> browser) {
+    // Does `documentPictureInPicture.requestWindow()` actually open a PiP window in CEF 158's windowed
+    // mode? The call needs transient activation (a user gesture); CDP's `Runtime.evaluate` `userGesture`
+    // flag grants it without a real click. Measured (ADR-096): the promise resolves (`pip_window=ok`,
+    // the window has a document), but Document-PiP also spawns internal windows that never reach
+    // OnAfterCreated on this client, and the shutdown then crashes with 0xC0000005 — the window
+    // lifecycle is the remaining gap, not the API.
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression",
+                      "(async () => { try { "
+                      "const w = await documentPictureInPicture.requestWindow({width:320,height:180}); "
+                      "const opened = !!(w && w.document); "
+                      "return 'ok:' + (opened ? 'doc' : 'win'); "
+                      "} catch (e) { return 'rejected:' + e.name + ':' + e.message; } })()");
+    params->SetBool("userGesture", true);
+    params->SetBool("awaitPromise", true);
+    params->SetBool("returnByValue", true);
+    CefRefPtr<DevToolsCall> eval(new DevToolsCall(
+        "Runtime.evaluate", params,
+        [state = state_](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+            const std::string verdict = reply.String("value");
+            const bool ok = reply.ok() && verdict.rfind("ok:", 0) == 0;
+            std::printf("pip_window=%s\n", ok ? "ok" : verdict.c_str());
+            std::fflush(stdout);
+            state->pip_window_done.store(true);
+            state->pip_window_ok.store(ok);
+        }));
+    if (!eval->Start(browser)) {
+        std::printf("pip_window=unsupported error=Runtime.evaluate submit failed\n");
+        std::fflush(stdout);
+        state_->pip_window_done.store(true);
+        state_->pip_window_ok.store(false);
+    }
+}
+
 namespace {
 /// A string rendered as a JSON string literal (quoted and escaped), so a credential can be embedded in
 /// a script without its quotes or backslashes breaking the JavaScript.
@@ -2691,11 +2729,14 @@ void EngineClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
         StartPasskeyCreate(browser);
     }
 
-    // The Document-PiP probe must run on the actually-loaded page, not the initial empty document:
+    // The Document-PiP probes must run on the actually-loaded page, not the initial empty document:
     // `OnAfterCreated` fires before the first navigation commits, and `documentPictureInPicture` is
     // gated behind a secure context, so it can only be measured once the `antikolt://` page is up.
     if (pip_test_ && !state_->pip_done.load()) {
         StartPipProbe(browser);
+    }
+    if (pip_window_test_ && !state_->pip_window_done.load()) {
+        StartPipWindowProbe(browser);
     }
 
     // A reload or navigation is a new JS context, so the bridge has to be installed again.
@@ -2969,7 +3010,8 @@ int RunEngineHost(const HostConfig& config) {
                 (config.isolated_world_test && !state.isolated_world_done.load()) ||
                 (config.autofill_test && !state.autofill_done.load()) ||
                 (config.passkey_flow_test && !state.passkey_flow_done.load()) ||
-                (config.pip_test && !state.pip_done.load())) &&
+                (config.pip_test && !state.pip_done.load()) ||
+                (config.pip_window_test && !state.pip_window_done.load())) &&
                !state.load_failed.load() && !state.quit_requested.load()) {
             PumpWindowsMessages();
             CefDoMessageLoopWork();
@@ -3019,6 +3061,9 @@ int RunEngineHost(const HostConfig& config) {
     }
     if (config.pip_test && !state.pip_ok.load()) {
         return 1;  // the probe must not report a green when the API is absent.
+    }
+    if (config.pip_window_test && !state.pip_window_ok.load()) {
+        return 1;  // the spike must not report a green when the PiP window did not open.
     }
     return (config.quit_on_first_load && !loaded) ? 1 : 0;
 }

@@ -67,6 +67,9 @@ struct HostConfig {
     bool passkey_flow_test = false;
     /// Run the PiP probe: check whether `documentPictureInPicture` is exposed. Used by `--pipchecktest`.
     bool pip_test = false;
+    /// Run the PiP window spike: call `documentPictureInPicture.requestWindow()` and report whether a
+    /// PiP window opens. Used by `--pipwindowtest`.
+    bool pip_window_test = false;
     /// Native window to embed the surface into; `nullptr` means the host creates a top-level window.
     ///
     /// This is how the one live card lives inside the Qt shell's window while the engine keeps its
@@ -126,6 +129,10 @@ struct HostState {
     std::atomic<bool> pip_done{false};
     /// Whether `documentPictureInPicture` was exposed (drives the exit code).
     std::atomic<bool> pip_ok{false};
+    /// The PiP window spike's answer has arrived.
+    std::atomic<bool> pip_window_done{false};
+    /// Whether `requestWindow()` opened a PiP window (drives the exit code).
+    std::atomic<bool> pip_window_ok{false};
     int http_status = 0;
     std::string final_url;
     std::string title;
@@ -287,7 +294,7 @@ class EngineClient : public CefClient,
 public:
     EngineClient(HostState* state, bool quit_on_first_load, bool webauthn_test,
                  bool isolated_world_test, bool autofill_test, bool passkey_flow_test, bool pip_test,
-                 std::map<std::string, std::string> permissions = {});
+                 bool pip_window_test, std::map<std::string, std::string> permissions = {});
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -378,6 +385,7 @@ private:
     bool autofill_test_;
     bool passkey_flow_test_;
     bool pip_test_;
+    bool pip_window_test_;
     /// The virtual authenticator's id, stored when the passkey flow enables it; the `create` step runs
     /// in `OnLoadEnd`, once the page's execution context exists.
     std::string passkey_authenticator_;
@@ -405,6 +413,11 @@ private:
     /// The PiP probe: evaluate `'documentPictureInPicture' in window` together with `window.isSecureContext`
     /// on the loaded `antikolt://` page, and report `pip_secure=0|1 pip_api=present|absent`.
     void StartPipProbe(CefRefPtr<CefBrowser> browser);
+    /// The PiP window spike: call `documentPictureInPicture.requestWindow()` under a synthetic user
+    /// gesture (CDP `userGesture`) and report `pip_window=ok|rejected:<error>`. Measured (ADR-096): the
+    /// window opens, but Document-PiP's internal windows make the shutdown crash (0xC0000005) — a
+    /// lifecycle gap, not an API gap. Diagnostic only, not a gate step.
+    void StartPipWindowProbe(CefRefPtr<CefBrowser> browser);
 
     IMPLEMENT_REFCOUNTING(EngineClient);
     DISALLOW_COPY_AND_ASSIGN(EngineClient);

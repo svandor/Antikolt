@@ -3,6 +3,34 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-096 — A PiP-ablak spike: a `requestWindow()` kinyitja az ablakot, de az ablakos shutdown elhal (2026-11-24)
+
+**Kontextus:** az ADR-095 szerint a Document-PiP a biztonságos környezetben **jelen van** (nincs views-váltás
+kell az expozícióhoz). A kérdés: a `documentPictureInPicture.requestWindow()` ténylegesen kinyit-e egy
+PiP-ablakot a CEF 158 **ablakos** (nem views) módjában.
+
+**Döntés / eredmény (mérve):**
+
+1. **`--pipwindowtest`** az engine-hostban: `requestWindow({width:320,height:180})` CDP `userGesture`-rel
+   (szintetikus gesztus) + `awaitPromise` + `returnByValue`.
+2. **`pip_window=ok`** — a Promise feloldódik, az ablaknak van dokumentuma (`ok:doc`): a Document-PiP
+   **kinyílik** a jelenlegi ablakos motoron, views-váltás nélkül.
+3. **A shutdown elhal** (`0xC0000005` access violation), mert a Document-PiP a `OnBeforePopup`-on
+   (`url=about:blank`) át egy második browsert hoz létre, **plusz** további belső ablakokat, amelyek a
+   `OnBeforeClose`-on át zárnak, de soha nem jelennek meg a `OnAfterCreated`-ben (pointer-azonosítókkal
+   mérve: a nyitó kettő mellett három különböző záró browser). A host egy-popup modellje ezt a kaszkádot
+   nem tudja nyomon követni, így a `CefShutdown` élő belső ablakkal szembesül.
+4. **A kézenfekvő javítási kísérlet sem oldotta meg:** a második browser `CefShutdown` előtti bezárása és a
+   záródó browser pontos hozzárendelése után is elhal a shutdown — a belső ablakok a `OnBeforeClose`-ban
+   zárnak, de a `OnAfterCreated`-ben soha nem jelennek meg, így a host nem tudja nyomon követni őket (a
+   kísérletet visszavontuk).
+
+**Következmény:** (+) a PiP-ablak **kinyílik** (mérve), tehát a funkció nem elvi akadály; (−) az ablakos
+(nem views) módban a Document-PiP-ablak életciklusa a CEF 158-ban **törött** (belső ablak-kaszkád +
+`0xC0000005` a shutdownban); (−) a tényleges PiP-ablak befogadása a views-keretrendszerrel
+(`CefBrowserView`/`CefWindow`) vagy mélyebb CEF-munkával lehetséges — **Pro modell szükséges** a maradék
+crash-re; a `--pipwindowtest` diagnosztikai, **nem** kapu-lépés (a crash miatt).
+
 ## ADR-095 — A PiP de-kockáztatás javítva: a Document-PiP a biztonságos környezetben jelen van, views-váltás nem kell (2026-11-24)
 
 **Kontextus:** az ADR-094 szerint a Document-PiP-hez views-architektúra-váltás kell, mert a `--pipchecktest`

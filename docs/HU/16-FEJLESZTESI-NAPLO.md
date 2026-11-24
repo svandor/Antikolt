@@ -3,7 +3,39 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
-## 2026-11-24 (százhatvanadik szelet) — a PiP de-kockáztatás javítva: a Document-PiP jelen van, views-váltás nem kell (M7)
+## 2026-11-24 (százhatvanegyedik szelet) — a PiP-ablak spike: kinyílik, de a shutdown elhal (M7)
+
+A Document-PiP **ablaka** mérve: a `requestWindow()` kinyitja, de az ablakos mód shutdownja crash-el.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `--pipwindowtest` (`StartPipWindowProbe`): a `requestWindow()` hívása CDP
+  `userGesture`-rel (szintetikus gesztus), `pip_window=ok|rejected:<error>`. Diagnosztikai, nem kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--pipwindowtest → pip_window=ok, majd EXIT=0xC0000005 (access violation a shutdownban)
+pointer-azonosítók: OnBeforePopup(url=about:blank) → 2. browser (OnAfterCreated) → 3 különböző záró
+browser a OnBeforeClose-ban (köztük olyanok, amik soha nem jöttek OnAfterCreated-be)
+scripts/verify.ps1 → ALL SELF TESTS PASSED (81 ellenőrzés, a --pipwindowtest NINCS a kapuban a crash miatt)
+```
+
+### Ami kiderült
+
+- A `documentPictureInPicture.requestWindow()` **kinyitja a PiP-ablakot** (a Promise feloldódik, az ablaknak
+  van dokumentuma) — views-váltás nélkül, a jelenlegi ablakos motoron.
+- Az ablakos módban a Document-PiP **belső ablak-kaszkádot** hoz létre (az `OnBeforePopup` `about:blank`
+  popupján túl további ablakok, amik a `OnBeforeClose`-ban zárnak, de a `OnAfterCreated`-ben soha nem
+  jelennek meg) → a host egy-popup modellje ezt nem tudja nyomon követni, a `CefShutdown` élő belső
+  ablakkal szembesül és `0xC0000005`-tel elhal.
+
+### Ami továbbra is nyitott
+
+- A PiP-ablak **befogadása** (a views-keretrendszer `CefBrowserView`/`CefWindow`, vagy mélyebb CEF-munka) —
+  **Pro modell szükséges** a maradék crash-re; a kulcs-export/import a széfbe.
+
+
 
 Az ADR-094 PiP-konklúziója („views-váltás kell") téves előfeltevésen alapult, és méréssel cáfolva.
 
