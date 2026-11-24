@@ -1960,9 +1960,6 @@ void EngineClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     if (passkey_flow_test_) {
         StartPasskeyFlowProbe(browser);
     }
-    if (pip_test_) {
-        StartPipProbe(browser);
-    }
 }
 
 void EngineClient::StartWebAuthnProbe(CefRefPtr<CefBrowser> browser) {
@@ -2308,18 +2305,27 @@ void EngineClient::StartPasskeyCreate(CefRefPtr<CefBrowser> browser) {
 }
 
 void EngineClient::StartPipProbe(CefRefPtr<CefBrowser> browser) {
-    // Is the Document Picture-in-Picture API exposed in this runtime? `--pipchecktest` is a decision
-    // probe: the maintainer chose the views-architecture switch for PiP, and this checks whether the
-    // API exists with the feature flag enabled (vs. absent in the windowed/Alloy runtime).
+    // Is the Document Picture-in-Picture API exposed in this runtime, and on a secure context? The
+    // original ADR-094 probe measured `'documentPictureInPicture' in window` on a `data:` URL and got
+    // `absent` — but a `data:` URL is an opaque, non-secure origin, so that measurement could not tell
+    // "the runtime lacks Document-PiP" apart from "the API is gated behind a secure context". This
+    // probe runs on `antikolt://` (registered SECURE, ADR-093) and reports both axes at once, so a
+    // `secure:present` here proves Document-PiP exists without any views-architecture switch.
     CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-    params->SetString("expression", "'documentPictureInPicture' in window ? 'present' : 'absent'");
+    params->SetString("expression",
+                      "'documentPictureInPicture' in window ? "
+                      "(window.isSecureContext ? 'secure:present' : 'insecure:present') : "
+                      "(window.isSecureContext ? 'secure:absent' : 'insecure:absent')");
     params->SetBool("returnByValue", true);
     CefRefPtr<DevToolsCall> eval(new DevToolsCall(
         "Runtime.evaluate", params,
         [state = state_](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
             const std::string verdict = reply.String("value");
-            const bool present = reply.ok() && verdict == "present";
-            std::printf("pip_api=%s\n", present ? "present" : "absent");
+            const bool present = reply.ok() && verdict.find("present") != std::string::npos;
+            const bool secure = verdict.find("insecure") == std::string::npos &&
+                                verdict.find("secure") != std::string::npos;
+            std::printf("pip_secure=%d pip_api=%s\n", secure ? 1 : 0,
+                        present ? "present" : "absent");
             std::fflush(stdout);
             state->pip_done.store(true);
             state->pip_ok.store(present);
@@ -2683,6 +2689,13 @@ void EngineClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
     if (passkey_flow_test_ && !passkey_authenticator_.empty() &&
         !state_->passkey_flow_done.load()) {
         StartPasskeyCreate(browser);
+    }
+
+    // The Document-PiP probe must run on the actually-loaded page, not the initial empty document:
+    // `OnAfterCreated` fires before the first navigation commits, and `documentPictureInPicture` is
+    // gated behind a secure context, so it can only be measured once the `antikolt://` page is up.
+    if (pip_test_ && !state_->pip_done.load()) {
+        StartPipProbe(browser);
     }
 
     // A reload or navigation is a new JS context, so the bridge has to be installed again.

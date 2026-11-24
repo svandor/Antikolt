@@ -3,7 +3,33 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
-## ADR-094 — A PiP de-kockáztatása: a Document-PiP az Alloy runtime-ban hiányzik, a flag sem elég (2026-11-23)
+## ADR-095 — A PiP de-kockáztatás javítva: a Document-PiP a biztonságos környezetben jelen van, views-váltás nem kell (2026-11-24)
+
+**Kontextus:** az ADR-094 szerint a Document-PiP-hez views-architektúra-váltás kell, mert a `--pipchecktest`
+a `data:` URL-en `pip_api=absent`-et mért. A `data:` URL azonban átlátszatlan (nem biztonságos) origin, a
+`documentPictureInPicture` pedig a Chromium IDL-ben `[SecureContext]`-kapuzott — ezért az ADR-094 mérése a „nincs
+a runtime-ban" és a „biztonságos környezet kell" esetet **nem tudta szétválasztani**. Emellett a CEF 158-ban már
+**nincs** `chrome_runtime` beállítás: az Alloy runtime a **CEF 128-ban** megszűnt (utolsó támogató: CEF 127; a
+`chrome_runtime` mező a CEF 128-ban kikerült a fejlécekből, mert nincs mit átváltani) — a motor **már most is** a
+Chrome runtime-on fut.
+
+**Döntés / eredmény (mérve):**
+
+1. A `--pipchecktest` újraírva: a probe a **biztonságos** `antikolt://` sémán fut (SECURE, ADR-093), a **betöltött**
+   oldalon (`OnLoadEnd`, nem `OnAfterCreated`), és egyszerre méri a `window.isSecureContext`-et és a
+   `'documentPictureInPicture' in window`-t.
+2. **`--pipchecktest` (flag nélkül): `pip_secure=1 pip_api=present`, exit 0.**
+3. **`--pipchecktest` (`DocumentPictureInPictureAPI` flaggel): `pip_secure=1 pip_api=present`, exit 0** — a flag
+   no-op, mert a feature M116 óta alapból bekapcsolt.
+4. A kapu zöld: `pipchecktest ok` a `scripts/verify.ps1`-ben (a kapu 80-ról 81 ellenőrzésre nőtt).
+
+**Következmény:** (+) a **views-architektúra-váltás nem szükséges** a Document-PiP-hez — az API a biztonságos
+környezetben jelen van a jelenlegi (Chrome-runtime) motoron; (+) az ADR-094 **Elavult** (a `data:` URL-es mérés
+konfundált volt); (+) a `--pipchecktest` a kapu része, így a „Document-PiP jelen van" invariáns őrzött; (−) a
+tényleges PiP még külön szelet: a `documentPictureInPicture.requestWindow()` bekötése és a felugró PiP-ablak
+viselkedésének mérése (a CEF Chrome runtime-ja a PiP-ablakot teljes stílusú popupként jeleníti meg — CEF #3448).
+
+## ADR-094 — [Elavult, lásd ADR-095] A PiP de-kockáztatása: a Document-PiP az Alloy runtime-ban hiányzik, a flag sem elég (2026-11-23)
 
 **Kontextus:** a PiP-hez (F7) a karbantartó a views-architektúra-váltást választotta. A kérdés: a
 Document-PiP (`documentPictureInPicture`) elérhető-e a jelenlegi Alloy/ablakos runtime-ban a

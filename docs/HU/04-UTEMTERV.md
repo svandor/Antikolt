@@ -96,7 +96,7 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 - [ ] Hangolási riport (mely kapcsolók segítettek, mérve).
 
 ### M7 — „Béta" (F7 vége)
-- [ ] Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás. — a **zoom** kész (`--scrollzoomtest`), a **nyomtatás** „mentés PDF-be" útja kész (`--printtest`, 129. szelet), a **Ctrl+F** kész (`--findtest`, 130. szelet), a **letöltés** kész (`--downloadtest`, 131. szelet), a **PDF** kész (`--pdftest`, 134. szelet), a **PiP** nyitott
+- [ ] Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás. — a **zoom** kész (`--scrollzoomtest`), a **nyomtatás** „mentés PDF-be" útja kész (`--printtest`, 129. szelet), a **Ctrl+F** kész (`--findtest`, 130. szelet), a **letöltés** kész (`--downloadtest`, 131. szelet), a **PDF** kész (`--pdftest`, 134. szelet), a **PiP** **de-kockáztatva** (ADR-095: a Document-PiP a biztonságos környezetben jelen van, views-váltás nem kell; a `requestWindow()` bekötése nyitott)
 - [x] Összeomlás utáni helyreállítás. — kész: a shell az összeomlott felületet automatikusan újratölti (`--crashtest`, 132–133. szelet)
 - [ ] Billentyűzetes navigáció, képernyőolvasó-támogatás. — a **nevesített vezérlők + Ctrl+F** kész (`--accessibilitytest`, 135. szelet), a teljes képernyőolvasó-illesztés nyitott
 - [ ] HU/EN felület; jelszó- és könyvjelző-import. — a HU/EN felület **kész** (`ui/language` + `data-language` + `setStatus`→`t()`, ADR-078/079); a **könyvjelző-import** kész (Netscape-HTML → kártyák, ADR-081, `--bookmarkimporttest`); a **jelszó-import** nyitott (nincs cél-boltozat a termékben)

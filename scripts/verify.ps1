@@ -103,6 +103,9 @@ $engineChecks = @(
     @{ Name = 'passkeyflowtest'; Args = @('--passkeyflowtest') },
     # ADR-093: the passkey export side — the shell reads the virtual authenticator's credentials.
     @{ Name = 'passkeyexporttest'; Args = @('--passkeyexporttest') },
+    # ADR-095: the Document-PiP probe — `documentPictureInPicture` is exposed on the secure `antikolt://`
+    # scheme (CEF 158 is Chrome-runtime-only; no views switch is needed).
+    @{ Name = 'pipchecktest'; Args = @('--pipchecktest'); Direct = $true },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },

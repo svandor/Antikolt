@@ -402,7 +402,8 @@ private:
     /// The second half of the passkey flow, run from `OnLoadEnd`: evaluate `navigator.credentials.create`
     /// against the already-installed virtual authenticator.
     void StartPasskeyCreate(CefRefPtr<CefBrowser> browser);
-    /// The PiP probe: evaluate `'documentPictureInPicture' in window` and report `pip_api=present|absent`.
+    /// The PiP probe: evaluate `'documentPictureInPicture' in window` together with `window.isSecureContext`
+    /// on the loaded `antikolt://` page, and report `pip_secure=0|1 pip_api=present|absent`.
     void StartPipProbe(CefRefPtr<CefBrowser> browser);
 
     IMPLEMENT_REFCOUNTING(EngineClient);

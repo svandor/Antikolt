@@ -50,6 +50,21 @@ void WritePasskeyTestPage(const std::string& previews_dir) {
     stream << "<!doctype html><title>passkey</title><h1>passkey</h1>";
 }
 
+/// The Document-PiP probe runs on a `antikolt://blob/…` page: the scheme is registered SECURE
+/// (host.cpp, ADR-093), so `window.isSecureContext` is true there — unlike a `data:` URL, which is an
+/// opaque (non-secure) origin and can never expose a secure-context-gated API.
+constexpr const char* kPipTestName = "pip-test.html";
+
+void WritePipTestPage(const std::string& previews_dir) {
+    std::error_code error;
+    std::filesystem::create_directories(previews_dir, error);
+    if (error) {
+        return;
+    }
+    std::ofstream stream(previews_dir + "\\" + kPipTestName, std::ios::binary);
+    stream << "<!doctype html><title>pip</title><h1>pip</h1>";
+}
+
 std::string Utf8FromWide(const std::wstring& wide) {
 #ifdef _WIN32
     if (wide.empty()) {
@@ -248,7 +263,9 @@ int main(int argc, char* argv[]) {
         config.hidden = true;
         config.quit_on_first_load = true;
         config.start_url = passkey_flow_test ? "antikolt://blob/passkey-test.html"
-                                             : (autofill_test ? kAutofillTestUrl : kSelftestUrl);
+                                             : (pip_test ? "antikolt://blob/pip-test.html"
+                                                          : (autofill_test ? kAutofillTestUrl
+                                                                           : kSelftestUrl));
         config.webauthn_test = webauthn_test;
         config.isolated_world_test = isolated_world_test;
         config.autofill_test = autofill_test;
@@ -298,9 +315,12 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    // The passkey page lives in the preview directory, served over the (secure) `antikolt://` scheme.
+    // The passkey and PiP pages live in the preview directory, served over the (secure) `antikolt://` scheme.
     if (passkey_flow_test) {
         WritePasskeyTestPage(config.user_data_path + "\\previews");
+    }
+    if (pip_test) {
+        WritePipTestPage(config.user_data_path + "\\previews");
     }
 
     std::error_code error;

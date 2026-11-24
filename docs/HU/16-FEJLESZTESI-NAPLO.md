@@ -3,7 +3,41 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
-## 2026-11-23 (százötvenkilencedik szelet) — a passkey-export oldala mérve (M7)
+## 2026-11-24 (százhatvanadik szelet) — a PiP de-kockáztatás javítva: a Document-PiP jelen van, views-váltás nem kell (M7)
+
+Az ADR-094 PiP-konklúziója („views-váltás kell") téves előfeltevésen alapult, és méréssel cáfolva.
+
+### Mi változott
+
+- **`apps/engine-host/src/main.cpp`:** a `--pipchecktest` most a **biztonságos** `antikolt://blob/pip-test.html`-t
+  tölti (a `WritePipTestPage`-csel, a `WritePasskeyTestPage` mintájára).
+- **`apps/engine-host/src/host.cpp`:** a `StartPipProbe` az `OnLoadEnd`-ben fut (nem `OnAfterCreated`-ben, így a
+  ténylegesen betöltött oldalt méri), és egyszerre jelenti a `window.isSecureContext`-et és a
+  `'documentPictureInPicture' in window`-t (`pip_secure=0|1 pip_api=present|absent`).
+- **`scripts/verify.ps1`:** a `pipchecktest` kapu-lépés (Direct).
+
+### Bizonyíték (mért)
+
+```
+--pipchecktest (flag nélkül)                          → pip_secure=1 pip_api=present (exit 0)
+--pipchecktest (DocumentPictureInPictureAPI flaggel)  → pip_secure=1 pip_api=present (exit 0)
+scripts/verify.ps1                                    → ALL SELF TESTS PASSED (81 ellenőrzés, a pipchecktest ok)
+```
+
+### Ami kiderült
+
+- A korábbi `pip_api=absent` a `data:` URL-es mérés **konfundáltsága** volt: a `data:` átlátszatlan (nem
+  biztonságos) origin, a `documentPictureInPicture` pedig `[SecureContext]`-kapuzott.
+- A CEF 158-ban **nincs** `chrome_runtime` beállítás (az Alloy a CEF 128-ban megszűnt; a CEF 158
+  Chrome-runtime-only) — a motor már most is a Chrome runtime-on fut, **nincs mit átváltani**.
+- A `DocumentPictureInPictureAPI` flag M116 óta alapból bekapcsolt, így a flag no-op.
+
+### Ami továbbra is nyitott
+
+- A tényleges PiP: a `documentPictureInPicture.requestWindow()` bekötése és a felugró PiP-ablak viselkedésének
+  mérése — a CEF Chrome runtime-ja a PiP-ablakot teljes stílusú popupként jeleníti meg (CEF #3448).
+
+
 
 A passkey-export oldala (a virtuális hitelesítő olvasása) mérve.
 
