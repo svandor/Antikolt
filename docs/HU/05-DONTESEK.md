@@ -27,7 +27,9 @@ betölt-e egy oldalt a motorban.
 alapja kész); (−) a CHROME-stílusú views **konfliktusban van a partíció-izolációval** (ADR-009/071: a
 konténerenkénti storage-izoláció épp a custom cache-útvonalú request contexteken áll); (−) a views-váltás
 tehát **nem drop-in**: vagy a partíciók Chrome-profilokként való újragondolása kell, vagy a PiP-ablak
-befogadása a windowed úton marad (a crash-rel). **Döntés kell a maintainernek.**
+befogadása a windowed úton marad (a crash-rel). **Döntés (2026-11-24): a maintainer a 2. opciót választotta
+— a PiP elhalasztva** a windowed úton a dokumentált crash-sel; a views-váltás (Chrome-profilok) most nem
+folytatódik, a többi M7-tételre koncentrálunk.
 
 ## ADR-096 — A PiP-ablak spike: a `requestWindow()` kinyitja az ablakot, de az ablakos shutdown elhal (2026-11-24)
 
