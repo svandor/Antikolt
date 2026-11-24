@@ -3,7 +3,38 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
-## 2026-11-24 (százhatvanegyedik szelet) — a PiP-ablak spike: kinyílik, de a shutdown elhal (M7)
+## 2026-11-24 (százhatvankettedik szelet) — a views-váltás de-kockáztatása: betölt, de a partíció-cache elutasítva (M7)
+
+A views-keretrendszer (`CefBrowserView`/`CefWindow`) **betölt egy oldalt**, de a CHROME-stílusú views
+**elutasítja a custom cache-útvonalat** — a partíció-izoláció alapját.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `--viewstest` (`RunViewsTest`) + `ViewsTestDelegate` (CHROME stílus):
+  `CefBrowserView::CreateBrowserView` + `CefWindow::CreateTopLevelWindow` a windowed `SetAsChild` helyett.
+
+### Bizonyíték (mért)
+
+```
+--viewstest → views_load=ok, views_partition_context=rejected, exit 0
+A rejector a cache_path-ra izolálva: üres beállítású context → accepted, csak-cache context → rejected.
+```
+
+### Ami kiderült
+
+- A views-keretrendszer **működik** (betölt egy oldalt, a CHROME stílusban) — a PiP-ablak befogadásának
+  alapja kész.
+- De a CHROME-stílusú views **elutasítja a custom cache-útvonalat** (a partíció-izoláció alapját,
+  ADR-009/071): a `CreateBrowserView` null-t ad a secondary-profile contextre (`VerifyBrowserContext()`
+  hamis).
+- Ezért a views-váltás **nem drop-in**: a partíciók újragondolása (Chrome-profilok) vagy a PiP windowed
+  úton maradása (a crash-sel) döntést igényel (ADR-097).
+
+### Ami továbbra is nyitott
+
+- **Döntés kell:** partíciók Chrome-profilokként, vagy PiP elhalasztása a windowed crash-sel.
+
+
 
 A Document-PiP **ablaka** mérve: a `requestWindow()` kinyitja, de az ablakos mód shutdownja crash-el.
 

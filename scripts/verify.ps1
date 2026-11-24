@@ -106,6 +106,9 @@ $engineChecks = @(
     # ADR-095: the Document-PiP probe — `documentPictureInPicture` is exposed on the secure `antikolt://`
     # scheme (CEF 158 is Chrome-runtime-only; no views switch is needed).
     @{ Name = 'pipchecktest'; Args = @('--pipchecktest'); Direct = $true },
+    # ADR-097: the views switch de-risking — the views framework loads a page (CHROME style), and rejects
+    # a custom cache path (the partition mechanism).
+    @{ Name = 'viewstest'; Args = @('--viewstest'); Direct = $true },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },

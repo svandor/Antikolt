@@ -21,6 +21,8 @@
 #include "include/cef_parser.h"
 #include "include/cef_string_visitor.h"
 #include "include/cef_version.h"
+#include "include/views/cef_browser_view.h"
+#include "include/views/cef_window.h"
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_stream_resource_handler.h"
 #include "devtools.h"
@@ -2973,6 +2975,116 @@ int RunCefSubprocess() {
 #endif
     CefRefPtr<EngineApp> app(new EngineApp());
     return CefExecuteProcess(main_args, app.get(), nullptr);
+}
+
+namespace {
+
+/// The views spike's delegate: reports CHROME runtime style for both the browser view and the window.
+/// Document-PiP is a Chrome-UI feature, so the spike must measure the CHROME style path (the cefclient
+/// sample implements the same two methods on one object that doubles as both delegates).
+class ViewsTestDelegate : public CefBrowserViewDelegate, public CefWindowDelegate {
+public:
+    ViewsTestDelegate() = default;
+    cef_runtime_style_t GetBrowserRuntimeStyle() override { return CEF_RUNTIME_STYLE_CHROME; }
+    cef_runtime_style_t GetWindowRuntimeStyle() override { return CEF_RUNTIME_STYLE_CHROME; }
+
+private:
+    IMPLEMENT_REFCOUNTING(ViewsTestDelegate);
+    DISALLOW_COPY_AND_ASSIGN(ViewsTestDelegate);
+};
+
+}  // namespace
+
+/// `--viewstest`: the first brick of the views switch (ADR-097). Create one browser through the views
+/// framework (`CefBrowserView` + `CefWindow`, CHROME style) instead of the windowed `SetAsChild` path, and
+/// report whether a page loads. It also measures that CHROME-style views reject a custom cache path — the
+/// partition mechanism — which is the blocker the views switch must solve before it can replace the
+/// windowed path.
+int RunViewsTest(const HostConfig& config) {
+    PreparePreviewDirectory(config);
+#ifdef _WIN32
+    CefMainArgs main_args(GetModuleHandleW(nullptr));
+#else
+    CefMainArgs main_args(0, nullptr);
+#endif
+    CefRefPtr<EngineApp> app(new EngineApp());
+    const int subprocess_code = CefExecuteProcess(main_args, app.get(), nullptr);
+    if (subprocess_code >= 0) {
+        return subprocess_code;
+    }
+    if (!InitializeCef(config, app)) {
+        Log("[engine-host] CefInitialize failed\n");
+        return 1;
+    }
+
+    HostState state;
+    state.surface_id = g_next_surface_id++;
+    CefRefPtr<EngineClient> client_handler(new EngineClient(
+        &state, /*quit_on_first_load=*/true, /*webauthn_test=*/false, /*isolated_world_test=*/false,
+        /*autofill_test=*/false, /*passkey_flow_test=*/false, /*pip_test=*/false,
+        /*pip_window_test=*/false, config.permissions));
+    CefBrowserSettings browser_settings;
+    CefRefPtr<ViewsTestDelegate> delegate(new ViewsTestDelegate());
+
+    // Probe 1: CHROME-style views with the default profile — the first brick of the views switch.
+    CefRefPtr<CefBrowserView> view = CefBrowserView::CreateBrowserView(
+        client_handler, config.start_url, browser_settings, nullptr, nullptr, delegate);
+    if (!view) {
+        Log("[engine-host] CreateBrowserView failed (default profile)\n");
+        std::printf("views_load=FAILED\n");
+        std::fflush(stdout);
+        CefShutdown();
+        return 1;
+    }
+
+    // Probe 2: does CHROME-style views accept a custom cache path? That path is the partition mechanism
+    // (ADR-009/071): one request context — and so one storage directory — per container. Measured: it
+    // does NOT (CreateBrowserView returns null for a secondary-profile context, ADR-097).
+    CefRequestContextSettings cache_settings;
+    CefString(&cache_settings.cache_path).FromString(config.user_data_path + "\\partitionprobe");
+    CefRefPtr<CefRequestContext> cache_context = CefRequestContext::CreateContext(cache_settings, nullptr);
+    CefRefPtr<CefBrowserView> cache_view = CefBrowserView::CreateBrowserView(
+        client_handler, config.start_url, browser_settings, nullptr, cache_context, delegate);
+    std::printf("views_partition_context=%s\n", cache_view ? "accepted" : "rejected");
+    std::fflush(stdout);
+
+    CefRefPtr<CefWindow> window = CefWindow::CreateTopLevelWindow(delegate);
+    if (!window) {
+        Log("[engine-host] CreateTopLevelWindow failed\n");
+        CefShutdown();
+        return 1;
+    }
+    window->AddChildView(view);
+    if (!config.hidden) {
+        window->CenterWindow(CefSize(config.width, config.height));
+        window->Show();
+    }
+
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(kLoadTimeoutSeconds);
+    while (!state.load_finished.load() && !state.load_failed.load() &&
+           !state.quit_requested.load()) {
+        PumpWindowsMessages();
+        CefDoMessageLoopWork();
+        std::this_thread::sleep_for(std::chrono::milliseconds(kPumpIntervalMs));
+        if (std::chrono::steady_clock::now() > deadline) {
+            state.timed_out = true;
+            break;
+        }
+    }
+
+    const bool ok = state.load_finished.load() && !state.load_failed.load() &&
+                    !state.timed_out.load();
+    std::printf("views_load=%s\n", ok ? "ok" : "FAILED");
+    std::fflush(stdout);
+    Log("load=%s\n", state.timed_out.load() ? "timeout" : (state.load_failed.load() ? "error" : "ok"));
+
+    if (window && !window->IsClosed()) {
+        window->Close();
+    }
+    DrainAndCloseBrowser(&state);
+    CefShutdown();
+    return ok ? 0 : 1;
 }
 
 int RunEngineHost(const HostConfig& config) {

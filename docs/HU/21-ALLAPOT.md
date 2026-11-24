@@ -63,7 +63,7 @@ Qt-t, CEF-et és GPU-t kérnek), ezt a README ki is mondja, és a mért eredmén
 | Összeomlás utáni helyreállítás | `--crashtest` | a motor `renderer_terminated` eseménnyel jelenti a renderer kilépését; a shell az összeomlott felületet azonnal újratölti (a rács a kezdőlapra, a kártya a saját URL-jére tér vissza) |
 | PDF megtekintés | `--pdftest` | a PDF a CEF beépített PDFium-nézőjében nyílik (betöltés, nem letöltés) |
 | Akadálymentesség | `--accessibilitytest` | minden interaktív vezérlő bemondható (szöveg vagy accessible name), a Ctrl+F gyorsbillentyű regisztrálva |
-| PiP (Document-PiP) de-kockáztatás | `--pipchecktest`, `--pipwindowtest` | az API a biztonságos `antikolt://` sémán **jelen van** (`pip_secure=1 pip_api=present`), és a `requestWindow()` **kinyitja az ablakot** (`pip_window=ok`) — views-váltás nem kell (ADR-095); de az ablakos mód shutdownja **elhal** (`0xC0000005`, belső ablak-kaszkád), így a PiP-ablak befogadása views-keretrendszerrel / mélyebb CEF-munkával marad (ADR-096, **Pro modell szükséges**) |
+| PiP (Document-PiP) de-kockáztatás | `--pipchecktest`, `--viewstest` | az API a biztonságos `antikolt://` sémán **jelen van** (`pip_secure=1 pip_api=present`), a `requestWindow()` **kinyitja az ablakot** (`pip_window=ok`), de a windowed shutdown **elhal** (ADR-096); a views-keretrendszer **betölt egy oldalt** (`views_load=ok`), de a CHROME-stílus **elutasítja a custom cache-útvonalat** (`views_partition_context=rejected`) — a views-váltás konfliktusban van a partíció-izolációval (ADR-097, **döntés kell**) |
 
 ## Ami nyitva van (tudatosan, nem elfelejtve)
 

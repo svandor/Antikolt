@@ -440,6 +440,13 @@ CefRefPtr<CefRequestContext> RequestContextForPartition(const HostConfig& config
 /// it does not allow. Prints `partition_*` / `proxy_*` / `permission_policy_*` lines. Returns 0 when all pass.
 int RunPartitionSelfTest(const HostConfig& config);
 
+/// `--viewstest`: the first brick of the views switch (ADR-097) — create one browser through the views framework
+/// (`CefBrowserView` + `CefWindow`, CHROME style) instead of the windowed `SetAsChild` path, and report whether a
+/// page loads. It also probes whether CHROME-style views accept a custom cache path (the partition mechanism);
+/// measured, they do NOT. Prints `views_load=ok|FAILED` and `views_partition_context=accepted|rejected`. Returns 0
+/// when the page loads.
+int RunViewsTest(const HostConfig& config);
+
 /// Run the protocol server on stdin/stdout (`--stdio`). Returns the process exit code.
 int RunEngineHostServer(const HostConfig& config);
 

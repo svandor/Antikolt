@@ -3,6 +3,32 @@
 Minden visszafordíthatatlan vagy drága döntés itt van rögzítve: **kontextus → döntés → következmény**.
 A döntés megváltoztatása új ADR-t igényel (a régi „Elavult" állapotot kap).
 
+## ADR-097 — A views-váltás de-kockáztatása: a views betölt, de elutasítja a partíciók cache-útvonalát (2026-11-24)
+
+**Kontextus:** az ADR-096 szerint a PiP-ablak a windowed módban crash-el, ezért a maintainer a views-váltást
+(`CefBrowserView`/`CefWindow`) választotta. Az első tégla: megmérni, hogy a views-keretrendszer egyáltalán
+betölt-e egy oldalt a motorban.
+
+**Döntés / eredmény (mérve, `--viewstest`):**
+
+1. **A views betölt:** `CefBrowserView::CreateBrowserView` + `CefWindow::CreateTopLevelWindow` (CHROME
+   stílus, a delegate `GetBrowserRuntimeStyle`/`GetWindowRuntimeStyle` → CHROME) a **default profil**lal
+   (`nullptr` request context) → `views_load=ok` (a data: oldal betölt, exit 0). A views-keretrendszer
+   **működik** a CEF 158-ban.
+2. **De a CHROME-stílusú views elutasítja a custom cache-útvonalat:** a `CreateBrowserView` **null**-t ad
+   vissza, ha a request contextnek **custom `cache_path`**-ja van (`views_partition_context=rejected`).
+   A rejector **magára a cache-útvonalra** izolálva (nem a handlerre, nem a `persist_session_cookies`-ra):
+   üres beállítású context (nincs cache-útvonal) **elfogadott**, csak-cache-útvonalas context **elutasított**.
+3. **Miért:** a CEF forrása szerint a `CefBrowserViewImpl::Create` a `request_context_impl->
+   VerifyBrowserContext()`-et hívja, ami a secondary-profile (custom cache-útvonalas) contextre hamisat ad.
+   A CHROME-stílusú views a **default profilra** van kötve.
+
+**Következmény:** (+) a views-váltás **viable** a „betölt egy oldalt" szinten (a PiP-ablak befogadásának
+alapja kész); (−) a CHROME-stílusú views **konfliktusban van a partíció-izolációval** (ADR-009/071: a
+konténerenkénti storage-izoláció épp a custom cache-útvonalú request contexteken áll); (−) a views-váltás
+tehát **nem drop-in**: vagy a partíciók Chrome-profilokként való újragondolása kell, vagy a PiP-ablak
+befogadása a windowed úton marad (a crash-rel). **Döntés kell a maintainernek.**
+
 ## ADR-096 — A PiP-ablak spike: a `requestWindow()` kinyitja az ablakot, de az ablakos shutdown elhal (2026-11-24)
 
 **Kontextus:** az ADR-095 szerint a Document-PiP a biztonságos környezetben **jelen van** (nincs views-váltás
