@@ -7,7 +7,7 @@ state of the repository, what is **measured** versus **not measured**, the exact
 slices, and — critically — **what to agree with the maintainer before writing code**.
 
 - Repository: **https://github.com/svandor/Antikolt** (public, MPL-2.0)
-- Default branch: `main` · last verified commit: **`68c14d3`** (`feat(slice-164): full HU→EN translation`)
+- Default branch: `main` · last verified commit: **`68c5003`** (`docs(slice-166): full HU→EN documentation translation`)
 - Licence: MPL-2.0 · authors: [`AUTHORS`](AUTHORS) · third parties: [`NOTICE`](NOTICE) + [`THIRD-PARTY-NOTICES.txt`](THIRD-PARTY-NOTICES.txt)
 - Documentation: Hungarian is authoritative ([`docs/HU/`](docs/HU/)); the English summary is
   [`docs/EN/README.md`](docs/EN/README.md); the **measured status page** is
@@ -29,7 +29,7 @@ and restores offline, containers and workspaces are first-class, the profile is 
 stores live in SQLite** (schema `user_version = 11`, WAL) as their only writer. The UI is **fully bilingual HU/EN** —
 the chrome, the status bar, the dialogs/tooltips and the grid/card strings all translate (the switch is done; the
 Hungarian *documentation* translation is still open, see §4.B). Decisions are recorded as **ADR-001 … ADR-097** in
-[`docs/HU/05-DONTESEK.md`](docs/HU/05-DONTESEK.md); the development log runs to slice **164** in
+[`docs/HU/05-DONTESEK.md`](docs/HU/05-DONTESEK.md); the development log runs to slice **166** in
 [`docs/HU/16-FEJLESZTESI-NAPLO.md`](docs/HU/16-FEJLESZTESI-NAPLO.md).
 
 What closed in the most recent session (slices 145–164):
@@ -40,6 +40,8 @@ What closed in the most recent session (slices 145–164):
 | 157, 160, 162 | PiP de-risking: API present, window opens, but **deferred** (windowed shutdown crash `0xC0000005`; CHROME-style views reject custom cache paths) | `--pipchecktest`, `--viewstest` (ADR-095/096/097) |
 | 163 | Passkey key export from the virtual authenticator (full credential incl. `privateKey`) | `--passkeyexporttest` (closes the authenticator→vault loop) |
 | 164 | Full HU→EN UI translation: ~80 hardcoded strings wired through `uiText()`/`t()` + ~100 new EN entries | `--languagetest`, `--gridlangtest`, `check-repo` |
+| 165 | Version bump `v0.8` → `v0.9` (badge + Cargo/CMake `0.1.0` → `0.9.0`), closes M7 | full gate re-run at v0.9.0 → `ALL CHECKS PASSED` (82 checks, cargo test 190, schema=11) |
+| 166 | Full HU→EN documentation translation (M8): `docs/HU/00–21` → `docs/EN/00–21` (~11,400 lines) | `check-repo` "every relative link resolves"; 31/31 workflow units; line-count parity |
 
 ## 2. How to verify (do this first, in a fresh session)
 
@@ -73,17 +75,16 @@ trying, but it is **not** a blocker for product work.
 The well-scoped **UI code work is done** (M7 closed except the deferred PiP; the M8 UI translation is also done). What
 remains is a small set of items, one of which needs a maintainer decision.
 
-### A. Agree with the maintainer FIRST (this blocks nothing but the milestone label)
+### A. Done — no open maintainer decision remains
 
-1. **Milestone/version.** M6 is done and M7 is closed (PiP deferred by the 2026-11-24 decision; vault + passkey done).
-   The one open decision: whether to bump the `v0.8` badge → `v0.9` in `README.md` / `docs/EN/README.md` / `Cargo.toml`
-   / `CMakeLists.txt`, which also closes M7.
+1. **Milestone/version — closed.** M7 is closed (PiP deferred by the 2026-11-24 decision; vault + passkey done), and
+   the maintainer chose the **full bump** (slice 165): the `v0.8` badge → `v0.9` and the package version
+   `0.1.0` → `0.9.0` in `README.md` / `docs/EN/README.md` / `Cargo.toml` / `CMakeLists.txt`.
 
 ### B. Concrete work, in order (no decision needed)
 
-1. **Full HU→EN documentation translation (M8).** The UI is bilingual, but the authoritative *docs* (`docs/HU/00`–`21`)
-   are still Hungarian; `docs/EN/README.md` is only the condensed summary. This is a large, self-contained translation
-   pass — good to fan out with the free subagent chain (survey/draft per file), then wire and review on the main thread.
+1. **Full HU→EN documentation translation (M8) — done (slice 166).** `docs/HU/00`–`21` is now fully translated under
+   `docs/EN/` (~11,400 lines); `docs/EN/README.md` indexes the English documents (Hungarian stays authoritative).
 2. **Linux package (M8).** Nobara/KDE/Wayland with OSR + RPM. Needs a separate Linux environment; the CEF/OSR path is
    not yet exercised off-Windows. This is a separate-session + Pro item.
 3. **Release (human steps).** SignPath / Store signing (`docs/HU/20-ALASAS.md`), the GitHub Actions release workflow
@@ -128,10 +129,11 @@ remains is a small set of items, one of which needs a maintainer decision.
 
 ## Átadás magyarul
 
-**Állapot:** a repó nyilvános (`github.com/svandor/Antikolt`), a `main` ág utolsó commitja `68c14d3` (164. szelet),
-MPL-2.0, magyar (tekintélyes) és angol (összefoglaló) dokumentációval; a döntések **ADR-001…097**, a napló **164
-szeletig**. A **jól szcopolható felhasználói kódmunka kész**: az M7 lezárva (a széf + passkey kész, a PiP elhalasztva),
-az M8 **felületi** HU→EN fordítás is kész (164. szelet).
+**Állapot:** a repó nyilvános (`github.com/svandor/Antikolt`), a `main` ág utolsó commitja `68c5003` (166. szelet),
+MPL-2.0, magyar (tekintélyes) és angol (teljes fordítás) dokumentációval; a döntések **ADR-001…097**, a napló **166
+szeletig**. A **jól szcopolható felhasználói kódmunka kész**: az M7 lezárva (a széf + passkey kész, a PiP elhalasztva,
+a `v0.8` → `v0.9` verzióbump megtörtént, 165. szelet); az M8 **felületi** HU→EN fordítás (164. szelet) és a **teljes
+HU→EN dokumentáció-fordítás** (166. szelet) is kész.
 
 **Első lépés az új munkamenetben:** `pwsh -File scripts/check-repo.ps1`, majd a teljes kapu **ezen a gépen**,
 szoftveres rendereléssel: `$env:ANTIKOLT_ENGINE_DISABLE_GPU='1'; pwsh -File scripts/verify.ps1` — a hardveres GPU-út
@@ -140,15 +142,9 @@ az RTX 5080-on továbbra is elhal (`0x80000003`), de ez **nem blokkolja** a term
 
 **A maradék — terv, sorrendben:**
 
-1. **Egyetlen nyitott döntés (ez csak a címkét blokkolja):** a **verzióbump** — `v0.8` → `v0.9` a `README.md`-ben /
-   `docs/EN/README.md`-ben / `Cargo.toml`-ban / `CMakeLists.txt`-ben, ami lezárja az M7-et.
-
-2. **Konkrétan, döntés nélkül:**
-   - **teljes HU→EN dokumentáció-fordítás (M8)** — a felület kétnyelvű, de a tekintélyes *dokumentumok* (`docs/HU/00–21`)
-     még magyarok; nagy önálló fordítási pass (free-lánccal feldolgozható, Pro-val ellenőrizve);
-   - **Linux-csomag (M8)** — Nobara/KDE/Wayland + OSR + RPM, külön környezet kell (külön munkamenet + Pro);
-   - **kiadás (emberi)** — SignPath/Store aláírás, a sosem futott GitHub Actions release, NVDA képernyőolvasó-átnézés;
-     a frissítő (Ed25519) + telepítő a maradék *kód* itt (külön munkamenet + Pro).
+1. **Linux-csomag (M8)** — Nobara/KDE/Wayland + OSR + RPM, külön környezet kell (külön munkamenet + Pro).
+2. **Kiadás (emberi)** — SignPath/Store aláírás, a sosem futott GitHub Actions release, NVDA képernyőolvasó-átnézés;
+   a frissítő (Ed25519) + telepítő a maradék *kód* itt (külön munkamenet + Pro).
 
 **Szándékosan nem mérhető (ne „javítsd" hamis zöldre):** az OAuth gesztus-út (`not-measurable`), a videó
 **dekódolási** felbontás-korlát (a CEF nem ad laponkénti korlátot — a sapka megjelenítési, ADR-076), a natív
