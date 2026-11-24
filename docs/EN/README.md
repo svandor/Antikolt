@@ -2,10 +2,10 @@
 
 **Antikolt** is a card-based, container-based, low-RAM desktop browser for Windows 11 (first) and
 Fedora/Nobara + KDE Wayland (later). Open source, **MPL-2.0** ([`LICENSE`](../../LICENSE)).
-Status: **v0.8 — runnable, measured**. The repo is not a design document any more: it builds two native
+Status: **v0.9 — runnable, measured**. The repo is not a design document any more: it builds two native
 binaries (a Qt 6 shell and a CEF engine host) and a Rust core, and a gate proves the behaviour.
 
-The authoritative plan, the decision log (ADR-001…ADR-081) and the development log are Hungarian under
+The authoritative plan, the decision log (ADR-001…ADR-097) and the development log are Hungarian under
 [`docs/HU/`](../HU/); this page is the condensed English version, and
 [`docs/HU/21-ALLAPOT.md`](../HU/21-ALLAPOT.md) is the measured "where the product stands" page.
 
@@ -20,7 +20,7 @@ The authoritative plan, the decision log (ADR-001…ADR-081) and the development
 | Cards | `--addcardtest`: add a card with the `＋` form, rename the title and the URL in place, delete — each read back from the core |
 | Portable profile | `--profiletest`: export the profile to one versioned JSON bundle and import it into a fresh profile, from the page itself |
 | Storage | Rust tests + `db_status`: all four stores are SQLite rows (`user_version = 11`, WAL) — cards, containers, workspaces, sessions, plus a single-row `user_prefs` table for user preferences — and the four `*.json` documents are derived exports; the report proves every export agrees with the rows, and a pre-switch profile is adopted once per store (ADR-069/070/072) |
-| Gate | `scripts/verify.ps1`: **77 self tests** + `check-repo` (SPDX, links, JS parse, release files, `cargo fmt`, `clippy -D warnings`, 93 + 69 + 12 + 1 + 15 Rust tests) |
+| Gate | `scripts/verify.ps1`: **79 self tests** + `check-repo` (SPDX, links, JS parse, release files, `cargo fmt`, `clippy -D warnings`, 93 + 69 + 12 + 1 + 15 Rust tests) |
 
 ## The idea
 

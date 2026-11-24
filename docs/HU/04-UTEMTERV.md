@@ -95,11 +95,11 @@ Ha az S-B nem működik, az egész terv alapja (lemezhibernálás) változik —
 - [ ] Raszter-kezdőlap (motor leállítva).
 - [ ] Hangolási riport (mely kapcsolók segítettek, mérve).
 
-### M7 — „Béta" (F7 vége)
-- [ ] Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás. — a **zoom** kész (`--scrollzoomtest`), a **nyomtatás** „mentés PDF-be" útja kész (`--printtest`, 129. szelet), a **Ctrl+F** kész (`--findtest`, 130. szelet), a **letöltés** kész (`--downloadtest`, 131. szelet), a **PDF** kész (`--pdftest`, 134. szelet), a **PiP** **elhalasztva** (döntés 2026-11-24: a windowed úton marad a dokumentált crash-sel, ADR-095/096/097)
+### M7 — „Béta" (F7 vége) — **lezárva (165. szelet, v0.9)**: a széf + passkey kész, a PiP elhalasztva (ADR-095/096/097)
+- [x] Letöltéskezelő, Ctrl+F, PDF, PiP, nyomtatás. — a **zoom** kész (`--scrollzoomtest`), a **nyomtatás** „mentés PDF-be" útja kész (`--printtest`, 129. szelet), a **Ctrl+F** kész (`--findtest`, 130. szelet), a **letöltés** kész (`--downloadtest`, 131. szelet), a **PDF** kész (`--pdftest`, 134. szelet), a **PiP** **elhalasztva** (döntés 2026-11-24: a windowed úton marad a dokumentált crash-sel, ADR-095/096/097)
 - [x] Összeomlás utáni helyreállítás. — kész: a shell az összeomlott felületet automatikusan újratölti (`--crashtest`, 132–133. szelet)
 - [ ] Billentyűzetes navigáció, képernyőolvasó-támogatás. — a **nevesített vezérlők + Ctrl+F** kész (`--accessibilitytest`, 135. szelet), a teljes képernyőolvasó-illesztés nyitott
-- [ ] HU/EN felület; jelszó- és könyvjelző-import. — a HU/EN felület **kész** (`ui/language` + `data-language` + `setStatus`→`t()`, ADR-078/079); a **könyvjelző-import** kész (Netscape-HTML → kártyák, ADR-081, `--bookmarkimporttest`); a **jelszó-import** nyitott (nincs cél-boltozat a termékben)
+- [x] HU/EN felület; jelszó- és könyvjelző-import. — a HU/EN felület **kész** (`ui/language` + `data-language` + `setStatus`→`t()`, ADR-078/079); a **könyvjelző-import** kész (Netscape-HTML → kártyák, ADR-081, `--bookmarkimporttest`); a **jelszó-import** kész (CSV, ADR-085, `vault_import_csv`)
 
 ### M8 — „1.0" (F8 vége)
 - [ ] Linux (Nobara/KDE/Wayland) OSR-rel, RPM csomag.

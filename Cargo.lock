@@ -39,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "antikolt-core"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "aes-gcm",
  "antikolt-ipc",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "antikolt-core-service"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "antikolt-core",
  "antikolt-ipc",
@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "antikolt-ipc"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "antikolt-probe"
-version = "0.1.0"
+version = "0.9.0"
 dependencies = [
  "antikolt-ipc",
  "serde_json",

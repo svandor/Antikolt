@@ -3,7 +3,7 @@
 [![CI](https://github.com/svandor/Antikolt/actions/workflows/ci.yml/badge.svg)](https://github.com/svandor/Antikolt/actions/workflows/ci.yml)
 [![Licence: MPL-2.0](https://img.shields.io/badge/licence-MPL--2.0-blue.svg)](LICENSE)
 [![Platform: Windows 11](https://img.shields.io/badge/platform-Windows%2011-lightgrey.svg)](docs/HU/17-ESZKOZLANC.md)
-[![Status: v0.8, measured](https://img.shields.io/badge/status-v0.8%20measured-brightgreen.svg)](docs/HU/21-ALLAPOT.md)
+[![Status: v0.9, measured](https://img.shields.io/badge/status-v0.9%20measured-brightgreen.svg)](docs/HU/21-ALLAPOT.md)
 
 **Modern, memóriatakarékos, kártya-alapú böngésző.** Nyitott forrás (MPL-2.0), magyar és angol nyelven.
 **A low-RAM, card-based desktop browser.** Open source (MPL-2.0), documented in Hungarian and English.
@@ -11,7 +11,7 @@
 > **What CI does, and what it does not.** The badge is real: `.github/workflows/ci.yml` runs on GitHub-hosted
 > machines and checks what they can check — `cargo fmt`, `clippy -D warnings`, the Rust test suite on Linux and
 > Windows, `node --check` on the home page, SPDX headers, committed build output/secrets, and every relative
-> documentation link. It does **not** build the Qt/CEF binaries or run the 68 native self tests: those need Qt 6.8
+> documentation link. It does **not** build the Qt/CEF binaries or run the 79 native self tests: those need Qt 6.8
 > and CEF (~1 GB) and a real GPU, so they run on the maintainer's machine through `scripts/verify.ps1`, and the
 > measured result is written into [`docs/HU/21-ALLAPOT.md`](docs/HU/21-ALLAPOT.md) rather than claimed by a badge.
 
@@ -20,13 +20,13 @@
 > Rust core owns the data: cards, containers (isolated cookie partitions), workspaces, the session ledger and the
 > portable profile bundle. Leaving a card **hibernates** it to disk (MHTML snapshot + scroll/anchor/form state) and
 > destroys the engine view; returning restores it offline in seconds. Measured on the current build: `verify.ps1`
-> runs **77 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **93 + 69 + 12 +
+> runs **79 self tests** plus the repository checks (SPDX, links, `cargo fmt`, `clippy -D warnings`, **93 + 69 + 12 +
 > 1 + 15 Rust tests**), and `dist.ps1 -Release` produces a 446 MB portable build. Start with
 > [`docs/EN/README.md`](docs/EN/README.md); the authoritative plan and the decision log are Hungarian
 > ([`docs/HU/`](docs/HU/)). Licence: [`LICENSE`](LICENSE) (MPL-2.0) · authors: [`AUTHORS`](AUTHORS) ·
 > third parties: [`NOTICE`](NOTICE) · **picking the work up? start with [`HANDOVER.md`](HANDOVER.md)**.
 
-> Állapot: **v0.8 — a hibernálási ciklus bezárva**. Mentés: MHTML (DOM + beágyazott erőforrások) **és**
+> Állapot: **v0.9 — az M7 lezárva (széf + passkey kész, a PiP elhalasztva)**. Mentés: MHTML (DOM + beágyazott erőforrások) **és**
 > állapot (görgetés, horgony, űrlapok, `sessionStorage`, média-pozíció, jelszavak nélkül); a motor
 > **61 MB RAM-ot ad vissza**. Visszaállítás: a mentett MHTML **offline** (`file://`) betöltve, az állapot
 > visszaírva — ellenőrizve: `scrollY=600`, `fields=18`, a cikk szövege megjelenik, hálózat nélkül.
@@ -51,7 +51,7 @@
 | `perf/measure-engine.ps1` | memóriamérő: a motor folyamatfájának privát memóriája, markdown + JSON riport |
 | `home/` | a kezdőlap: `<antikolt-card>`, virtualizált rács, négy téma, keresés, billentyűzet — böngészőben önállóan is megnyitható |
 | **Aláírás** | **Store + SignPath** — a Store az MSIX-et írja alá (ingyenes), a SignPath a saját hordozható kiadást ([ADR-040](docs/HU/05-DONTESEK.md), [részletek](docs/HU/20-ALASAS.md)) |
-| Shell ↔ motor | **kész és mérve**: IPC, fagyasztás/hibernálás, előnézet, memória-mérés, oldal-téma, nagyítás, görgetés — `scripts/verify.ps1` 77 öntesztje |
+| Shell ↔ motor | **kész és mérve**: IPC, fagyasztás/hibernálás, előnézet, memória-mérés, oldal-téma, nagyítás, görgetés — `scripts/verify.ps1` 82 ellenőrzés (79 önteszt) |
 
 ## Kipróbálás (Windows, ma)
 
@@ -77,8 +77,8 @@ megnyílik az oldal. Ami kipróbálható:
 - **olvasóhely**: a kártyát elhagyva és újranyitva ugyanott folytatja (`scroll.json`).
 
 **Őszinte korlátok:** egyszerre **egy** élő kártya van (I1, ez a memória-ígéret); a fejlesztői build
-`--no-sandbox`-szal fut; az előnézet best-effort (egy elakadt felvétel kimaradhat); Linux/Wayland (F7), a
-széf/passkey és a csomagolás (F8) még nincs.
+`--no-sandbox`-szal fut; az előnézet best-effort (egy elakadt felvétel kimaradhat); a PiP elhalasztva
+(ADR-095/096/097); Linux/Wayland és a csomagolás (F8) még nincs.
 ## Fejlesztés
 
 Előfeltételek: **Rust 1.80+**, **Qt 6** és **CEF** a `D:\Tools` alatt (telepítés:

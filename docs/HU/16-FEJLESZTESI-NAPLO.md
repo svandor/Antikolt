@@ -3,6 +3,43 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-24 (százhatvanötödik szelet) — verzióbump v0.8 → v0.9, az M7 lezárása
+
+A karbantartó a **teljes bumpot** választotta: a `v0.8` badge → `v0.9`, és a csomagverzió `0.1.0` →
+`0.9.0` — ezzel az M7 (széf + passkey kész, a PiP elhalasztva, ADR-095/096/097) formálisan is lezárva.
+
+### Mi változott
+
+- **`Cargo.toml`:** `workspace.package.version` `0.1.0` → `0.9.0` (a `VERSION` konstans és a `welcome`
+  „core.version" mező ezt adja).
+- **`CMakeLists.txt`:** `project(... VERSION 0.1.0)` → `0.9.0` (a `--version` / `--selftest` kimenete).
+- **`Cargo.lock`:** a négy workspace-crate verziója `0.9.0`.
+- **`README.md`:** badge + állapotsor `v0.8` → `v0.9`; a „68/77 önteszt" → „79 önteszt / 82 ellenőrzés";
+  a „széf/passkey még nincs" → kész, a PiP elhalasztva.
+- **`docs/EN/README.md`:** `v0.8` → `v0.9`, ADR-tartomány `…097`, „77 self tests" → „79".
+- **`apps/desktop-shell/README.md`:** a `--selftest` példakimenet `0.1.0` → `0.9.0`.
+
+### Bizonyíték (mért)
+
+```
+Kapu (v0.9.0, GPU kikapcsolva) → ALL CHECKS PASSED — 82 ellenőrzés
+  (79 önteszt + build + core service + check-repo), cargo test 190 zöld
+  (93+69+12+1+15), db_status=ok schema=11 (user_version=11)
+```
+
+### Ami kiderült
+
+- Az IPC `PROTOCOL_VERSION` (u16 = 2) független a crate-verziótól: a `0.1.0` → `0.9.0` csak a
+  megjelenített verziószöveget változtatja (About, `--version`, a `welcome` „core" objektum), a vezetékes
+  protokollt nem — nincs olyan önteszt, ami a régi verziószöveget várná.
+- A `21-ALLAPOT.md` két elavult száma („user_version=7", „38 önteszt") a kapu naplójából javítva
+  („user_version=11", „79 önteszt").
+
+### Ami továbbra is nyitott
+
+- A teljes HU→EN **dokumentáció**-fordítás (M8, következő szelet), a Linux-csomag (M8) és a kiadás
+  (emberi: SignPath/Store, NVDA).
+
 ## 2026-11-24 (százhatvannegyedik szelet) — a teljes HU→EN fordítás (M8 első fele)
 
 A felület kétnyelvűsége **teljes lett**: a chrome (Qt-widgetek, menük, dialógusok, tooltipek, a

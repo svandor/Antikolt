@@ -36,7 +36,7 @@ and `INCLUDE`/`LIB` must point at MSVC and the SDK. The script does this for you
 ## What `--selftest` proves
 
 ```
-antikolt-shell 0.1.0
+antikolt-shell 0.9.0
 qt=6.8.3
 platform=offscreen
 screens=1
