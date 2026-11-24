@@ -105,6 +105,7 @@ bool ParseCommand(const std::string& payload, Command* out) {
     out->script = GetString(message, "script");
     out->username = GetString(message, "username");
     out->password = GetString(message, "password");
+    out->authenticator_id = GetString(message, "authenticator_id");
     out->protocol = static_cast<int>(GetNumber(message, "protocol"));
     // Data control: the origin and the storage identifiers travel at the top level (`clear_origin_data`).
     out->origin = GetString(message, "origin");

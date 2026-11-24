@@ -12,7 +12,7 @@
 
 ```
 git rev-parse --short HEAD  →  d131c4f  (docs(slice-144): release files (THIRD-PARTY-NOTICES) + gate check (M8))
-scripts/verify.ps1          →  ALL CHECKS PASSED — 79 ellenőrzés mind „ok"
+scripts/verify.ps1          →  ALL CHECKS PASSED — 80 ellenőrzés mind „ok"
 cargo test                  →  190 zöld: 93 + 69 + 12 + 1 + 15
 git status                  →  tiszta munkafa, minden pusholva (origin/main)
 ```
@@ -60,7 +60,7 @@ A döntések után, sorrendben: vault + import → PiP (ha jóváhagyva) → tel
 
 1. **Egy szelet = egy mérhető feature + önteszt.** Minden feature-nek saját `--…test` (vagy tiszta-függvény)
    kell, ami a kapuban fut.
-2. **A kapu a bizonyíték:** `scripts/verify.ps1` → `ALL CHECKS PASSED` (most 79 ellenőrzés). Soha ne zöldíts
+2. **A kapu a bizonyíték:** `scripts/verify.ps1` → `ALL CHECKS PASSED` (most 80 ellenőrzés). Soha ne zöldíts
    „hazugsággal": a számokat a kapu kimenetéből írd a doksiba, ne fejből.
 3. **Minden szelet végén:** build + kapu zöld → `16-FEJLESZTESI-NAPLO.md` bejegyzés a **mért** kimenettel →
    commit (`feat/test(slice-NNN): …`) → `git push`. A doksi nyelve a **magyar**.

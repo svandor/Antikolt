@@ -2568,6 +2568,45 @@ private:
     DISALLOW_COPY_AND_ASSIGN(WebAuthnSetup);
 };
 
+/// Read the credentials a virtual authenticator holds (`WebAuthn.getCredentials`) and reply to
+/// `webauthn_credentials` with their count — the export side of the passkey flow (ADR-023/093).
+class WebAuthnCredentials : public CefBaseRefCounted {
+public:
+    WebAuthnCredentials(int64_t request_id, std::string authenticator_id)
+        : request_id_(request_id), authenticator_id_(std::move(authenticator_id)) {}
+
+    bool Start(CefRefPtr<CefBrowser> browser) {
+        CefRefPtr<WebAuthnCredentials> self(this);
+        CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+        params->SetString("authenticatorId", authenticator_id_);
+        CefRefPtr<DevToolsCall> call(new DevToolsCall(
+            "WebAuthn.getCredentials", params,
+            [self](CefRefPtr<CefBrowser>, const DevToolsReply& reply) {
+                if (!reply.ok() || !reply.result) {
+                    self->Finish(reply.ok() ? "WebAuthn.getCredentials gave no result" : reply.error);
+                    return;
+                }
+                CefRefPtr<CefListValue> credentials = reply.result->GetList("credentials");
+                const int count = credentials ? static_cast<int>(credentials->GetSize()) : 0;
+                CefRefPtr<CefDictionaryValue> result = CefDictionaryValue::Create();
+                result->SetInt("count", count);
+                StdioLink::Instance().Reply(self->request_id_, result);
+            }));
+        return call->Start(browser);
+    }
+
+private:
+    void Finish(const std::string& error) {
+        StdioLink::Instance().ReplyError(request_id_, "internal", error.c_str());
+    }
+
+    int64_t request_id_;
+    std::string authenticator_id_;
+
+    IMPLEMENT_REFCOUNTING(WebAuthnCredentials);
+    DISALLOW_COPY_AND_ASSIGN(WebAuthnCredentials);
+};
+
 void EngineClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     // The popup closes on its own (login finished) or after the 60 s cap: only the popup goes, the card stays.
@@ -3278,6 +3317,21 @@ void HandleSurfaceCommand(StdioLink& link, HostState& state, const Command& comm
             link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot set up WebAuthn");
         }
         // The reply is sent by WebAuthnSetup once the authenticator is installed.
+    } else if (command.op == "webauthn_credentials") {
+        if (!state.browser) {
+            link.ReplyError(command.id, "surface_not_found", "no live surface");
+            return;
+        }
+        if (command.authenticator_id.empty()) {
+            link.ReplyError(command.id, "invalid_argument", "webauthn_credentials needs authenticator_id");
+            return;
+        }
+        CefRefPtr<WebAuthnCredentials> credentials(
+            new WebAuthnCredentials(command.id, command.authenticator_id));
+        if (!credentials->Start(state.browser)) {
+            link.ReplyError(command.id, "not_supported", "DevTools is unavailable, cannot read WebAuthn");
+        }
+        // The reply is sent by WebAuthnCredentials once the credential list is read.
     } else {
         link.ReplyError(command.id, "not_supported",
                         "this milestone implements hello, ping, create_surface, navigate, eval, "

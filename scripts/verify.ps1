@@ -101,6 +101,8 @@ $engineChecks = @(
     # ADR-023: the passkey flow — `navigator.credentials.create` against the CDP virtual authenticator,
     # served from a 127.0.0.1 page (the WebAuthn "localhost" exception; a custom scheme is rejected).
     @{ Name = 'passkeyflowtest'; Args = @('--passkeyflowtest') },
+    # ADR-093: the passkey export side — the shell reads the virtual authenticator's credentials.
+    @{ Name = 'passkeyexporttest'; Args = @('--passkeyexporttest') },
     @{ Name = 'gridtest'; Args = @('--gridtest') },
     @{ Name = 'gridlangtest'; Args = @('--gridlangtest') },
     @{ Name = 'autoprofiltest'; Args = @('--autoprofiltest') },

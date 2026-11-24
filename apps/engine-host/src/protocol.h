@@ -44,6 +44,8 @@ struct Command {
     /// isolated world (ADR-053). The page's main world never sees these as JS values.
     std::string username;
     std::string password;
+    /// WebAuthn (`webauthn_credentials`): the virtual authenticator's id, as returned by `webauthn_setup`.
+    std::string authenticator_id;
     std::string partition;
     /// The container the surface belongs to (ADR-071) and the policy that comes with it: the proxy the container
     /// reaches the network through, and the permissions its pages may ask for. The engine keeps the partition as the

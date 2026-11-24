@@ -6594,6 +6594,89 @@ int runPasskeyFlowCheck(const QString& enginePath) {
     return de_risked ? 0 : 1;
 }
 
+int runPasskeyExportCheck(const QString& enginePath) {
+    QTextStream out(stdout);
+
+    QWidget window;
+    window.resize(800, 600);
+    window.move(120, 90);
+    auto* layout = new QVBoxLayout(&window);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* card = new LiveCard(&window);
+    layout->addWidget(card);
+    window.show();
+    QCoreApplication::processEvents();
+
+    EngineClient client;
+    const QString profile = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                            QStringLiteral("/passkeyexport-selftest");
+    QDir().mkpath(profile);
+    if (!client.start(enginePath, profile, /*hidden=*/true)) {
+        out << "passkey_export_start=FAILED\n";
+        return 1;
+    }
+
+    QEventLoop loop;
+    qint64 surface = 0;
+    bool setup_ok = false;
+    bool export_ok = false;
+
+    QObject::connect(&client, &EngineClient::failed, &loop, [&](const QString& message) {
+        out << "passkey_export_error=" << message << '\n';
+        loop.quit();
+    });
+    client.handshake();
+    QObject::connect(&client, &EngineClient::engineReady, &loop, [&](const QJsonObject&) {
+        if (!card->attach(&client, QStringLiteral("persist:passkeyexport-selftest"))) {
+            out << "passkey_export_attach=FAILED\n";
+            loop.quit();
+        }
+    });
+    QObject::connect(card, &LiveCard::surfaceAttached, &loop, [&](qint64 id) {
+        surface = id;
+        client.navigate(id, QStringLiteral("data:text/html,<title>passkey-export</title>"));
+    });
+    QObject::connect(&client, &EngineClient::loadFinished, &loop,
+                     [&](qint64 id, const QString& url, int) {
+                         if (id != surface || !url.startsWith(QStringLiteral("data:"))) {
+                             return;
+                         }
+                         QTimer::singleShot(500, &loop, [&, id] {
+                             client.webauthnSetup(
+                                 id, [&, id](const QJsonObject& setup, const QString& setup_error) {
+                                     const QString authenticator =
+                                         setup_error.isEmpty()
+                                             ? setup.value(QStringLiteral("authenticator_id")).toString()
+                                             : QString();
+                                     setup_ok = !authenticator.isEmpty();
+                                     out << "passkey_export_setup=" << (setup_ok ? "ok" : "FAILED")
+                                         << '\n';
+                                     client.webauthnCredentials(
+                                         id, authenticator,
+                                         [&](const QJsonObject& credentials,
+                                             const QString& credentials_error) {
+                                             export_ok = credentials_error.isEmpty() &&
+                                                         credentials.value(QStringLiteral("count"))
+                                                                 .toInt() == 0;
+                                             out << "passkey_export_credentials="
+                                                 << (export_ok ? "ok" : "FAILED") << " count="
+                                                 << credentials.value(QStringLiteral("count")).toInt()
+                                                 << '\n';
+                                             loop.quit();
+                                         });
+                                 });
+                         });
+                     });
+    QTimer::singleShot(45000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    const bool ok = setup_ok && export_ok;
+    out << "passkey_export=" << (ok ? "ok" : "FAILED") << '\n';
+    window.close();
+    out.flush();
+    return ok ? 0 : 1;
+}
+
 int runVaultPanelCheck(const QString& corePath) {
     QTextStream out(stdout);
     CoreClient client;
@@ -11030,6 +11113,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("passkeyflowtest"),
         QStringLiteral("Prove the full passkey create flow against the virtual authenticator."),
         QStringLiteral("path"));
+    const QCommandLineOption passkeyexporttest(
+        QStringLiteral("passkeyexporttest"),
+        QStringLiteral("Prove the shell reads the virtual authenticator's credentials."),
+        QStringLiteral("path"));
     const QCommandLineOption vaultpaneltest(
         QStringLiteral("vaultpaneltest"),
         QStringLiteral("Prove the vault panel lists credentials without leaking secrets, then exit."),
@@ -11111,6 +11198,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(vaulttest);
     parser.addOption(fillcredentialtest);
     parser.addOption(passkeyflowtest);
+    parser.addOption(passkeyexporttest);
     parser.addOption(vaultpaneltest);
     parser.addOption(passkeystoretest);
     parser.process(app);
@@ -11214,6 +11302,9 @@ int main(int argc, char* argv[]) {
     }
     if (parser.isSet(passkeyflowtest)) {
         return runPasskeyFlowCheck(parser.value(passkeyflowtest));
+    }
+    if (parser.isSet(passkeyexporttest)) {
+        return runPasskeyExportCheck(parser.value(passkeyexporttest));
     }
     if (parser.isSet(vaultpaneltest)) {
         return runVaultPanelCheck(parser.value(vaultpaneltest));

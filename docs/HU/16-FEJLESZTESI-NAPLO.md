@@ -3,6 +3,28 @@
 > Kronológiai napló arról, mi készült el, **hogyan lett ellenőrizve**, és mi blokkol. A terv a
 > `00`–`15` dokumentumokban van; ez a napló a valóságot rögzíti.
 
+## 2026-11-23 (százötvenkilencedik szelet) — a passkey-export oldala mérve (M7)
+
+A passkey-export oldala (a virtuális hitelesítő olvasása) mérve.
+
+### Mi változott
+
+- **`apps/engine-host/src/`:** `webauthn_credentials` parancs (`WebAuthn.getCredentials`, `{count}`).
+- **`apps/desktop-shell/src/`:** `EngineClient::webauthnCredentials` + `--passkeyexporttest`.
+- **`scripts/verify.ps1`:** `passkeyexporttest` kapu-lépés.
+
+### Bizonyíték (mért)
+
+```
+--passkeyexporttest → passkey_export=ok (exit 0): setup ok, credentials count=0 (üres hitelesítő)
+scripts/verify.ps1 → ALL CHECKS PASSED (80 ellenőrzés)
+```
+
+### Ami továbbra is nyitott
+
+- A teljes `navigator.credentials.create/get` a valós felületen (`not-measurable`, fókusz-gesztus) —
+  a hitelesítő olvasása (`getCredentials`) már parancsba adható; a PiP views-architektúra-váltás.
+
 ## 2026-11-23 (százötvennyolcadik szelet) — a passkey-tárolás mérve (M7)
 
 A széf passkey-tárolása end-to-end mérve: a `SecretKind::Passkey` útvonal írja/olvassa a `passkey`

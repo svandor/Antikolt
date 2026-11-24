@@ -263,6 +263,14 @@ void EngineClient::webauthnSetup(qint64 surface, ReplyHandler handler) {
     send(QStringLiteral("webauthn_setup"), fields, std::move(handler));
 }
 
+void EngineClient::webauthnCredentials(qint64 surface, const QString& authenticatorId,
+                                       ReplyHandler handler) {
+    QJsonObject fields;
+    fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
+    fields.insert(QStringLiteral("authenticator_id"), authenticatorId);
+    send(QStringLiteral("webauthn_credentials"), fields, std::move(handler));
+}
+
 void EngineClient::installBridge(qint64 surface, ReplyHandler handler) {
     QJsonObject fields;
     fields.insert(QStringLiteral("surface"), static_cast<double>(surface));
